@@ -558,8 +558,17 @@ fun LuteaArc(
                         val strokeFactor = if (distFromEndpoint > fadeRange) 1f
                         else 0.15f + 0.85f * (distFromEndpoint / fadeRange).pow(2.0f)
                         val segStroke = minStrokePx + (maxStrokePx - minStrokePx) * strokeFactor
+                        // The arc carries the same ramp as the labels: X at the
+                        // centre (the point the main name sits on), blending out
+                        // to Y towards both ends.
+                        val centreK = abs(segStart - 0.5f) * 2f
+                        val segColor = androidx.compose.ui.graphics.lerp(
+                            LumenPalette.Mint,
+                            LumenPalette.Ice,
+                            centreK,
+                        )
                         drawArc(
-                            color = Color.White.copy(alpha = segAlpha),
+                            color = segColor.copy(alpha = segAlpha),
                             startAngle = arcStartDeg + segStart * arcSweepDeg,
                             sweepAngle = (segEnd - segStart) * arcSweepDeg,
                             useCenter = false,
