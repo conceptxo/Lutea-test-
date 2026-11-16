@@ -2,6 +2,7 @@ package com.rajatxo.lutea.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -42,18 +43,25 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -64,6 +72,10 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SEARCH PAGE — a bare search line and the typewriter under it.
@@ -86,8 +98,8 @@ import kotlinx.coroutines.delay
 
 private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
 
-/** One flat colour behind everything: 90% black, never pure black. */
-private val PageBackground = Color(0xFF1A1A1A)
+/** One flat colour behind everything: a very slightly warm near-black, so the light reads like light on paper. */
+private val PageBackground = Color(0xFF1E1C1A)
 
 private val CapsuleWidth = 80.dp
 private val CapsuleHeight = 34.dp
@@ -100,6 +112,35 @@ private val CapsuleBarHeight = 42.dp
 private val CapsuleSideMargin = 10.dp
 private val CapsuleInnerPadding = 10.dp
 private val TextStart = 58.dp               // margin + padding + glyph(18) + gap(20): where typed text begins
+
+// ── the lamp: light released by the T hammer ──────────────────────────────
+private val LightColor = Color(0xFFFFE3A3)      // warm tungsten cream
+private val InkColor = Color(0xFF2B2416)        // typewriter ink: text turns to this inside the beam
+private const val BeamReachDp = 300f            // how far the light travels up the page
+private const val BeamHalfAngleDeg = 56f        // 112 degree spread
+private const val BeamLayers = 18               // stacked cones = soft, feathered edges (no hard cone line)
+
+/** Radial fall-off of the light (distance as a fraction of reach -> brightness): bright at the T, fading like real light. */
+private val LightFalloff = arrayOf(
+    0.00f to 1.00f, 0.03f to 0.96f, 0.08f to 0.82f, 0.15f to 0.62f, 0.25f to 0.40f,
+    0.38f to 0.22f, 0.55f to 0.09f, 0.78f to 0.025f, 1.00f to 0.00f,
+)
+
+/** Where the paper is lit strongly enough for the text to flip to dark ink. */
+private val InkFalloff = arrayOf(
+    0.00f to 1.00f, 0.17f to 1.00f, 0.23f to 0.85f, 0.29f to 0.45f, 0.35f to 0.12f, 0.42f to 0.00f, 1.00f to 0.00f,
+)
+
+/** Weight of each stacked cone: bell-shaped, so brightness stays full in the middle and eases out smoothly to the edge. */
+private val BeamWeights = FloatArray(BeamLayers).also { w ->
+    var sum = 0f
+    for (i in w.indices) {
+        val t = (i + 0.5f) / BeamLayers
+        w[i] = t * (1f - t)
+        sum += w[i]
+    }
+    for (i in w.indices) w[i] /= sum
+}
 
 private enum class TypeState { IDLE, TYPING, PAUSED, CLEARED }
 
@@ -204,6 +245,21 @@ private fun SearchMachine(
 
     // ── typing state → colour of the carriage slot + LEDs ──
     var focused by remember { mutableStateOf(false) }
+
+    // ── the lamp: tapping the search bar makes the T hammer pop up and release the light ──
+    val lightLevel = remember { Animatable(0f) }
+    val release = remember { Animatable(0f) }
+    LaunchedEffect(focused) {
+        if (focused) {
+            launch {
+                release.animateTo(1f, tween(120, easing = LinearOutSlowInEasing))
+                release.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 380f))
+            }
+            lightLevel.animateTo(1f, tween(850, easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)))
+        } else {
+            lightLevel.animateTo(0f, tween(450, easing = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)))
+        }
+    }
     var mode by remember { mutableStateOf(TypeState.IDLE) }
     var clearTick by remember { mutableStateOf(0) }
     LaunchedEffect(query) {
@@ -235,8 +291,30 @@ private fun SearchMachine(
         label = "slot",
     )
 
+    // Beam geometry lives in the Column's own pixel space; the T's top edge is the light source.
+    val unit = density.density * k                                   // px per scaled dp
+    val railTopPx = with(density) { (CapsuleBarHeight + 2.dp).toPx() }
+    val beamPath = remember { Path() }
+    var colRoot by remember { mutableStateOf(Offset.Zero) }
+    val apexProvider: () -> Offset = {
+        val hs = maxOf(strike.value, release.value).coerceIn(-0.3f, 1f)
+        Offset(
+            x = carriageX + capsuleWPx / 2f,
+            y = railTopPx + 1.2f * unit - 18f * unit * hs,           // same maths as the hammer in drawCarriage
+        )
+    }
+    val levelProvider: () -> Float = {
+        (lightLevel.value * (1f + 0.05f * strike.value.coerceAtLeast(0f))).coerceIn(0f, 1.2f)
+    }
 
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier
+            .onGloballyPositioned { colRoot = it.positionInRoot() }
+            .drawBehind {
+                val level = levelProvider()
+                if (level > 0.003f) drawLightBeam(beamPath, apexProvider(), level, unit)
+            },
+    ) {
         // ── the search box: just the icon and the text, straight on the page ──
         Row(
             modifier = Modifier
@@ -257,13 +335,16 @@ private fun SearchMachine(
                 imageVector = SearchGlyph,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.95f),
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier
+                    .size(18.dp)
+                    .litByBeam({ colRoot }, apexProvider, levelProvider, unit, beamPath),
             )
             Spacer(Modifier.width(20.dp))
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .onSizeChanged { viewportPx = it.width.toFloat() },
+                    .onSizeChanged { viewportPx = it.width.toFloat() }
+                    .litByBeam({ colRoot }, apexProvider, levelProvider, unit, beamPath),
             ) {
                 if (query.isEmpty()) {
                     Text(
@@ -360,7 +441,7 @@ private fun SearchMachine(
                     modifier = Modifier
                         .size(CapsuleWidth, RailAreaHeight)
                         .graphicsLayer { translationX = carriageX }
-                        .drawBehind { drawCarriage(strike.value, slotColor) },
+                        .drawBehind { drawCarriage(maxOf(strike.value, release.value), slotColor, lightLevel.value) },
                 )
             }
         }
@@ -468,8 +549,9 @@ private fun DrawScope.softShadow(
  * Local origin = top-left of the capsule's box; the capsule sits low so the hammer has room above it.
  * @param strike 1 right after a keystroke, easing back to 0
  * @param slot colour of the top slot (green typing / yellow paused / red cleared)
+ * @param glow 0..1 how much light the T hammer is giving off
  */
-private fun DrawScope.drawCarriage(strike: Float, slot: Color) {
+private fun DrawScope.drawCarriage(strike: Float, slot: Color, glow: Float = 0f) {
     val w = size.width
     val capH = CapsuleHeight.toPx()
     val s = strike.coerceIn(-0.3f, 1f)
@@ -534,6 +616,31 @@ private fun DrawScope.drawCarriage(strike: Float, slot: Color) {
             color = Color(0xFFB8BCC0).copy(alpha = 0.55f),
             topLeft = Offset(ex, barTop + 0.8.dp.toPx()),
             size = Size(0.8.dp.toPx(), barH - 1.6.dp.toPx()),
+        )
+    }
+
+    // ── the T is the lamp: its top edge glows while the light is on ──
+    if (glow > 0.01f) {
+        val g = glow.coerceIn(0f, 1f)
+        val glowR = 15.dp.toPx()
+        val glowC = Offset(cx, barTop + barH * 0.3f)
+        drawCircle(
+            brush = Brush.radialGradient(
+                0f to LightColor.copy(alpha = 0.85f * g),
+                0.35f to LightColor.copy(alpha = 0.35f * g),
+                1f to Color.Transparent,
+                center = glowC,
+                radius = glowR,
+            ),
+            radius = glowR,
+            center = glowC,
+            blendMode = BlendMode.Plus,
+        )
+        drawRoundRect(
+            color = Color(0xFFFFF3CF).copy(alpha = 0.9f * g),
+            topLeft = Offset(cx - barW / 2f + 0.8.dp.toPx(), barTop),
+            size = Size(barW - 1.6.dp.toPx(), 1.2.dp.toPx()),
+            cornerRadius = CornerRadius(0.6.dp.toPx()),
         )
     }
 
@@ -659,4 +766,124 @@ private fun DrawScope.drawCarriage(strike: Float, slot: Color) {
             center = Offset(dotX + gap * i, dotY),
         )
     }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  THE LIGHT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Stacks narrow-to-wide cones, each filled with a radial fall-off from the lamp. Because every cone has a
+ * slightly different angle, the sum is a beam that is full in the middle and fades gently towards its edges.
+ */
+private fun DrawScope.drawBeamLayers(
+    path: Path,
+    apex: Offset,
+    reach: Float,
+    halfRad: Float,
+    brush: Brush,
+    strength: Float,
+    blend: BlendMode,
+) {
+    for (i in 0 until BeamLayers) {
+        val ang = halfRad * (i + 1) / BeamLayers
+        val len = reach / cos(ang)                 // far edge always sits beyond the gradient's end
+        val sx = sin(ang) * len
+        val sy = cos(ang) * len
+        path.reset()
+        path.moveTo(apex.x, apex.y)
+        path.lineTo(apex.x - sx, apex.y - sy)
+        path.lineTo(apex.x + sx, apex.y - sy)
+        path.close()
+        drawPath(
+            path = path,
+            brush = brush,
+            alpha = (BeamWeights[i] * strength).coerceIn(0f, 1f),
+            blendMode = blend,
+        )
+    }
+}
+
+/** The warm beam itself: added onto the page (BlendMode.Plus) so the page brightens like paper under a lamp. */
+private fun DrawScope.drawLightBeam(path: Path, apex: Offset, level: Float, unit: Float) {
+    val reach = BeamReachDp * unit
+    val half = (BeamHalfAngleDeg * PI / 180.0).toFloat()
+
+    // faint bounce light around the whole upper page
+    clipRect(left = -100000f, top = -100000f, right = 100000f, bottom = apex.y + 2f * unit) {
+        drawCircle(
+            brush = Brush.radialGradient(
+                0f to LightColor.copy(alpha = 0.07f * level),
+                0.5f to LightColor.copy(alpha = 0.025f * level),
+                1f to Color.Transparent,
+                center = apex,
+                radius = reach * 0.95f,
+            ),
+            radius = reach * 0.95f,
+            center = apex,
+            blendMode = BlendMode.Plus,
+        )
+    }
+
+    // the beam
+    val brush = Brush.radialGradient(
+        colorStops = Array(LightFalloff.size) { LightFalloff[it].first to LightColor.copy(alpha = LightFalloff[it].second) },
+        center = apex,
+        radius = reach,
+    )
+    drawBeamLayers(path, apex, reach, half, brush, strength = 0.85f * level, blend = BlendMode.Plus)
+
+    // hot spot right at the T
+    val hotR = 46f * unit
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to LightColor.copy(alpha = 0.45f * level),
+            0.4f to LightColor.copy(alpha = 0.16f * level),
+            1f to Color.Transparent,
+            center = apex,
+            radius = hotR,
+        ),
+        radius = hotR,
+        center = apex,
+        blendMode = BlendMode.Plus,
+    )
+}
+
+/** Same beam, but painted in ink colour over the content's own pixels only (SrcAtop): lit text turns dark like print on lit paper. */
+private fun DrawScope.drawBeamInk(path: Path, apex: Offset, level: Float, unit: Float) {
+    val reach = BeamReachDp * unit
+    val half = (BeamHalfAngleDeg * 0.8f * PI / 180.0).toFloat()    // ink sits inside the bright core
+    val brush = Brush.radialGradient(
+        colorStops = Array(InkFalloff.size) { InkFalloff[it].first to InkColor.copy(alpha = InkFalloff[it].second) },
+        center = apex,
+        radius = reach,
+    )
+    drawBeamLayers(path, apex, reach, half, brush, strength = 2.2f * level.coerceAtMost(1f), blend = BlendMode.SrcAtop)
+}
+
+/** Lets a piece of UI (icon / text) sit under the lamp: where the beam hits it, white turns to dark ink. */
+@Composable
+private fun Modifier.litByBeam(
+    columnRoot: () -> Offset,
+    apex: () -> Offset,
+    level: () -> Float,
+    unit: Float,
+    path: Path,
+): Modifier {
+    var rootPos by remember { mutableStateOf(Offset.Zero) }
+    return this
+        .onGloballyPositioned { rootPos = it.positionInRoot() }
+        .graphicsLayer {
+            compositingStrategy =
+                if (level() > 0.003f) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+        }
+        .drawWithContent {
+            drawContent()
+            val l = level()
+            if (l > 0.003f) {
+                val local = apex() - (rootPos - columnRoot())      // lamp position in this element's own space
+                drawBeamInk(path, local, l, unit)
+            }
+        }
 }
