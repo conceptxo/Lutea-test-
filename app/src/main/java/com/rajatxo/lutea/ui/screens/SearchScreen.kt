@@ -42,12 +42,18 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,17 +61,73 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.rajatxo.lutea.R
 import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.data.store.PlaylistStore
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
-import com.rajatxo.lutea.ui.components.CalSansFamily
-import com.rajatxo.lutea.ui.icons.LuteaIcons
-import com.rajatxo.lutea.ui.theme.LumenPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SEARCH PAGE — everything below is this page and nothing else.
+//
+//  Self-contained on purpose: one file to read, one file to change.
+//    0. LOOK    — palette, display font and the one icon the page uses
+//    1. DATA    — the SearchScreen composable: scan, filter, state
+//    2. HEADER  — headline + glow-card carousel
+//    3. FIELD   — search pill + filter chips
+//    4. ROWS    — result rows (song / artist / album / playlist)
+//
+//  The only outside calls are the three app services:
+//    MusicScanner.scanMusic(context)      -> List<Song>
+//    PlaylistStore.playlists              -> StateFlow<List<Playlist>>
+//    PlaybackConnection.playSong(song, queue)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 0. LOOK ────────────────────────────────────────────────────────────────
+
+/** X — the main colour (selected / active). */
+private val Mint = Color(0xFFD4FF9C)
+
+/** Y — the secondary colour (inactive / ambient). */
+private val Ice = Color(0xFF9EF9FF)
+
+/** Cal Sans, the app's display face, inlined so the page owns its type. */
+private val SearchSans = FontFamily(
+    Font(R.font.cal_sans_semibold, FontWeight.Normal),
+    Font(R.font.cal_sans_semibold, FontWeight.Medium),
+    Font(R.font.cal_sans_semibold, FontWeight.SemiBold),
+    Font(R.font.cal_sans_semibold, FontWeight.Bold),
+)
+
+/** Lucide search glyph (MIT), inlined so the page owns its icon. */
+private val SearchGlyph: ImageVector = ImageVector.Builder(
+    name = "Search",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 2f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+        strokeLineMiter = 4f,
+    ) {
+        moveTo(19f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 3f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 19f, 11f)
+        moveTo(21f, 21f)
+        lineTo(16.66f, 16.66f)
+    }
+}.build()
+
+// ── 1. DATA ────────────────────────────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Search
@@ -318,7 +380,7 @@ private fun songsOf(playlist: Playlist, all: List<Song>): List<Song> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Header + carousel
+//  2. HEADER — headline, glow-card carousel and the card paint pipeline
 // ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
@@ -329,7 +391,7 @@ private fun Headline() {
         fontSize = 30.sp,
         lineHeight = 34.sp,
         fontWeight = FontWeight.Bold,
-        fontFamily = CalSansFamily,
+        fontFamily = SearchSans,
         textAlign = TextAlign.Center,
         modifier = Modifier
             .fillMaxWidth()
@@ -376,9 +438,9 @@ private fun GlowCardView(
     onClick: () -> Unit,
 ) {
     val hot = when (card.tone % 3) {
-        0 -> LumenPalette.Mint
-        1 -> LumenPalette.Ice
-        else -> lerp(LumenPalette.Ice, LumenPalette.Mint, 0.5f)
+        0 -> Mint
+        1 -> Ice
+        else -> lerp(Ice, Mint, 0.5f)
     }
     val seed = card.tone * 977 + 41
     Box(
@@ -435,7 +497,7 @@ private fun GlowCardView(
                     fontSize = 23.sp,
                     lineHeight = 25.sp,
                     fontWeight = FontWeight.SemiBold,
-                    fontFamily = CalSansFamily,
+                    fontFamily = SearchSans,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -524,7 +586,7 @@ private fun DrawScope.paintGlowField(hot: Color) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Search field + chips
+//  3. FIELD — the search pill and the filter chips
 // ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
@@ -541,7 +603,7 @@ private fun SearchField(
             color = Color.White,
             fontSize = 15.sp,
         ),
-        cursorBrush = SolidColor(LumenPalette.Ice),
+        cursorBrush = SolidColor(Ice),
         modifier = Modifier.fillMaxWidth(),
         decorationBox = { inner ->
             Row(
@@ -555,7 +617,7 @@ private fun SearchField(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    imageVector = LuteaIcons.Search,
+                    imageVector = SearchGlyph,
                     contentDescription = null,
                     tint = Color.White.copy(alpha = 0.55f),
                     modifier = Modifier.size(18.dp),
@@ -627,7 +689,7 @@ private fun FilterChips(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Rows
+//  4. ROWS — result rows: song, artist, album, playlist
 // ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
@@ -714,16 +776,16 @@ private fun ArtistRow(name: String, count: Int, onClick: () -> Unit) {
             modifier = Modifier
                 .size(46.dp)
                 .clip(CircleShape)
-                .background(LumenPalette.Ice.copy(alpha = 0.14f))
-                .border(1.dp, LumenPalette.Ice.copy(alpha = 0.35f), CircleShape),
+                .background(Ice.copy(alpha = 0.14f))
+                .border(1.dp, Ice.copy(alpha = 0.35f), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = name.take(1).uppercase(),
-                color = LumenPalette.Ice,
+                color = Ice,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
-                fontFamily = CalSansFamily,
+                fontFamily = SearchSans,
             )
         }
         Spacer(Modifier.width(12.dp))
@@ -801,7 +863,7 @@ private fun PlaylistRow(playlist: Playlist, art: android.net.Uri?, onClick: () -
             modifier = Modifier
                 .size(46.dp)
                 .clip(RoundedCornerShape(9.dp))
-                .background(LumenPalette.Mint.copy(alpha = 0.10f)),
+                .background(Mint.copy(alpha = 0.10f)),
             contentScale = ContentScale.Crop,
         )
         Spacer(Modifier.width(12.dp))
