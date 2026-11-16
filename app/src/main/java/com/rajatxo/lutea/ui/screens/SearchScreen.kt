@@ -1,8 +1,20 @@
 package com.rajatxo.lutea.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,9 +27,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -33,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,8 +74,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -175,6 +191,20 @@ fun SearchScreen() {
         scanning = false
     }
 
+    // Keyboard open → the top of the page folds away so the search bar and the
+    // results sit right above the keyboard instead of being covered by it.
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    val imeVisible by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
+    val bottomPad by animateDpAsState(
+        targetValue = if (imeVisible) 16.dp else 150.dp,
+        label = "bottomPad",
+    )
+    val fieldGap by animateDpAsState(
+        targetValue = if (imeVisible) 10.dp else 26.dp,
+        label = "fieldGap",
+    )
+
     val q = query.trim()
     val cards = remember(playlists, songs) { buildCards(playlists, songs) }
 
@@ -219,26 +249,41 @@ fun SearchScreen() {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding(),
-            contentPadding = PaddingValues(top = 10.dp, bottom = 150.dp),
+                .statusBarsPadding()
+                .imePadding(),
+            contentPadding = PaddingValues(top = 10.dp, bottom = bottomPad),
         ) {
-            item { Headline() }
+            item {
+                AnimatedVisibility(
+                    visible = !imeVisible,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) { Headline() }
+            }
 
             if (cards.isNotEmpty()) {
                 item {
-                    Spacer(Modifier.height(24.dp))
-                    CardCarousel(
-                        cards = cards,
-                        onPick = { card ->
-                            query = card.query
-                            filter = SearchFilter.ALL
-                        },
-                    )
+                    AnimatedVisibility(
+                        visible = !imeVisible,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut(),
+                    ) {
+                        Column {
+                            Spacer(Modifier.height(24.dp))
+                            CardCarousel(
+                                cards = cards,
+                                onPick = { card ->
+                                    query = card.query
+                                    filter = SearchFilter.ALL
+                                },
+                            )
+                        }
+                    }
                 }
             }
 
             item {
-                Spacer(Modifier.height(26.dp))
+                Spacer(Modifier.height(fieldGap))
                 SearchField(
                     query = query,
                     onQueryChange = { query = it },
@@ -600,23 +645,29 @@ private fun DrawScope.paintGlowField(hot: Color) {
 // ═══════════════════════════════════════════════════════════════════════════
 //  3. FIELD — the typewriter search bar and the filter chips
 //
-//  A line of typewriter text sits above a metal rail. A cream 3D capsule
-//  (the carriage) rides the rail and follows the caret as you type; a small
-//  T-shaped hammer on top strikes on every keystroke and the first LED
+//  A sheet of grainy paper carries one line of typewriter text above a steel
+//  rail. A cream capsule (the carriage) rides the rail and follows the caret;
+//  the T-shaped hammer on top strikes on every keystroke and the first LED
 //  flashes amber. Clearing the text slides the carriage back home.
+//  Everything is drawn with gradients — no images.
 // ═══════════════════════════════════════════════════════════════════════════
 
-private val PaperCream = Color(0xFFF4EEDF)
-private val CapsuleLight = Color(0xFFF8F3E8)
-private val CapsuleDark = Color(0xFFD3C9B2)
+private val PaperLight = Color(0xFFF3EFE3)
+private val PaperDark = Color(0xFFE3DDCB)
+private val Ink = Color(0xFF3A3733)
+private val CapsuleTop = Color(0xFFF9F6EC)
+private val CapsuleMid = Color(0xFFECE6D5)
+private val CapsuleBottom = Color(0xFFD6CDB6)
+private val LedGreen = Color(0xFF39D353)
 private val LedAmber = Color(0xFFFFA23C)
-private val LedPink = Color(0xFFE8828F)
+private val LedMaroon = Color(0xFF4A1715)
+private val LedRose = Color(0xFFD9A7A3)
 
-private val CapsuleWidth = 64.dp
-private val CapsuleHeight = 28.dp
-private val RailAreaHeight = 52.dp
-private val RailCenterY = 34.dp          // vertical centre of the rail inside the rail area
-private val TextStart = 28.dp           // search glyph + gap, where the typed text begins
+private val CapsuleWidth = 76.dp
+private val CapsuleHeight = 36.dp
+private val RailAreaHeight = 70.dp
+private val RailCenterY = 44.dp         // centre of the rail inside the rail area
+private val TextStart = 48.dp           // card padding + search glyph + gap: where typed text begins
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -630,16 +681,15 @@ private fun SearchField(
 
     var caretPx by remember { mutableStateOf(0f) }      // caret x inside the text box
     var viewportPx by remember { mutableStateOf(0f) }   // visible width of the text box
-    var railPx by remember { mutableStateOf(0f) }       // rail width
+    var railPx by remember { mutableStateOf(0f) }       // rail (= card) width
 
     // Carriage target: centre the capsule under the caret, keep it between the end clamps.
     val capsuleWPx = with(density) { CapsuleWidth.toPx() }
     val textStartPx = with(density) { TextStart.toPx() }
-    val edgePx = with(density) { 16.dp.toPx() }
-    val minLeft = edgePx
-    val maxLeft = (railPx - capsuleWPx - edgePx).coerceAtLeast(minLeft)
+    val edgePx = with(density) { 26.dp.toPx() }
+    val maxLeft = (railPx - capsuleWPx - edgePx).coerceAtLeast(edgePx)
     val targetLeft = (textStartPx + minOf(caretPx, viewportPx) - capsuleWPx / 2f)
-        .coerceIn(minLeft, maxLeft)
+        .coerceIn(edgePx, maxLeft)
     val carriageX by animateFloatAsState(
         targetValue = targetLeft,
         animationSpec = spring(dampingRatio = 0.62f, stiffness = 420f),
@@ -654,11 +704,62 @@ private fun SearchField(
             strike.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 700f))
         }
     }
+    // The green LED breathes while the bar is idle.
+    val breathe by rememberInfiniteTransition(label = "led").animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "ledGlow",
+    )
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp)
+            .padding(horizontal = 18.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .drawWithCache {
+                val rnd = Random(7)
+                val specks = List(260) {
+                    floatArrayOf(
+                        rnd.nextFloat() * size.width,
+                        rnd.nextFloat() * size.height,
+                        0.04f + rnd.nextFloat() * 0.10f,
+                        0.6f + rnd.nextFloat() * 1.1f,
+                    )
+                }
+                val flecks = List(7) {
+                    floatArrayOf(
+                        rnd.nextFloat() * size.width,
+                        rnd.nextFloat() * size.height,
+                        1.1f + rnd.nextFloat() * 1.3f,
+                    )
+                }
+                val base = Brush.verticalGradient(listOf(PaperLight, PaperDark))
+                val vignette = Brush.radialGradient(
+                    colors = listOf(Color.Transparent, Color(0x225A4A2A)),
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    radius = size.maxDimension * 0.75f,
+                )
+                val lip = Brush.verticalGradient(
+                    colors = listOf(Color.White.copy(alpha = 0.70f), Color.Transparent),
+                    startY = 0f,
+                    endY = 8.dp.toPx(),
+                )
+                onDrawBehind {
+                    drawRect(base)
+                    drawRect(vignette)
+                    specks.forEach { g ->
+                        drawCircle(Ink.copy(alpha = g[2]), radius = g[3], center = Offset(g[0], g[1]))
+                    }
+                    flecks.forEach { g ->
+                        drawCircle(Ink.copy(alpha = 0.55f), radius = g[2], center = Offset(g[0], g[1]))
+                    }
+                    drawRect(lip, size = Size(size.width, 8.dp.toPx()))
+                }
+            }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -671,13 +772,14 @@ private fun SearchField(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(start = 20.dp, end = 16.dp, top = 12.dp)
                 .height(40.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = SearchGlyph,
                 contentDescription = null,
-                tint = PaperCream.copy(alpha = 0.5f),
+                tint = Ink.copy(alpha = 0.55f),
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(10.dp))
@@ -689,7 +791,7 @@ private fun SearchField(
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
-                        color = PaperCream.copy(alpha = 0.32f),
+                        color = Ink.copy(alpha = 0.38f),
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
@@ -701,12 +803,12 @@ private fun SearchField(
                     onValueChange = onQueryChange,
                     singleLine = true,
                     textStyle = TextStyle(
-                        color = PaperCream,
+                        color = Ink,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
                     ),
-                    cursorBrush = SolidColor(PaperCream),
+                    cursorBrush = SolidColor(Ink),
                     onTextLayout = { layout ->
                         val end = layout.layoutInput.text.length
                         caretPx = layout.getCursorRect(query.length.coerceIn(0, end)).left
@@ -722,22 +824,20 @@ private fun SearchField(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.10f))
+                        .background(Ink.copy(alpha = 0.10f))
                         .clickable { onQueryChange("") },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = "✕",
-                        color = Color.White.copy(alpha = 0.75f),
+                        color = Ink.copy(alpha = 0.70f),
                         fontSize = 11.sp,
                     )
                 }
             }
         }
 
-        Spacer(Modifier.height(4.dp))
-
-        // ── rail + carriage ──
+        // ── rail + carriage (full card width, like the pipe in the reference) ──
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -749,131 +849,235 @@ private fun SearchField(
                 modifier = Modifier
                     .size(CapsuleWidth, RailAreaHeight)
                     .graphicsLayer { translationX = carriageX }
-                    .drawBehind { drawCarriage(strike.value) },
+                    .drawBehind { drawCarriage(strike.value, breathe) },
             )
         }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
-/** Metal pipe with a lit top edge, dark end clamps and a faint light spill below. */
+/** Steel pipe: lit top edge, dark core, bounce light underneath, chunky end collars. */
 private fun DrawScope.drawRail(centerY: Float) {
-    val h = 10.dp.toPx()
+    val h = 15.dp.toPx()
     val top = centerY - h / 2f
-    val clampW = 12.dp.toPx()
-    val clampH = 22.dp.toPx()
 
-    // light spill under the pipe
-    drawRoundRect(
+    // soft cast shadow on the paper
+    val shadowH = h * 0.3f + 15.dp.toPx()
+    drawRect(
         brush = Brush.verticalGradient(
-            colors = listOf(Color.White.copy(alpha = 0.10f), Color.Transparent),
-            startY = top + h,
-            endY = top + h + 12.dp.toPx(),
+            colors = listOf(Ink.copy(alpha = 0.34f), Ink.copy(alpha = 0.12f), Color.Transparent),
+            startY = top + h * 0.7f,
+            endY = top + h * 0.7f + shadowH,
         ),
-        topLeft = Offset(clampW, top + h),
-        size = Size(size.width - clampW * 2f, 12.dp.toPx()),
-        cornerRadius = CornerRadius(6.dp.toPx()),
+        topLeft = Offset(0f, top + h * 0.7f),
+        size = Size(size.width, shadowH),
     )
-    // pipe body — rounded cylinder shading
-    drawRoundRect(
+
+    // cylinder body
+    drawRect(
         brush = Brush.verticalGradient(
-            0f to Color(0xFF909498),
-            0.28f to Color(0xFF5F6367),
-            0.62f to Color(0xFF35383B),
-            1f to Color(0xFF1B1C1E),
+            0f to Color(0xFF55595D),
+            0.10f to Color(0xFFA9AEB3),
+            0.20f to Color(0xFF686C71),
+            0.46f to Color(0xFF2F3134),
+            0.78f to Color(0xFF1E2023),
+            0.90f to Color(0xFF3C3F43),
+            1f to Color(0xFF141517),
             startY = top,
             endY = top + h,
         ),
         topLeft = Offset(0f, top),
         size = Size(size.width, h),
-        cornerRadius = CornerRadius(h / 2f),
     )
     // specular streak
-    drawRoundRect(
-        color = Color.White.copy(alpha = 0.30f),
-        topLeft = Offset(clampW + 2.dp.toPx(), top + h * 0.20f),
-        size = Size(size.width - clampW * 2f - 4.dp.toPx(), 1.2.dp.toPx()),
-        cornerRadius = CornerRadius(1.dp.toPx()),
+    drawRect(
+        color = Color.White.copy(alpha = 0.36f),
+        topLeft = Offset(0f, top + h * 0.16f),
+        size = Size(size.width, 1.dp.toPx()),
     )
-    // end clamps
-    for (x in floatArrayOf(0f, size.width - clampW)) {
+    // ambient falloff toward the ends
+    drawRect(
+        brush = Brush.horizontalGradient(
+            0f to Color.Black.copy(alpha = 0.35f),
+            0.12f to Color.Transparent,
+            0.88f to Color.Transparent,
+            1f to Color.Black.copy(alpha = 0.35f),
+        ),
+        topLeft = Offset(0f, top),
+        size = Size(size.width, h),
+    )
+
+    // end collars
+    val cw = 15.dp.toPx()
+    val ch = 29.dp.toPx()
+    val inset = 6.dp.toPx()
+    for (left in booleanArrayOf(true, false)) {
+        val x = if (left) inset else size.width - inset - cw
+        val y = centerY - ch / 2f
+        val r = CornerRadius(4.5.dp.toPx())
         drawRoundRect(
-            brush = Brush.verticalGradient(
-                0f to Color(0xFF55585C),
-                0.5f to Color(0xFF2A2C2F),
-                1f to Color(0xFF111213),
-                startY = centerY - clampH / 2f,
-                endY = centerY + clampH / 2f,
-            ),
-            topLeft = Offset(x, centerY - clampH / 2f),
-            size = Size(clampW, clampH),
-            cornerRadius = CornerRadius(3.dp.toPx()),
+            color = Ink.copy(alpha = 0.22f),
+            topLeft = Offset(x, y + 3.dp.toPx()),
+            size = Size(cw, ch),
+            cornerRadius = r,
         )
         drawRoundRect(
-            color = Color.White.copy(alpha = 0.22f),
-            topLeft = Offset(x + 1.dp.toPx(), centerY - clampH / 2f + 1.dp.toPx()),
-            size = Size(clampW - 2.dp.toPx(), 1.dp.toPx()),
+            brush = Brush.verticalGradient(
+                0f to Color(0xFF6C6F73),
+                0.16f to Color(0xFF3B3D41),
+                0.55f to Color(0xFF1F2022),
+                1f to Color(0xFF0D0E0F),
+                startY = y,
+                endY = y + ch,
+            ),
+            topLeft = Offset(x, y),
+            size = Size(cw, ch),
+            cornerRadius = r,
+        )
+        drawRoundRect(
+            brush = Brush.horizontalGradient(
+                0f to Color.White.copy(alpha = 0.20f),
+                0.35f to Color.Transparent,
+                1f to Color.Black.copy(alpha = 0.28f),
+                startX = x,
+                endX = x + cw,
+            ),
+            topLeft = Offset(x, y),
+            size = Size(cw, ch),
+            cornerRadius = r,
+        )
+        drawRoundRect(
+            color = Color.White.copy(alpha = 0.30f),
+            topLeft = Offset(x + 1.5.dp.toPx(), y + 1.dp.toPx()),
+            size = Size(cw - 3.dp.toPx(), 1.dp.toPx()),
             cornerRadius = CornerRadius(1.dp.toPx()),
+        )
+        // groove on the side facing the carriage
+        val gx = if (left) x + cw - 3.5.dp.toPx() else x + 2.5.dp.toPx()
+        drawRect(
+            color = Color.Black.copy(alpha = 0.55f),
+            topLeft = Offset(gx, y + 3.dp.toPx()),
+            size = Size(1.dp.toPx(), ch - 6.dp.toPx()),
         )
     }
 }
 
+/** A recessed glass LED: bezel, domed lens, specular glint and (when lit) a soft glow. */
+private fun DrawScope.drawLed(c: Offset, r: Float, lens: Color, lit: Float) {
+    drawCircle(Color.Black.copy(alpha = 0.10f), radius = r * 1.9f, center = c + Offset(0f, 0.8.dp.toPx()))
+    drawCircle(Color(0xFFBDB49D), radius = r * 1.6f, center = c)
+    drawCircle(Color.Black.copy(alpha = 0.40f), radius = r * 1.38f, center = c + Offset(0f, 0.5.dp.toPx()))
+    if (lit > 0.01f) {
+        drawCircle(lens.copy(alpha = 0.34f * lit), radius = r * 3.6f, center = c)
+    }
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to lerp(lens, Color.White, 0.55f),
+            0.55f to lens,
+            1f to lerp(lens, Color.Black, 0.38f),
+            center = c - Offset(r * 0.3f, r * 0.3f),
+            radius = r * 1.5f,
+        ),
+        radius = r,
+        center = c,
+    )
+    drawCircle(Color.White.copy(alpha = 0.65f), radius = r * 0.26f, center = c - Offset(r * 0.32f, r * 0.36f))
+}
+
 /**
- * The capsule carriage: cream body with a lit top bevel, three LEDs and the T hammer.
+ * The carriage: puffy cream capsule with a lit rim, recessed LEDs and the T hammer.
  * Local origin = top-left of the capsule's box; the capsule sits low so the hammer has room above it.
  * @param strike 1 right after a keystroke, easing back to 0
+ * @param breathe 0.55..1 slow pulse for the idle LED glow
  */
-private fun DrawScope.drawCarriage(strike: Float) {
+private fun DrawScope.drawCarriage(strike: Float, breathe: Float) {
     val w = size.width
     val capH = CapsuleHeight.toPx()
-    val capTop = (RailCenterY.toPx() - capH / 2f) + 1.dp.toPx() * strike.coerceIn(0f, 1f)
-    val corner = CornerRadius(capH / 2f)
     val s = strike.coerceIn(-0.3f, 1f)
+    val capTop = (RailCenterY.toPx() - capH / 2f) + 1.5.dp.toPx() * s.coerceAtLeast(0f)
+    val corner = CornerRadius(capH / 2f)
+    val cx = w * 0.5f
 
-    // ── T hammer (drawn first so the capsule hides its foot) ──
-    val cx = w * 0.52f
-    val lift = 5.dp.toPx() * s
-    val barW = 15.dp.toPx()
-    val barH = 3.5.dp.toPx()
-    val barTop = capTop - 17.dp.toPx() - lift
+    // ── shadows: tight contact shadow + soft cast shadow on the paper ──
+    for (i in 0..3) {
+        val grow = i * 2.5.dp.toPx()
+        drawRoundRect(
+            color = Ink.copy(alpha = floatArrayOf(0.20f, 0.12f, 0.07f, 0.04f)[i]),
+            topLeft = Offset(-grow + 2.dp.toPx(), capTop + 6.dp.toPx() - grow * 0.4f),
+            size = Size(w - 4.dp.toPx() + grow * 2f, capH + grow),
+            cornerRadius = CornerRadius(capH / 2f + grow),
+        )
+    }
     drawRoundRect(
-        brush = Brush.horizontalGradient(
-            0f to Color(0xFFC9C7C0),
-            1f to Color(0xFF7C7D79),
-            startX = cx - 1.5.dp.toPx(),
-            endX = cx + 1.5.dp.toPx(),
-        ),
-        topLeft = Offset(cx - 1.5.dp.toPx(), barTop + barH),
-        size = Size(3.dp.toPx(), capTop - barTop - barH + 4.dp.toPx()),
+        color = Color.Black.copy(alpha = 0.40f),
+        topLeft = Offset(4.dp.toPx(), capTop + 3.dp.toPx()),
+        size = Size(w - 8.dp.toPx(), capH),
+        cornerRadius = corner,
     )
+
+    // ── T hammer (behind the body so the capsule hides its foot) ──
+    val lift = 5.dp.toPx() * s
+    val barW = 22.dp.toPx()
+    val barH = 6.dp.toPx()
+    val stemW = 4.dp.toPx()
+    val barTop = capTop - 19.dp.toPx() - lift
+    // its shadow on the paper
+    drawRoundRect(
+        color = Ink.copy(alpha = 0.14f),
+        topLeft = Offset(cx - barW / 2f + 3.dp.toPx(), barTop + 4.dp.toPx()),
+        size = Size(barW, barH),
+        cornerRadius = CornerRadius(2.dp.toPx()),
+    )
+    // stem — lit cylinder
+    drawRect(
+        brush = Brush.horizontalGradient(
+            0f to Color(0xFFE6E5E0),
+            0.45f to Color(0xFFABACA8),
+            1f to Color(0xFF66676B),
+            startX = cx - stemW / 2f,
+            endX = cx + stemW / 2f,
+        ),
+        topLeft = Offset(cx - stemW / 2f, barTop + barH - 1.dp.toPx()),
+        size = Size(stemW, capTop - barTop - barH + 6.dp.toPx()),
+    )
+    // top bar — dark steel with a lit upper edge
     drawRoundRect(
         brush = Brush.verticalGradient(
-            0f to Color(0xFFF5F3EC),
-            1f to Color(0xFFA9A8A2),
+            0f to Color(0xFFA3A7AC),
+            0.28f to Color(0xFF6B6F74),
+            1f to Color(0xFF2C2E31),
             startY = barTop,
             endY = barTop + barH,
         ),
         topLeft = Offset(cx - barW / 2f, barTop),
         size = Size(barW, barH),
-        cornerRadius = CornerRadius(1.5.dp.toPx()),
+        cornerRadius = CornerRadius(2.dp.toPx()),
     )
     drawRoundRect(
-        color = Color.Black.copy(alpha = 0.35f),
-        topLeft = Offset(cx - barW / 2f, barTop + barH),
-        size = Size(barW, 1.dp.toPx()),
+        brush = Brush.horizontalGradient(
+            0f to Color.Black.copy(alpha = 0.30f),
+            0.2f to Color.Transparent,
+            0.8f to Color.Transparent,
+            1f to Color.Black.copy(alpha = 0.30f),
+            startX = cx - barW / 2f,
+            endX = cx + barW / 2f,
+        ),
+        topLeft = Offset(cx - barW / 2f, barTop),
+        size = Size(barW, barH),
+        cornerRadius = CornerRadius(2.dp.toPx()),
     )
-
-    // ── contact shadow on the rail ──
-    drawRoundRect(
-        color = Color.Black.copy(alpha = 0.60f),
-        topLeft = Offset(3.dp.toPx(), capTop + 5.dp.toPx()),
-        size = Size(w - 6.dp.toPx(), capH),
-        cornerRadius = corner,
+    drawRect(
+        color = Color.White.copy(alpha = 0.50f),
+        topLeft = Offset(cx - barW / 2f + 2.dp.toPx(), barTop + 0.6.dp.toPx()),
+        size = Size(barW - 4.dp.toPx(), 0.9.dp.toPx()),
     )
 
     // ── body ──
     drawRoundRect(
         brush = Brush.verticalGradient(
-            colors = listOf(CapsuleLight, CapsuleDark),
+            0f to CapsuleTop,
+            0.45f to CapsuleMid,
+            1f to CapsuleBottom,
             startY = capTop,
             endY = capTop + capH,
         ),
@@ -881,55 +1085,71 @@ private fun DrawScope.drawCarriage(strike: Float) {
         size = Size(w, capH),
         cornerRadius = corner,
     )
-    // lit top bevel
+    // domed highlight, upper left
+    drawOval(
+        brush = Brush.radialGradient(
+            0f to Color.White.copy(alpha = 0.65f),
+            1f to Color.White.copy(alpha = 0f),
+            center = Offset(w * 0.36f, capTop + capH * 0.30f),
+            radius = w * 0.34f,
+        ),
+        topLeft = Offset(w * 0.08f, capTop + 2.dp.toPx()),
+        size = Size(w * 0.56f, capH * 0.50f),
+    )
+    // lit rim on top, shaded rim below
     drawRoundRect(
         brush = Brush.verticalGradient(
             colors = listOf(Color.White.copy(alpha = 0.95f), Color.Transparent),
             startY = capTop,
-            endY = capTop + capH * 0.6f,
+            endY = capTop + capH * 0.55f,
         ),
-        topLeft = Offset(0.6.dp.toPx(), capTop + 0.6.dp.toPx()),
-        size = Size(w - 1.2.dp.toPx(), capH - 1.2.dp.toPx()),
+        topLeft = Offset(0.7.dp.toPx(), capTop + 0.7.dp.toPx()),
+        size = Size(w - 1.4.dp.toPx(), capH - 1.4.dp.toPx()),
         cornerRadius = corner,
-        style = Stroke(width = 1.3.dp.toPx()),
+        style = Stroke(width = 1.5.dp.toPx()),
     )
-    // shaded underside
     drawRoundRect(
         brush = Brush.verticalGradient(
-            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.22f)),
-            startY = capTop + capH * 0.4f,
+            colors = listOf(Color.Transparent, Color(0xFF8C8268).copy(alpha = 0.45f)),
+            startY = capTop + capH * 0.45f,
             endY = capTop + capH,
         ),
-        topLeft = Offset(0.6.dp.toPx(), capTop + 0.6.dp.toPx()),
-        size = Size(w - 1.2.dp.toPx(), capH - 1.2.dp.toPx()),
+        topLeft = Offset(0.7.dp.toPx(), capTop + 0.7.dp.toPx()),
+        size = Size(w - 1.4.dp.toPx(), capH - 1.4.dp.toPx()),
         cornerRadius = corner,
-        style = Stroke(width = 1.3.dp.toPx()),
+        style = Stroke(width = 1.5.dp.toPx()),
     )
-    // hammer slot
+    // thin bounce light along the very bottom edge
     drawRoundRect(
-        color = Color.Black.copy(alpha = 0.40f),
-        topLeft = Offset(cx - 5.dp.toPx(), capTop + 1.5.dp.toPx()),
-        size = Size(10.dp.toPx(), 2.dp.toPx()),
+        color = Color.White.copy(alpha = 0.35f),
+        topLeft = Offset(capH * 0.45f, capTop + capH - 2.dp.toPx()),
+        size = Size(w - capH * 0.9f, 1.dp.toPx()),
         cornerRadius = CornerRadius(1.dp.toPx()),
     )
 
-    // ── LEDs: green → amber while a key is struck, dark, pink ──
-    val ledR = 2.3.dp.toPx()
-    val ledY = capTop + capH / 2f
-    val ledX = 14.dp.toPx()
-    val gap = 8.dp.toPx()
-    val leds = arrayOf(
-        lerp(Mint, LedAmber, s.coerceIn(0f, 1f)),
-        Color(0xFF2B2B2B),
-        LedPink,
+    // hammer slot — a dark recess with a lit lower lip
+    val slotW = 20.dp.toPx()
+    drawRoundRect(
+        color = Color(0xFF191817),
+        topLeft = Offset(cx - slotW / 2f, capTop - 1.5.dp.toPx()),
+        size = Size(slotW, 5.dp.toPx()),
+        cornerRadius = CornerRadius(1.5.dp.toPx()),
     )
-    for (i in 0 until 3) {
-        val c = Offset(ledX + gap * i, ledY)
-        if (i != 1) {
-            drawCircle(color = leds[i].copy(alpha = 0.30f), radius = ledR * 2.6f, center = c)
-        }
-        drawCircle(color = leds[i], radius = ledR, center = c)
-    }
+    drawRect(
+        color = Color.White.copy(alpha = 0.55f),
+        topLeft = Offset(cx - slotW / 2f + 1.dp.toPx(), capTop + 3.7.dp.toPx()),
+        size = Size(slotW - 2.dp.toPx(), 0.8.dp.toPx()),
+    )
+
+    // ── LEDs: green → amber while a key is struck, dark maroon, dusty rose ──
+    val ledR = 3.dp.toPx()
+    val ledY = capTop + capH / 2f + 1.dp.toPx()
+    val ledX = 17.dp.toPx()
+    val gap = 12.dp.toPx()
+    val sc = s.coerceIn(0f, 1f)
+    drawLed(Offset(ledX, ledY), ledR, lerp(LedGreen, LedAmber, sc), lit = maxOf(breathe, sc))
+    drawLed(Offset(ledX + gap, ledY), ledR, LedMaroon, lit = 0f)
+    drawLed(Offset(ledX + gap * 2f, ledY), ledR, LedRose, lit = 0f)
 }
 
 @Composable
