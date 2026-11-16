@@ -106,6 +106,14 @@ import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
 import com.rajatxo.lutea.ui.components.LightRaysBackground
 import kotlin.math.abs
 
@@ -208,7 +216,6 @@ private data class CarouselCard(
 fun SearchScreen() {
     val context = LocalContext.current
     var songs by remember { mutableStateOf<List<Song>>(emptyList()) }
-    var scanning by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(SearchFilter.ALL) }
     val playlists by PlaylistStore.playlists.collectAsState()
@@ -216,7 +223,6 @@ fun SearchScreen() {
 
     LaunchedEffect(Unit) {
         songs = withContext(Dispatchers.IO) { MusicScanner.scanMusic(context) }
-        scanning = false
     }
 
     // Keyboard open → the headline folds away and the deck shrinks, but neither
@@ -225,7 +231,7 @@ fun SearchScreen() {
     val imeInsets = WindowInsets.ime
     val imeVisible by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
     val bottomPad by animateDpAsState(
-        targetValue = if (imeVisible) 16.dp else 150.dp,
+        targetValue = if (imeVisible) 10.dp else 96.dp,
         label = "bottomPad",
     )
     val fieldGap by animateDpAsState(
@@ -274,205 +280,129 @@ fun SearchScreen() {
         }
     }
 
-    val songHits = remember(q, songs) {
-        if (q.isEmpty()) emptyList()
-        else songs.filter { songMatches(it, q) }
-    }
-    val artistHits = remember(q, songs) {
-        if (q.isEmpty()) emptyList()
-        else songs.filter { it.artist.contains(q, ignoreCase = true) }
-            .groupBy { it.artist }
-            .entries
-            .sortedByDescending { it.value.size }
-            .map { it.key to it.value }
-    }
-    val albumHits = remember(q, songs) {
-        if (q.isEmpty()) emptyList()
-        else songs.filter { it.album.contains(q, ignoreCase = true) }
-            .groupBy { it.album }
-            .entries
-            .sortedByDescending { it.value.size }
-            .map { it.key to it.value }
-    }
-    val playlistHits = remember(q, playlists) {
-        if (q.isEmpty()) emptyList()
-        else playlists.filter { it.name.contains(q, ignoreCase = true) }
-    }
-    val unexpected = remember(songs) {
-        if (songs.isEmpty()) emptyList()
-        else songs.shuffled(Random(songs.size * 31 + 7)).take(5)
+    // The deck and the field are the point of the page: when the keyboard opens,
+    // put the deck back at the top so it can never be scrolled out of the way.
+    LaunchedEffect(imeVisible) {
+        if (imeVisible && listState.layoutInfo.totalItemsCount > 0) listState.scrollToItem(0)
     }
 
-    // The deck and the field are the point of the page: when the keyboard opens,
-    // jump back to the top so neither can be scrolled out of the way.
-    LaunchedEffect(imeVisible) {
-        if (imeVisible) listState.scrollToItem(0)
+    // Results are parked for now: the space under the machine stays empty.
+    val graphicsLayer = rememberGraphicsLayer()
+    val backdrop = rememberLayerBackdrop(graphicsLayer = graphicsLayer) {
+        drawContent()
     }
+
+    // The headline's height. The deck scrolls up under it, into the blur.
+    val headerSpace by animateDpAsState(
+        targetValue = if (imeVisible) 10.dp else 112.dp,
+        label = "headerSpace",
+    )
+    val bandHeight = headerSpace + 34.dp
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
     ) {
-        // Same soft light rays as the playlist page.
-        LightRaysBackground(modifier = Modifier.fillMaxSize())
-
-        LazyColumn(
-            state = listState,
+        // ── 1. The page itself — captured so the band above can blur it ─────
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .imePadding(),
-            contentPadding = PaddingValues(top = 10.dp, bottom = bottomPad),
+                .layerBackdrop(backdrop),
         ) {
-            item {
-                AnimatedVisibility(
-                    visible = !imeVisible,
-                    enter = expandVertically() + fadeIn(),
-                    exit = shrinkVertically() + fadeOut(),
-                ) { Headline() }
-            }
-
-            if (deck.isNotEmpty()) {
-                item {
-                    Column {
-                        Spacer(Modifier.height(if (imeVisible) 8.dp else 22.dp))
-                        CardCarousel(
-                            cards = deck,
-                            fraction = cardFraction,
-                            resetKey = q,
-                            onPick = { card ->
-                                val song = card.song
-                                if (song != null) {
-                                    val queue = rankSongs(q, songs).ifEmpty { listOf(song) }
-                                    PlaybackConnection.playSong(song, queue)
-                                } else {
-                                    query = card.query
-                                    filter = SearchFilter.ALL
-                                }
-                            },
-                        )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .imePadding(),
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(top = headerSpace, bottom = 12.dp),
+                ) {
+                    if (deck.isNotEmpty()) {
+                        item {
+                            CardCarousel(
+                                cards = deck,
+                                fraction = cardFraction,
+                                resetKey = q,
+                                onPick = { card ->
+                                    val song = card.song
+                                    if (song != null) {
+                                        val queue = rankSongs(q, songs).ifEmpty { listOf(song) }
+                                        PlaybackConnection.playSong(song, queue)
+                                    } else {
+                                        query = card.query
+                                        filter = SearchFilter.ALL
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
-            }
 
-            item {
                 Spacer(Modifier.height(fieldGap))
+
                 SearchField(
                     query = query,
                     onQueryChange = { query = it },
                 )
-            }
 
-            item {
                 Spacer(Modifier.height(14.dp))
+
                 FilterChips(
                     selected = filter,
                     onSelect = { filter = it },
                 )
+
+                Spacer(Modifier.height(bottomPad))
             }
+        }
 
-            if (q.isEmpty()) {
-                item {
-                    Spacer(Modifier.height(26.dp))
-                    SectionTitle(
-                        title = "Go unexpected",
-                        subtitle = if (scanning) "Reading your library…" else "A few picks from your library",
-                    )
-                }
-                items(unexpected, key = { it.id }) { song ->
-                    SongRow(
-                        song = song,
-                        onClick = { PlaybackConnection.playSong(song, unexpected) },
-                    )
-                }
-                if (!scanning && songs.isEmpty()) {
-                    item {
-                        EmptyNote("No music on this device yet.")
-                    }
-                }
-            } else {
-                val showSongs = filter == SearchFilter.ALL || filter == SearchFilter.SONGS
-                val showArtists = filter == SearchFilter.ALL || filter == SearchFilter.ARTISTS
-                val showAlbums = filter == SearchFilter.ALL || filter == SearchFilter.ALBUMS
-
-                if (showSongs && songHits.isNotEmpty()) {
-                    item {
-                        Spacer(Modifier.height(22.dp))
-                        SectionTitle("Songs", "${songHits.size} found")
-                    }
-                    items(
-                        if (filter == SearchFilter.ALL) songHits.take(8) else songHits,
-                        key = { it.id },
-                    ) { song ->
-                        SongRow(
-                            song = song,
-                            onClick = { PlaybackConnection.playSong(song, songHits) },
+        // ── 2. The blur — a band that melts whatever slides under the header ─
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(bandHeight)
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { RectangleShape },
+                    effects = { blur(24.dp.toPx()) },
+                    onDrawSurface = {
+                        // DstOut: keep the blur where the gradient is clear (top),
+                        // erase it where the gradient turns opaque (bottom of band).
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0f to Color.Transparent,
+                                    0.45f to Color.Transparent,
+                                    1f to Color.White,
+                                ),
+                            ),
+                            blendMode = BlendMode.DstOut,
                         )
-                    }
-                }
+                    },
+                ),
+        )
 
-                if (showArtists && artistHits.isNotEmpty()) {
-                    item {
-                        Spacer(Modifier.height(18.dp))
-                        SectionTitle("Artists", null)
-                    }
-                    items(artistHits, key = { it.first }) { (artist, list) ->
-                        ArtistRow(
-                            name = artist,
-                            count = list.size,
-                            onClick = {
-                                query = artist
-                                filter = SearchFilter.ALL
-                            },
-                        )
-                    }
-                }
+        // ── 3. Light rays, on top of the blur so the light stays crisp ──────
+        LightRaysBackground(modifier = Modifier.fillMaxSize())
 
-                if (showAlbums && albumHits.isNotEmpty()) {
-                    item {
-                        Spacer(Modifier.height(18.dp))
-                        SectionTitle("Albums", null)
-                    }
-                    items(albumHits, key = { it.first }) { (album, list) ->
-                        AlbumRow(
-                            name = album,
-                            artist = list.firstOrNull()?.artist.orEmpty(),
-                            art = list.firstOrNull()?.albumArtUri,
-                            onClick = {
-                                query = album
-                                filter = SearchFilter.ALL
-                            },
-                        )
-                    }
-                }
-
-                if (filter == SearchFilter.ALL && playlistHits.isNotEmpty()) {
-                    item {
-                        Spacer(Modifier.height(18.dp))
-                        SectionTitle("Playlists", null)
-                    }
-                    items(playlistHits, key = { it.id }) { playlist ->
-                        val list = remember(playlist, songs) { songsOf(playlist, songs) }
-                        PlaylistRow(
-                            playlist = playlist,
-                            art = list.firstOrNull()?.albumArtUri,
-                            onClick = {
-                                list.firstOrNull()?.let { first ->
-                                    PlaybackConnection.playSong(first, list)
-                                }
-                            },
-                        )
-                    }
-                }
-
-                if (songHits.isEmpty() && artistHits.isEmpty() && albumHits.isEmpty() && playlistHits.isEmpty()) {
-                    item {
-                        Spacer(Modifier.height(30.dp))
-                        EmptyNote("Nothing matches “$q”.")
-                    }
-                }
-            }
+        // ── 4. The headline, on top of everything ───────────────────────────
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding(),
+        ) {
+            AnimatedVisibility(
+                visible = !imeVisible,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) { Headline() }
         }
     }
 }
