@@ -1587,18 +1587,20 @@ private fun EmptyNote(text: String) {
  * A query is added when the user actually plays a result from it (a decent
  * signal that the search was useful), capped at 8 entries, newest first.
  */
-private object SearchHistoryStore {
-    private val _entries = mutableStateOf<List<String>>(emptyList())
-    val entries: androidx.compose.runtime.State<List<String>> = _entries
+object SearchHistoryStore {
+    private val _entries = androidx.compose.runtime.mutableStateListOf<String>()
+    val entries: List<String> get() = _entries
 
     fun add(term: String) {
         val t = term.trim()
         if (t.isEmpty()) return
-        _entries.value = (listOf(t) + _entries.value.filter { it.equals(t, ignoreCase = true).not() }).take(8)
+        _entries.removeAll { it.equals(t, ignoreCase = true) }
+        _entries.add(0, t)
+        while (_entries.size > 8) _entries.removeAt(_entries.size - 1)
     }
 
     fun remove(term: String) {
-        _entries.value = _entries.value.filter { it != term }
+        _entries.removeAll { it == term }
     }
 }
 
@@ -1612,7 +1614,10 @@ private object SearchHistoryStore {
 private fun SearchHistory(
     onPick: (String) -> Unit,
 ) {
-    val items by SearchHistoryStore.entries.collectAsState()
+    // Reading SearchHistoryStore.entries (a SnapshotStateList) inside a
+    // composable registers as a snapshot read, so the section rebuilds
+    // whenever a query is added or removed.
+    val items = SearchHistoryStore.entries
     if (items.isEmpty()) return
 
     Column(
