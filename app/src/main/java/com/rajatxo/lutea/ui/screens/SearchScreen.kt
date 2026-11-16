@@ -120,7 +120,7 @@ private val TextStart = 58.dp               // margin + padding + glyph(18) + ga
 private val LightColor = Color(0xFFFFE3A3)      // warm tungsten cream
 private val InkColor = Color(0xFF2B2416)        // typewriter ink: text turns to this inside the beam
 private const val BeamReachFactor = 1.30f       // reach = 1.3x the height above the slot, so it fades past the top
-private const val BeamHalfAngleDeg = 52f        // 104 degree spread
+private const val BeamHalfAngleDeg = 66f        // 132 degree spread
 private const val BeamLayers = 18               // fallback only (pre-Android 13) — stacked cones
 
 /** Radial fall-off of the light (distance as a fraction of reach -> brightness): bright at the T, fading like real light. */
@@ -184,6 +184,7 @@ private const val BeamShaderSource = """
 uniform float2 uApex;
 uniform float uReach;
 uniform float uHalf;
+uniform float uBase;
 uniform float uLevel;
 uniform float4 uColor;
 uniform float uInk;
@@ -197,11 +198,13 @@ half4 main(float2 p) {
     float dist = length(d);
     float t = clamp(dist / max(uReach, 1.0), 0.0, 1.0);
     float ang = atan(abs(d.x), max(up, 0.0001));
-    float u = clamp(ang / max(uHalf, 0.001), 0.0, 1.0);
+    // a real slot has width: the beam leaves already ~uBase wide, then flares open
+    float spread = max(up, 0.0001) * tan(min(uHalf, 1.5)) + uBase;
+    float u = clamp(abs(d.x) / max(spread, 0.001), 0.0, 1.0);
 
-    float cone = 1.0 - smoothstep(0.52, 1.0, u);
+    float cone = 1.0 - smoothstep(0.42, 1.0, u);
     float radial = pow(1.0 - t, 1.15);
-    float spill = (1.0 - smoothstep(0.0, 0.30, t)) * cone * 0.32;
+    float spill = (1.0 - smoothstep(0.0, 0.30, t)) * cone * 0.38;
     float lightA = clamp((cone * radial + spill) * uLevel, 0.0, 1.0);
 
     float inkA = clamp(cone * (1.0 - smoothstep(0.10, 0.44, t)) * uLevel * 3.0, 0.0, 1.0);
@@ -370,7 +373,7 @@ private fun SearchMachine(
                     val apex = apexProvider()
                     val reach = reachProvider()
                     if (beamShader != null) {
-                        drawShaderBeam(beamShader, apex, reach, level * 0.72f, LightColor, 0f)
+                        drawShaderBeam(beamShader, apex, reach, level * 0.72f, LightColor, 0f, 12.dp.toPx())
                     } else {
                         drawLightBeam(beamPath, apex, reach, level, unit)
                     }
@@ -900,10 +903,12 @@ private fun DrawScope.drawShaderBeam(
     level: Float,
     color: Color,
     ink: Float,
+    base: Float,
 ) {
     shader.setFloatUniform("uApex", apex.x, apex.y)
     shader.setFloatUniform("uReach", reach)
     shader.setFloatUniform("uHalf", (BeamHalfAngleDeg * PI / 180.0).toFloat())
+    shader.setFloatUniform("uBase", base)
     shader.setFloatUniform("uLevel", level)
     shader.setFloatUniform("uColor", color.red, color.green, color.blue, 1f)
     shader.setFloatUniform("uInk", ink)
@@ -950,7 +955,7 @@ private fun Modifier.litByBeam(
             if (l > 0.003f) {
                 val local = apex() - (rootPos - columnRoot())      // lamp position in this element's own space
                 if (shader != null) {
-                    drawShaderBeam(shader, local, reach(), l, InkColor, 1f)
+                    drawShaderBeam(shader, local, reach(), l, InkColor, 1f, 12.dp.toPx())
                 } else {
                     drawBeamInk(path, local, reach(), l, unit)
                 }
