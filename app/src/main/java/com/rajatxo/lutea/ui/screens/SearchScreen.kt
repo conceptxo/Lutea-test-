@@ -2,6 +2,7 @@ package com.rajatxo.lutea.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -46,6 +47,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -75,6 +77,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -84,6 +87,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -651,13 +655,15 @@ private fun DrawScope.paintGlowField(hot: Color) {
 //  Everything is drawn with gradients and smooth layered shadows — no images.
 // ═══════════════════════════════════════════════════════════════════════════
 
-private val TypeCream = Color(0xFFF4EEDF)
+private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
 
 private val CapsuleWidth = 80.dp
 private val CapsuleHeight = 34.dp
-private val RailAreaHeight = 66.dp
-private val RailCenterY = 44.dp         // centre of the rail inside the rail area
-private val TextStart = 28.dp           // search glyph + gap: where typed text begins
+private val RailAreaHeight = 60.dp
+private val RailCenterY = 36.dp         // centre of the rail inside the rail area
+private val TextSideInset = 24.dp
+private val TextStart = 52.dp           // side inset + search glyph + gap: where typed text begins
+private val TypedLineHeight = 26.dp     // kept short so the text sits right above the hammer
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -668,15 +674,17 @@ private fun SearchField(
     val density = LocalDensity.current
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    // Everything on the rail is designed for a 360dp-wide phone and scales with the screen width.
+    val k = (LocalConfiguration.current.screenWidthDp / 360f).coerceIn(0.85f, 1.35f)
 
     var caretPx by remember { mutableStateOf(0f) }      // caret x inside the text box
     var viewportPx by remember { mutableStateOf(0f) }   // visible width of the text box
     var railPx by remember { mutableStateOf(0f) }       // rail (= card) width
 
     // Carriage target: centre the capsule under the caret, keep it between the end clamps.
-    val capsuleWPx = with(density) { CapsuleWidth.toPx() }
+    val capsuleWPx = with(density) { CapsuleWidth.toPx() } * k
     val textStartPx = with(density) { TextStart.toPx() }
-    val edgePx = with(density) { 26.dp.toPx() }
+    val edgePx = with(density) { 26.dp.toPx() } * k
     val maxLeft = (railPx - capsuleWPx - edgePx).coerceAtLeast(edgePx)
     val targetLeft = (textStartPx + minOf(caretPx, viewportPx) - capsuleWPx / 2f)
         .coerceIn(edgePx, maxLeft)
@@ -690,14 +698,13 @@ private fun SearchField(
     val strike = remember { Animatable(0f) }
     LaunchedEffect(query) {
         if (query.isNotEmpty()) {
-            strike.snapTo(1f)
-            strike.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 700f))
+            strike.animateTo(1f, tween(40, easing = LinearOutSlowInEasing))   // hammer flies up to the text
+            strike.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 900f))   // and drops back
         }
     }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -710,7 +717,8 @@ private fun SearchField(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(40.dp),
+                .padding(horizontal = TextSideInset)
+                .height(TypedLineHeight),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -774,20 +782,24 @@ private fun SearchField(
             }
         }
 
-        // ── rail + carriage (full card width, like the pipe in the reference) ──
+        // ── rail + carriage: edge to edge, scaled to the screen width ──
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(RailAreaHeight)
+                .height(RailAreaHeight * k)
                 .onSizeChanged { railPx = it.width.toFloat() },
         ) {
-            Canvas(modifier = Modifier.fillMaxSize()) { drawRail(RailCenterY.toPx()) }
-            Box(
-                modifier = Modifier
-                    .size(CapsuleWidth, RailAreaHeight)
-                    .graphicsLayer { translationX = carriageX }
-                    .drawBehind { drawCarriage(strike.value) },
-            )
+            CompositionLocalProvider(
+                LocalDensity provides Density(density.density * k, density.fontScale),
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) { drawRail(RailCenterY.toPx()) }
+                Box(
+                    modifier = Modifier
+                        .size(CapsuleWidth, RailAreaHeight)
+                        .graphicsLayer { translationX = carriageX }
+                        .drawBehind { drawCarriage(strike.value) },
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
     }
@@ -795,7 +807,7 @@ private fun SearchField(
 
 /** Slate pipe: soft top edge, broad pale highlight band at ~40%, falling to near-black. */
 private fun DrawScope.drawRail(centerY: Float) {
-    val h = 16.dp.toPx()
+    val h = 13.5.dp.toPx()
     val top = centerY - h / 2f
 
     drawRect(
@@ -822,8 +834,8 @@ private fun DrawScope.drawRail(centerY: Float) {
     )
 
     // square charcoal collars at both ends
-    val cw = 12.dp.toPx()
-    val ch = 22.dp.toPx()
+    val cw = 11.dp.toPx()
+    val ch = 19.dp.toPx()
     val inset = 6.dp.toPx()
     for (left in booleanArrayOf(true, false)) {
         val x = if (left) inset else size.width - inset - cw
@@ -913,11 +925,11 @@ private fun DrawScope.drawCarriage(strike: Float) {
     )
 
     // ── T hammer: light-grey stem under a small dark cylinder bar ──
-    val lift = 4.dp.toPx() * s
+    val lift = 9.dp.toPx() * s
     val barW = 15.dp.toPx()
     val barH = 4.8.dp.toPx()
     val stemW = 3.4.dp.toPx()
-    val stemLen = 15.dp.toPx()
+    val stemLen = 11.dp.toPx()
     val barTop = capTop - stemLen - barH - lift
     softShadow(
         topLeft = Offset(cx - barW / 2f + 1.5.dp.toPx(), barTop + 2.dp.toPx()),
@@ -963,19 +975,19 @@ private fun DrawScope.drawCarriage(strike: Float) {
         )
     }
 
-    // ── body: almost flat warm white ──
+    // ── body: almost flat butter cream (#FCF2C7) ──
     drawRoundRect(
         brush = Brush.verticalGradient(
-            0f to Color(0xFFECE8DD),
-            0.06f to Color(0xFFE7E2DC),
-            0.20f to Color(0xFFEAE6DD),
-            0.30f to Color(0xFFE9E4DE),
-            0.45f to Color(0xFFE8E4DB),
-            0.80f to Color(0xFFE8E4DB),
-            0.88f to Color(0xFFE5E1D8),
-            0.93f to Color(0xFFDFD8CE),
-            0.97f to Color(0xFFCFC8BE),
-            1f to Color(0xFFB5AE9E),
+            0f to Color(0xFFFFF8DC),
+            0.06f to Color(0xFFFDF4CD),
+            0.20f to Color(0xFFFCF3CB),
+            0.30f to Color(0xFFFCF2C9),
+            0.45f to Color(0xFFFCF2C7),
+            0.80f to Color(0xFFFCF2C7),
+            0.88f to Color(0xFFF9EEBE),
+            0.93f to Color(0xFFF2E3AB),
+            0.97f to Color(0xFFE3D08C),
+            1f to Color(0xFFC9B374),
             startY = capTop,
             endY = capTop + capH,
         ),
@@ -985,14 +997,14 @@ private fun DrawScope.drawCarriage(strike: Float) {
     )
     // hairline outline
     drawRoundRect(
-        color = Color(0xFFD6D1C4).copy(alpha = 0.75f),
+        color = Color(0xFFE8D9A0).copy(alpha = 0.75f),
         topLeft = Offset(0.4.dp.toPx(), capTop + 0.4.dp.toPx()),
         size = Size(w - 0.8.dp.toPx(), capH - 0.8.dp.toPx()),
         cornerRadius = corner,
         style = Stroke(width = 0.8.dp.toPx()),
     )
     // soft shading rolling the underside away from the light (wide + narrow stroke = smooth)
-    val shade = Color(0xFFA49D8B)
+    val shade = Color(0xFFB59F5A)
     drawRoundRect(
         brush = Brush.verticalGradient(
             0.50f to shade.copy(alpha = 0f),
@@ -1020,10 +1032,10 @@ private fun DrawScope.drawCarriage(strike: Float) {
     // faint darkening along the two rounded ends
     drawRoundRect(
         brush = Brush.horizontalGradient(
-            0f to Color(0xFFB8B0A0).copy(alpha = 0.32f),
+            0f to Color(0xFFCDB878).copy(alpha = 0.32f),
             0.10f to Color.Transparent,
             0.90f to Color.Transparent,
-            1f to Color(0xFFB8B0A0).copy(alpha = 0.32f),
+            1f to Color(0xFFCDB878).copy(alpha = 0.32f),
             startX = 0f,
             endX = w,
         ),
@@ -1035,8 +1047,8 @@ private fun DrawScope.drawCarriage(strike: Float) {
     // bevel line: a pale curved highlight ~20% down that bends round both ends and fades out
     val inset = capH * 0.19f
     val bevelBrush = Brush.verticalGradient(
-        0f to Color(0xFFFBF8F3).copy(alpha = 0.95f),
-        1f to Color(0xFFFBF8F3).copy(alpha = 0f),
+        0f to Color(0xFFFFFDEB).copy(alpha = 0.95f),
+        1f to Color(0xFFFFFDEB).copy(alpha = 0f),
         startY = capTop + inset,
         endY = capTop + capH * 0.52f,
     )
