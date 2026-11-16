@@ -212,11 +212,19 @@ private data class CarouselCard(
 
 @Composable
 fun SearchScreen() {
-    // Haze state: everything inside the source box is what the top band blurs.
+    // Haze state: everything inside the source box is what the header blur eats.
     val hazeState = remember { HazeState() }
+    val density = LocalDensity.current
+    val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+
+    // The static header zone: the headline lives here, and it never moves.
+    val headerZone = statusTop + 96.dp
+
+    val history = remember { sampleHistory() }
+    val listState = rememberLazyListState()
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // ── What the page is made of (and what the top band blurs) ───────────
+        // ── Everything the blur samples: background, rays, and the scrolling list ──
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -232,13 +240,123 @@ fun SearchScreen() {
             // The light rays.
             LightRaysBackground(modifier = Modifier.fillMaxSize())
 
-            // ── the deck, the machine and the chips come back here, one at a time ──
+            // ── History: starts right under the headline, slides up into the blur ──
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = headerZone),
+                contentPadding = PaddingValues(bottom = 180.dp),
+            ) {
+                items(history) { entry ->
+                    HistoryRow(text = entry)
+                }
+            }
         }
 
-        // ── The header blur ──────────────────────────────────────────────────
-        TopBlur(hazeState)
+        // ── The blur: pinned right under the headline, melting the list into it ──
+        HeaderBlur(hazeState = hazeState, top = headerZone)
+
+        // ── The headline: static, and always on top of the blur ──
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding(),
+        ) {
+            Headline()
+        }
     }
 }
+
+/** How far the blur runs below the headline before it is fully gone. */
+private val BlurRun = 132.dp
+
+/** Blur strength right under the headline (0..1). */
+private const val BlurPeak = 0.95f
+
+/** Wash over the band, strongest at its top. */
+private const val BlurScrimPeak = 0.34f
+
+private const val BlurScrimStops = 12
+
+/**
+ * The header blur — a band pinned just under the headline. Content scrolling up
+ * behind it is blurred as a progressive vertical gradient: full strength at the
+ * headline's edge, easing out to nothing [BlurRun] below. A soft scrim of the
+ * page colour rides on top so the band reads as one sheet of glass.
+ */
+@Composable
+private fun HeaderBlur(hazeState: HazeState, top: Dp) {
+    Box(
+        modifier = Modifier
+            .padding(top = top)
+            .fillMaxWidth()
+            .height(BlurRun)
+            .hazeEffect(state = hazeState) {
+                blurRadius = 26.dp
+                noiseFactor = 0f
+                progressive = HazeProgressive.verticalGradient(
+                    easing = EaseOutCubic,
+                    startIntensity = BlurPeak,
+                    endIntensity = 0f,
+                )
+            },
+    )
+
+    Box(
+        modifier = Modifier
+            .padding(top = top)
+            .fillMaxWidth()
+            .height(BlurRun)
+            .background(
+                Brush.verticalGradient(
+                    colorStops = Array(BlurScrimStops) { i ->
+                        val t = i / (BlurScrimStops - 1f)
+                        t to PageTop.copy(alpha = BlurScrimPeak * (1f - EaseOutCubic.transform(t)))
+                    },
+                ),
+            ),
+    )
+}
+
+/** One recent search — plain text, bright enough to read the blur on. */
+@Composable
+private fun HistoryRow(text: String) {
+    Text(
+        text = text,
+        color = Color.White.copy(alpha = 0.92f),
+        fontSize = 22.sp,
+        fontWeight = FontWeight.Medium,
+        fontFamily = SearchSans,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+    )
+}
+
+/** Placeholder recents, just to watch them slide under the blur. */
+private fun sampleHistory(): List<String> = listOf(
+    "coldplay",
+    "colours",
+    "cubic",
+    "midnight city",
+    "the weeknd",
+    "sunflower",
+    "lofi beats to study",
+    "arctic monkeys",
+    "do i wanna know",
+    "tame impala",
+    "let it happen",
+    "pink floyd",
+    "comfortably numb",
+    "daft punk",
+    "instant crush",
+    "radiohead",
+    "weird fishes",
+    "kendrick lamar",
+    "money trees",
+    "frank ocean",
+)
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  1b. TOP BLUR — the header zone melts whatever sits under it
