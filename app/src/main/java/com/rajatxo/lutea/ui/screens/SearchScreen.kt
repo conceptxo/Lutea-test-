@@ -255,7 +255,7 @@ fun SearchScreen() {
         }
 
         // ── The blur: pinned right under the headline, melting the list into it ──
-        HeaderBlur(hazeState = hazeState, top = headerZone)
+        HeaderBlur(hazeState = hazeState, height = headerZone + BlurRun)
 
         // ── The headline: static, and always on top of the blur ──
         Column(
@@ -274,24 +274,24 @@ private val BlurRun = 132.dp
 /** Blur strength right under the headline (0..1). */
 private const val BlurPeak = 0.95f
 
-/** Wash over the band, strongest at its top. */
-private const val BlurScrimPeak = 0.34f
+/** Dark wash over the band, strongest at its top — kills any pale seam. */
+private const val BlurScrimPeak = 0.46f
 
 private const val BlurScrimStops = 12
 
 /**
- * The header blur — a band pinned just under the headline. Content scrolling up
- * behind it is blurred as a progressive vertical gradient: full strength at the
- * headline's edge, easing out to nothing [BlurRun] below. A soft scrim of the
- * page colour rides on top so the band reads as one sheet of glass.
+ * The header blur — one band from the very top of the screen down past the
+ * headline, so there is no seam behind the title. Content scrolling up behind it
+ * is blurred as a progressive vertical gradient: full strength at the top,
+ * easing out to nothing at the bottom of the band. A dark scrim rides on top,
+ * fading with it, so the band reads as a single sheet of glass.
  */
 @Composable
-private fun HeaderBlur(hazeState: HazeState, top: Dp) {
+private fun HeaderBlur(hazeState: HazeState, height: Dp) {
     Box(
         modifier = Modifier
-            .padding(top = top)
             .fillMaxWidth()
-            .height(BlurRun)
+            .height(height)
             .hazeEffect(state = hazeState) {
                 blurRadius = 26.dp
                 noiseFactor = 0f
@@ -305,14 +305,13 @@ private fun HeaderBlur(hazeState: HazeState, top: Dp) {
 
     Box(
         modifier = Modifier
-            .padding(top = top)
             .fillMaxWidth()
-            .height(BlurRun)
+            .height(height)
             .background(
                 Brush.verticalGradient(
                     colorStops = Array(BlurScrimStops) { i ->
                         val t = i / (BlurScrimStops - 1f)
-                        t to PageTop.copy(alpha = BlurScrimPeak * (1f - EaseOutCubic.transform(t)))
+                        t to Color.Black.copy(alpha = BlurScrimPeak * (1f - EaseOutCubic.transform(t)))
                     },
                 ),
             ),
