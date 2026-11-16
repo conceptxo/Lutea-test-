@@ -185,7 +185,7 @@ uniform float2 uApex;
 uniform float uReach;
 uniform float uHalf;
 uniform float uLevel;
-uniform float3 uColor;
+uniform float4 uColor;
 uniform float uInk;
 
 half4 main(float2 p) {
@@ -210,7 +210,7 @@ half4 main(float2 p) {
     float dither = (fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
     a = clamp(a + dither * (1.0 - clamp(uInk, 0.0, 1.0)), 0.0, 1.0);
 
-    return half4(uColor * a, a);
+    return half4(uColor.rgb * a, a);
 }
 """
 
@@ -905,7 +905,7 @@ private fun DrawScope.drawShaderBeam(
     shader.setFloatUniform("uReach", reach)
     shader.setFloatUniform("uHalf", (BeamHalfAngleDeg * PI / 180.0).toFloat())
     shader.setFloatUniform("uLevel", level)
-    shader.setFloatUniform("uColor", color.red, color.green, color.blue)
+    shader.setFloatUniform("uColor", color.red, color.green, color.blue, 1f)
     shader.setFloatUniform("uInk", ink)
     drawRect(
         brush = ShaderBrush(shader),
