@@ -1,7 +1,9 @@
 package com.rajatxo.lutea.ui.screens
 
+import android.content.Context
 import android.graphics.RuntimeShader
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
@@ -12,9 +14,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -24,17 +30,26 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,39 +65,55 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.sin
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SEARCH PAGE — a bare search line and the typewriter under it.
+//
+//  Search page: a bare search line, the typewriter under it, and the past
+//  searches below the rail as tear-off paper tickets.
 //
 //  Top to bottom:  the search icon + text box (nothing around them, straight on
 //  the page — you type here) →
@@ -92,6 +123,7 @@ import kotlin.math.sin
 //      green  = actively typing
 //      yellow = keyboard open, paused
 //      red    = backspace / ✕ pressed
+//  Below the rail: one ticket per search, torn off by its stub to clear it.
 //  The three dots on the carriage are a speaker grille: always black.
 //  Everything is drawn with gradients — no images.
 //
@@ -171,6 +203,58 @@ private val SearchGlyph: ImageVector = ImageVector.Builder(
 }.build()
 
 /**
+ * Lucide "history" glyph (MIT) — simplified clock face, inlined so the
+ * tickets own their icon.
+ */
+private val HistoryGlyph: ImageVector = ImageVector.Builder(
+    name = "History",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 2f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+        strokeLineMiter = 4f,
+    ) {
+        moveTo(21f, 12f)
+        arcTo(9f, 9f, 0f, true, true, 3f, 12f)
+        arcTo(9f, 9f, 0f, true, true, 21f, 12f)
+        moveTo(12f, 7f)
+        lineTo(12f, 12f)
+        lineTo(15.5f, 14f)
+    }
+}.build()
+
+/** The little curved arrow printed on the stub: "pull me off". */
+private val TearGlyph: ImageVector = ImageVector.Builder(
+    name = "Tear",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 2f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+        strokeLineMiter = 4f,
+    ) {
+        moveTo(6f, 6f)
+        curveTo(12f, 6f, 18f, 9f, 18f, 17f)
+        moveTo(14f, 14f)
+        lineTo(18f, 18f)
+        lineTo(22f, 14f)
+    }
+}.build()
+
+/**
  * AGSL (Android Graphics Shading Language) — this is the thing that paints real light on Android: a fragment
  * shader compiled by Skia at runtime. Every pixel works out its own distance and angle from the slot and fades
  * itself, so the cone is perfectly smooth — no stacked triangles, no banding, no visible layer edges.
@@ -224,6 +308,29 @@ private fun rememberBeamShader(): RuntimeShader? = remember {
 @Composable
 fun SearchScreen() {
     var query by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val history = remember { mutableStateListOf<String>() }
+
+    // Searches live between launches. A fresh install is seeded with a few papers
+    // so the tear-off stack has something to show before real results are wired.
+    LaunchedEffect(Unit) {
+        val saved = loadSearchHistory(context)
+        if (saved == null) {
+            history.addAll(DemoSearchHistory)
+            saveSearchHistory(context, history)
+        } else {
+            history.addAll(saved)
+        }
+    }
+
+    fun addToHistory(raw: String) {
+        val entry = raw.trim()
+        if (entry.isEmpty()) return
+        history.removeAll { it.equals(entry, ignoreCase = true) }
+        history.add(0, entry)
+        while (history.size > 30) history.removeAt(history.lastIndex)
+        saveSearchHistory(context, history)
+    }
 
     Box(
         modifier = Modifier
@@ -249,9 +356,56 @@ fun SearchScreen() {
             SearchMachine(
                 query = query,
                 onQueryChange = { query = it },
+                onSearch = { addToHistory(query) },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth(),
+            )
+        }
+
+        // Search history: one tear-off paper per past search, below the machine.
+        // It scrolls independently; papers dissolve into black before they reach
+        // the rail, so nothing ever looks cut off or coloured differently.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.5f)
+                .align(Alignment.BottomCenter),
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 14.dp,
+                    end = 14.dp,
+                    top = 52.dp,
+                    bottom = 96.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(history, key = { it }) { entry ->
+                    SearchHistoryPaper(
+                        query = entry,
+                        onClear = {
+                            history.remove(entry)
+                            saveSearchHistory(context, history)
+                        },
+                    )
+                }
+            }
+
+            // Same black the page gradient already has here → no colour seam.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(HistoryFadeHeight)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Black,
+                            0.55f to Color.Black,
+                            1f to Color.Transparent,
+                        ),
+                    ),
             )
         }
     }
@@ -262,6 +416,7 @@ fun SearchScreen() {
 private fun SearchMachine(
     query: String,
     onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -448,6 +603,8 @@ private fun SearchMachine(
                         onQueryChange(next)
                     },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { onSearch() }),
                     textStyle = TextStyle(
                         color = Color.White,
                         fontSize = 15.sp,
@@ -936,4 +1093,452 @@ private fun DrawScope.drawShaderBeam(
         size = Size(reach * 3f, reach),
         blendMode = if (ink > 0.5f) BlendMode.SrcAtop else BlendMode.Plus,
     )
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SEARCH HISTORY — one tear-off paper ticket per past search
+//
+//  A port of the Kokonut UI "tear button": the stub swings on a stiff spring,
+//  the perforation gives hole by hole (stick-slip), a tick per hole, then the
+//  stub snaps off under gravity. Drag it, or just tap it and it tears itself.
+// ═══════════════════════════════════════════════════════════════════════════
+
+private val DemoSearchHistory = listOf(
+    "Kesariya",
+    "Apocalypse",
+    "Nightcall",
+    "Luther",
+    "Sofia",
+    "Starboy",
+    "Evergreen",
+)
+
+private val HistoryPaperHeight = 64.dp
+private val HistoryStubWidth = 74.dp
+private val HistoryNotchRadius = 7.dp
+private val HistoryFadeHeight = 44.dp
+private val HistoryPaperTop = Color(0xFFF7EEDA)
+private val HistoryPaperBottom = Color(0xFFE3D6B3)
+private val HistoryInk = Color(0xFF2B2416)
+
+private const val HistoryPrefs = "lutea_search"
+private const val HistoryKey = "history"
+
+/** Tear geometry, same numbers as the original component. */
+private const val TearAngle = 34f
+private const val TearHoles = 7
+private const val TearHold = 0.55f
+private const val TearHoldShare = 0.3f
+private const val TearStiffness = 900f
+private const val TearDamping = 42f
+private const val TearReturnStiffness = 520f
+private const val TearReturnDamping = 22f
+private const val TearGravity = 2600f       // dp / s²
+private const val TearFallDistance = 190f   // dp
+
+/** Ragged edge of the tear, offsets in dp along the perforation. */
+private val TearFibres = floatArrayOf(
+    1.6f, 0.4f, 2.2f, 0.9f, 1.8f, 0.2f, 2.4f, 1.1f, 0.5f, 2f,
+    1.4f, 0.3f, 2.3f, 0.8f, 1.7f, 0.1f, 2.1f, 1.2f, 0.6f, 1.9f,
+)
+
+/** History is stored as a JSON array; `null` means "never seeded", `[]` means "cleared". */
+private fun loadSearchHistory(context: Context): List<String>? {
+    val raw = context.getSharedPreferences(HistoryPrefs, Context.MODE_PRIVATE)
+        .getString(HistoryKey, null) ?: return null
+    return runCatching {
+        val arr = JSONArray(raw)
+        buildList {
+            for (i in 0 until arr.length()) {
+                val entry = arr.optString(i)
+                if (entry.isNotBlank()) add(entry)
+            }
+        }
+    }.getOrNull()
+}
+
+private fun saveSearchHistory(context: Context, entries: List<String>) {
+    val arr = JSONArray()
+    entries.forEach { arr.put(it) }
+    context.getSharedPreferences(HistoryPrefs, Context.MODE_PRIVATE)
+        .edit()
+        .putString(HistoryKey, arr.toString())
+        .apply()
+}
+
+/** Raw pull (0..1) → how far the tear has run, holding at each hole. */
+private fun stickSlip(pull: Float): Float {
+    val scaled = pull.coerceIn(0f, 1f) * TearHoles
+    val hole = minOf(scaled.toInt(), TearHoles - 1)
+    val f = scaled - hole
+    val given = if (f < TearHold) {
+        (f / TearHold) * TearHoldShare
+    } else {
+        TearHoldShare + ((f - TearHold) / (1f - TearHold)) * (1f - TearHoldShare)
+    }
+    return (hole + given) / TearHoles
+}
+
+/**
+ * One side of the tear as a polygon: ragged down to `tip`, straight below.
+ * `side` is 1 for the body's right edge, -1 for the stub's left edge.
+ */
+private fun buildTearPath(
+    path: Path,
+    width: Float,
+    height: Float,
+    tip: Float,
+    side: Int,
+    fibres: FloatArray,
+) {
+    path.reset()
+    val far = if (side == 1) 0f else width
+    val edge = if (side == 1) width else 0f
+    path.moveTo(far, 0f)
+    val rows = ceil((tip / height) * fibres.size).toInt()
+    for (k in 0..rows) {
+        val y = minOf((k / fibres.size.toFloat()) * height, tip)
+        val x = edge - side * fibres[k % fibres.size]
+        path.lineTo(x, y)
+    }
+    path.lineTo(edge, tip)
+    path.lineTo(edge, height)
+    path.lineTo(far, height)
+    path.close()
+}
+
+private class TearSim {
+    var angle by mutableFloatStateOf(0f)
+    var speed = 0f
+    var target = 0f
+    var held = false
+    var auto = false
+    var hole = 0
+    var flying by mutableStateOf(false)
+    var x by mutableFloatStateOf(0f)
+    var y by mutableFloatStateOf(0f)
+    var vx = 0f
+    var vy = 0f
+    var spin = 0f
+    var grabAngle = 0f
+    var px = 0f
+    var py = 0f
+    var pt = 0L
+    var pvx = 0f
+    var pvy = 0f
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun SearchHistoryPaper(
+    query: String,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val view = LocalView.current
+    val currentOnClear by rememberUpdatedState(onClear)
+    val sim = remember { TearSim() }
+    var loopActive by remember { mutableStateOf(false) }
+
+    val fibrePx = remember(density) {
+        FloatArray(TearFibres.size) { TearFibres[it] * density.density }
+    }
+    val notchPx = with(density) { HistoryNotchRadius.toPx() }
+    val fallPx = with(density) { TearFallDistance.toPx() }
+    val heightPx = with(density) { HistoryPaperHeight.toPx() }
+
+    val bodyTear = remember { Path() }
+    val stubTear = remember { Path() }
+    val bodyShape = remember {
+        RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp, topEnd = 1.dp, bottomEnd = 1.dp)
+    }
+    val stubShape = remember {
+        RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp, topStart = 1.dp, bottomStart = 1.dp)
+    }
+    val paperBrush = remember {
+        Brush.verticalGradient(0f to HistoryPaperTop, 1f to HistoryPaperBottom)
+    }
+
+    fun tick() {
+        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
+
+    // While the paper is held, springing back, or flying, this advances the sim
+    // once a frame. Reads happen inside graphicsLayer / drawWithContent, so the
+    // ticket animates without recomposing the list on every frame.
+    LaunchedEffect(loopActive) {
+        if (!loopActive) return@LaunchedEffect
+        val d = density.density
+        var last = 0L
+        while (true) {
+            val now = withFrameNanos { it }
+            val dt = if (last == 0L) 1f / 120f
+            else ((now - last) / 1_000_000_000f).coerceIn(1f / 240f, 0.05f)
+            last = now
+
+            if (sim.flying) {
+                sim.vy += TearGravity * d * dt
+                sim.x += sim.vx * dt
+                sim.y += sim.vy * dt
+                sim.angle += sim.spin * dt
+                if (sim.y > fallPx) {
+                    currentOnClear()
+                    break
+                }
+            } else {
+                val active = sim.held || sim.auto
+                if (sim.auto) {
+                    sim.target = (sim.target + dt * 60f).coerceAtMost(TearAngle * 1.05f)
+                }
+                val stiffness = if (active) TearStiffness else TearReturnStiffness
+                val damping = if (active) TearDamping else TearReturnDamping
+                val force = (sim.target - sim.angle) * stiffness - sim.speed * damping
+                sim.speed += force * dt
+                sim.angle += sim.speed * dt
+
+                // A tick for each hole that gives.
+                val hole = ((sim.angle / TearAngle).coerceIn(0f, 1f) * TearHoles).toInt()
+                if (hole > sim.hole) {
+                    sim.hole = hole
+                    tick()
+                }
+
+                if (active && sim.angle >= TearAngle * 0.995f) {
+                    sim.held = false
+                    view.performHapticFeedback(
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            HapticFeedbackConstants.CONFIRM
+                        } else {
+                            HapticFeedbackConstants.LONG_PRESS
+                        },
+                    )
+                    // Leaves with the swing it had, plus the hand's throw.
+                    val rad = sim.angle * PI.toFloat() / 180f
+                    val tangential = (sim.speed * PI.toFloat() / 180f) * heightPx
+                    sim.x = 0f
+                    sim.y = 0f
+                    sim.vx = cos(rad) * tangential +
+                        sim.pvx.coerceIn(-900f, 900f) * 0.6f + 30f * d
+                    sim.vy = sin(rad) * tangential +
+                        sim.pvy.coerceIn(-900f, 900f) * 0.6f - 45f * d
+                    sim.spin = sim.speed * 0.6f + 140f
+                    sim.flying = true
+                } else if (!active && abs(sim.angle) < 0.02f && abs(sim.speed) < 0.05f) {
+                    sim.angle = 0f
+                    sim.speed = 0f
+                    sim.hole = 0
+                    break
+                }
+            }
+        }
+        loopActive = false
+    }
+
+    Box(
+        modifier = modifier
+            .zIndex(if (sim.flying) 1f else 0f)
+            .fillMaxWidth()
+            .height(HistoryPaperHeight),
+    ) {
+        // ── the body: chip, query, hint; its right edge tears away ──
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = HistoryStubWidth)
+                .clip(bodyShape)
+                .background(paperBrush)
+                .drawWithContent {
+                    val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
+                    if (tip > 0.5f) {
+                        buildTearPath(bodyTear, size.width, size.height, tip, 1, fibrePx)
+                        clipPath(bodyTear) { this@drawWithContent.drawContent() }
+                    } else {
+                        this@drawWithContent.drawContent()
+                    }
+                    // Ticket notches: the black behind the paper shows through
+                    // the seam, exactly where the perforation meets the edges.
+                    drawCircle(Color.Black, notchPx, Offset(size.width, 0f))
+                    drawCircle(Color.Black, notchPx, Offset(size.width, size.height))
+                },
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 16.dp, end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(HistoryInk.copy(alpha = 0.09f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = HistoryGlyph,
+                        contentDescription = null,
+                        tint = HistoryInk.copy(alpha = 0.72f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = query,
+                        color = HistoryInk,
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.2.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "Pull the stub to clear",
+                        color = HistoryInk.copy(alpha = 0.52f),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        // ── the stub: swings on the foot of the perforation, then falls ──
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(HistoryStubWidth)
+                .graphicsLayer {
+                    transformOrigin = TransformOrigin(0f, 1f)
+                    rotationZ = sim.angle
+                    if (sim.flying) {
+                        translationX = sim.x
+                        translationY = sim.y
+                        val fade = 1f - ((sim.y - fallPx * 0.5f) / (fallPx * 0.5f))
+                        alpha = fade.coerceIn(0f, 1f)
+                    }
+                }
+                .clip(stubShape)
+                .background(paperBrush)
+                .drawWithContent {
+                    val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
+                    if (tip > 0.5f) {
+                        buildTearPath(stubTear, size.width, size.height, tip, -1, fibrePx)
+                        clipPath(stubTear) { this@drawWithContent.drawContent() }
+                    } else {
+                        this@drawWithContent.drawContent()
+                    }
+                    // The perforation: a dotted line that lives on the stub, so
+                    // it swings and falls with it.
+                    drawLine(
+                        color = HistoryInk.copy(alpha = 0.30f),
+                        start = Offset(1.dp.toPx(), notchPx + 1.dp.toPx()),
+                        end = Offset(1.dp.toPx(), size.height - notchPx - 1.dp.toPx()),
+                        strokeWidth = 1.8.dp.toPx(),
+                        cap = StrokeCap.Round,
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(0.1f, 4.4.dp.toPx()),
+                            0f,
+                        ),
+                    )
+                    drawCircle(Color.Black, notchPx, Offset(0f, 0f))
+                    drawCircle(Color.Black, notchPx, Offset(0f, size.height))
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = TearGlyph,
+                    contentDescription = null,
+                    tint = HistoryInk.copy(alpha = 0.62f),
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Clear",
+                    color = HistoryInk.copy(alpha = 0.62f),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+
+        // Gesture surface: a still sibling over the resting stub. If the gesture
+        // lived on the rotating stub, Compose would feed the pointer back through
+        // the rotation and the angle would chase its own tail.
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(HistoryStubWidth)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (sim.flying) return@awaitEachGesture
+                        down.consume()
+                        val h = size.height.toFloat()
+                        sim.held = true
+                        sim.auto = false
+                        sim.grabAngle =
+                            atan2(down.position.y - h, down.position.x) * 180f / PI.toFloat() -
+                            sim.angle
+                        sim.px = down.position.x
+                        sim.py = down.position.y
+                        sim.pt = down.uptimeMillis
+                        sim.pvx = 0f
+                        sim.pvy = 0f
+                        sim.hole = ((sim.angle / TearAngle).coerceIn(0f, 1f) * TearHoles).toInt()
+                        loopActive = true
+
+                        var dragged = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.pressed) {
+                                val pos = change.position
+                                val dt = (change.uptimeMillis - sim.pt).coerceAtLeast(1L)
+                                sim.pvx = sim.pvx * 0.5f + ((pos.x - sim.px) / dt) * 500f
+                                sim.pvy = sim.pvy * 0.5f + ((pos.y - sim.py) / dt) * 500f
+                                sim.px = pos.x
+                                sim.py = pos.y
+                                sim.pt = change.uptimeMillis
+                                if ((pos - down.position).getDistance() > 8.dp.toPx()) {
+                                    dragged = true
+                                }
+                                val raw =
+                                    atan2(pos.y - h, pos.x) * 180f / PI.toFloat() - sim.grabAngle
+                                // Pushing the stub back into the body only gives a little.
+                                val pull = if (raw < 0f) raw * 0.15f else raw
+                                sim.target = if (pull >= TearAngle) {
+                                    TearAngle * 1.05f
+                                } else {
+                                    stickSlip(pull.coerceAtLeast(0f) / TearAngle) * TearAngle +
+                                        minOf(pull, 0f)
+                                }
+                                change.consume()
+                            } else {
+                                sim.held = false
+                                if (!sim.flying) {
+                                    if (!dragged &&
+                                        change.uptimeMillis - down.uptimeMillis < 320L
+                                    ) {
+                                        sim.auto = true   // a tap tears it hole by hole
+                                    }
+                                    sim.target = 0f
+                                }
+                                change.consume()
+                                break
+                            }
+                        }
+                    }
+                },
+        )
+    }
 }
