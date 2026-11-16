@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,10 +19,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -61,14 +64,16 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SEARCH PAGE — gradient, a pressed-in search capsule, and the typewriter under it.
+//  SEARCH PAGE — a pressed-in search panel, and the typewriter under it.
 //
-//  Top to bottom:  the search capsule (carved INTO the screen, you type here) →
+//  Top to bottom:  the search panel (a rounded square carved INTO the screen and
+//  running off the top edge — you type in its bottom band) →
 //  the T hammer → the cream carriage on its steel rail. The carriage follows the
 //  caret; on every keystroke the hammer taps up under the text like a typebar.
 //  The carriage's top slot shows the typing state:
@@ -93,11 +98,13 @@ private val CapsuleHeight = 34.dp
 private val RailAreaHeight = 52.dp          // hammer on top, rail at 30dp, a little air under the pipe
 private val RailCenterY = 30.dp             // centre of the rail inside the rail area
 
-// The pressed-in search capsule that sits right above the mechanism.
-private val CapsuleBarHeight = 42.dp
+// The pressed-in search panel that sits right above the mechanism.
+private val CapsuleBarHeight = 42.dp        // the band the icon + text live in
 private val CapsuleSideMargin = 10.dp
 private val CapsuleBevel = 2.dp
 private val CapsuleInnerPadding = 8.dp
+private val CapsuleCorner = 22.dp           // rounded square, not a pill
+private val CapsuleTopOvershoot = 56.dp     // the panel runs this far past the screen top
 private val TextStart = 58.dp               // margin + bevel + padding + glyph(18) + gap(20): where typed text begins
 
 private enum class TypeState { IDLE, TYPING, PAUSED, CLEARED }
@@ -134,27 +141,25 @@ private val SearchGlyph: ImageVector = ImageVector.Builder(
 fun SearchScreen() {
     var query by remember { mutableStateOf("") }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(PageBackground),
     ) {
-        // The machine is parked in the top half of the page with its rail sitting
-        // on the horizontal centre line. The keyboard starts below the middle on
-        // every phone, so it can never reach it — no insets, no movement.
-        Box(
+        val halfHeight = maxHeight / 2
+
+        // The machine hangs from the top of the page, pushed up so the panel runs
+        // off the screen and the rail lands exactly on the horizontal centre line.
+        // The keyboard starts below the middle, so it can never reach it.
+        SearchMachine(
+            query = query,
+            onQueryChange = { query = it },
+            topHalfHeight = halfHeight,
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.5f),
-        ) {
-            SearchMachine(
-                query = query,
-                onQueryChange = { query = it },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
-            )
-        }
+                .align(Alignment.TopCenter)
+                .offset(y = -CapsuleTopOvershoot)
+                .fillMaxWidth(),
+        )
     }
 }
 
@@ -163,6 +168,7 @@ fun SearchScreen() {
 private fun SearchMachine(
     query: String,
     onQueryChange: (String) -> Unit,
+    topHalfHeight: Dp,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -170,6 +176,12 @@ private fun SearchMachine(
     val keyboard = LocalSoftwareKeyboardController.current
     // Everything on the rail is designed for a 360dp-wide phone and scales with the screen width.
     val k = (LocalConfiguration.current.screenWidthDp / 360f).coerceIn(0.85f, 1.35f)
+
+    // The panel's top goes past the top of the screen; its bottom (and the bar
+    // inside it) stays exactly where the capsule used to be.
+    val railAreaDp = RailAreaHeight * k
+    val panelHeight = (topHalfHeight - railAreaDp - 2.dp + CapsuleTopOvershoot)
+        .coerceAtLeast(CapsuleBarHeight)
 
     var caretPx by remember { mutableStateOf(0f) }      // caret x inside the text box
     var viewportPx by remember { mutableStateOf(0f) }   // visible width of the text box
@@ -236,25 +248,31 @@ private fun SearchMachine(
 
 
     Column(modifier = modifier) {
-        // ── the search capsule: carved into the screen (dark lip on top, light lip below) ──
-        Row(
+        // ── the search panel: a rounded square pressed into the screen, running
+        //    off the top; the icon + text sit in the bottom band, exactly where
+        //    the old capsule was ──
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = CapsuleSideMargin)
-                .height(CapsuleBarHeight)
-                .clip(CircleShape)
+                .height(panelHeight)
+                .clip(RoundedCornerShape(CapsuleCorner))
                 .background(
                     Brush.verticalGradient(
-                        0f to Color(0xFF050506),
-                        0.20f to Color(0xFF141416),
-                        0.55f to Color(0xFF35353A),
-                        0.82f to Color(0xFF4B4B52),
-                        1f to Color(0xFF5F5F67),
+                        0f to Color(0xFF45454B),
+                        0.55f to Color(0xFF515158),
+                        1f to Color(0xFF616169),
                     ),
                 )
                 .padding(CapsuleBevel)
-                .clip(CircleShape)
-                .drawBehind { drawPressedIn() }
+                .clip(RoundedCornerShape(CapsuleCorner - CapsuleBevel))
+                .drawBehind { drawPressedIn(CapsuleCorner - CapsuleBevel) },
+        ) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(CapsuleBarHeight)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -347,6 +365,7 @@ private fun SearchMachine(
                 }
             }
         }
+        }
 
         Spacer(Modifier.height(2.dp))
 
@@ -383,7 +402,7 @@ private fun SearchMachine(
  * The inside of the pressed-in search capsule (already clipped to the pill): a dark well with a deep
  * shadow under the top lip and down both sides, and a thin light line where the bottom lip catches light.
  */
-private fun DrawScope.drawPressedIn() {
+private fun DrawScope.drawPressedIn(corner: Dp) {
     val h = size.height
     val w = size.width
     // the well itself — a touch of light at the bottom so the lip shadows read
@@ -426,7 +445,7 @@ private fun DrawScope.drawPressedIn() {
         ),
         topLeft = Offset(0.8.dp.toPx(), 0.8.dp.toPx()),
         size = Size(w - 1.6.dp.toPx(), h - 1.6.dp.toPx()),
-        cornerRadius = CornerRadius(h / 2f - 0.8.dp.toPx()),
+        cornerRadius = CornerRadius(corner.toPx() - 0.8.dp.toPx()),
         style = Stroke(width = 1.4.dp.toPx()),
     )
     // crisp dark edge along the top inside
@@ -439,7 +458,7 @@ private fun DrawScope.drawPressedIn() {
         ),
         topLeft = Offset(0.6.dp.toPx(), 0.6.dp.toPx()),
         size = Size(w - 1.2.dp.toPx(), h - 1.2.dp.toPx()),
-        cornerRadius = CornerRadius(h / 2f - 0.6.dp.toPx()),
+        cornerRadius = CornerRadius(corner.toPx() - 0.6.dp.toPx()),
         style = Stroke(width = 1.2.dp.toPx()),
     )
 }
