@@ -118,7 +118,6 @@ private val TextStart = 58.dp               // margin + padding + glyph(18) + ga
 
 // ── the lamp: light released by the T hammer ──────────────────────────────
 private val LightColor = Color(0xFFFFE3A3)      // warm tungsten cream
-private val InkColor = Color(0xFF2B2416)        // typewriter ink: text turns to this inside the beam
 private const val BeamReachFactor = 1.30f       // reach = 1.3x the height above the slot, so it fades past the top
 private const val BeamHalfAngleDeg = 66f        // 132 degree spread
 private const val BeamLayers = 18               // fallback only (pre-Android 13) — stacked cones
@@ -127,11 +126,6 @@ private const val BeamLayers = 18               // fallback only (pre-Android 13
 private val LightFalloff = arrayOf(
     0.00f to 1.00f, 0.03f to 0.96f, 0.08f to 0.82f, 0.15f to 0.62f, 0.25f to 0.40f,
     0.38f to 0.22f, 0.55f to 0.09f, 0.78f to 0.025f, 1.00f to 0.00f,
-)
-
-/** Where the paper is lit strongly enough for the text to flip to dark ink. */
-private val InkFalloff = arrayOf(
-    0.00f to 1.00f, 0.17f to 1.00f, 0.23f to 0.85f, 0.29f to 0.45f, 0.35f to 0.12f, 0.42f to 0.00f, 1.00f to 0.00f,
 )
 
 /** Weight of each stacked cone: bell-shaped, so brightness stays full in the middle and eases out smoothly to the edge. */
@@ -373,9 +367,9 @@ private fun SearchMachine(
                     val apex = apexProvider()
                     val reach = reachProvider()
                     if (beamShader != null) {
-                        drawShaderBeam(beamShader, apex, reach, level * 0.72f, LightColor, 0f, 12.dp.toPx())
+                        drawShaderBeam(beamShader, apex, reach, level * 0.30f, LightColor, 0f, 12.dp.toPx())
                     } else {
-                        drawLightBeam(beamPath, apex, reach, level, unit)
+                        drawLightBeam(beamPath, apex, reach, level * 0.35f, unit)
                     }
                 }
             },
@@ -400,21 +394,18 @@ private fun SearchMachine(
                 imageVector = SearchGlyph,
                 contentDescription = null,
                 tint = Color.White.copy(alpha = 0.95f),
-                modifier = Modifier
-                    .size(18.dp)
-                    .litByBeam({ colRoot }, apexProvider, levelProvider, reachProvider, unit, beamPath, beamShader),
+                modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(20.dp))
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .onSizeChanged { viewportPx = it.width.toFloat() }
-                    .litByBeam({ colRoot }, apexProvider, levelProvider, reachProvider, unit, beamPath, beamShader),
+                    .onSizeChanged { viewportPx = it.width.toFloat() },
             ) {
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
-                        color = Color.White.copy(alpha = 0.42f),
+                        color = Color.White.copy(alpha = 0.55f),
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.2.sp,
@@ -918,47 +909,4 @@ private fun DrawScope.drawShaderBeam(
         size = Size(reach * 3f, reach),
         blendMode = if (ink > 0.5f) BlendMode.SrcAtop else BlendMode.Plus,
     )
-}
-
-/** Same beam, but painted in ink colour over the content's own pixels only (SrcAtop): lit text turns dark like print on lit paper. */
-private fun DrawScope.drawBeamInk(path: Path, apex: Offset, reach: Float, level: Float, unit: Float) {
-    val half = (BeamHalfAngleDeg * 0.8f * PI / 180.0).toFloat()    // ink sits inside the bright core
-    val brush = Brush.radialGradient(
-        colorStops = Array(InkFalloff.size) { InkFalloff[it].first to InkColor.copy(alpha = InkFalloff[it].second) },
-        center = apex,
-        radius = reach,
-    )
-    drawBeamLayers(path, apex, reach, half, brush, strength = 2.2f * level.coerceAtMost(1f), blend = BlendMode.SrcAtop)
-}
-
-/** Lets a piece of UI (icon / text) sit under the lamp: where the beam hits it, white turns to dark ink. */
-@Composable
-private fun Modifier.litByBeam(
-    columnRoot: () -> Offset,
-    apex: () -> Offset,
-    level: () -> Float,
-    reach: () -> Float,
-    unit: Float,
-    path: Path,
-    shader: RuntimeShader?,
-): Modifier {
-    var rootPos by remember { mutableStateOf(Offset.Zero) }
-    return this
-        .onGloballyPositioned { rootPos = it.positionInRoot() }
-        .graphicsLayer {
-            compositingStrategy =
-                if (level() > 0.003f) CompositingStrategy.Offscreen else CompositingStrategy.Auto
-        }
-        .drawWithContent {
-            drawContent()
-            val l = level()
-            if (l > 0.003f) {
-                val local = apex() - (rootPos - columnRoot())      // lamp position in this element's own space
-                if (shader != null) {
-                    drawShaderBeam(shader, local, reach(), l, InkColor, 1f, 12.dp.toPx())
-                } else {
-                    drawBeamInk(path, local, reach(), l, unit)
-                }
-            }
-        }
 }
