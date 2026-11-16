@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -141,6 +142,12 @@ fun LuteaScaffold(
     val graphicsLayer = rememberGraphicsLayer()
     val glassBackdrop = rememberLayerBackdrop(graphicsLayer = graphicsLayer) {
         drawContent()
+    }
+
+    // The search page pins its machine to the keyboard; while the keyboard is
+    // up the mini player would just sit behind it, so it gets out of the way.
+    val imeOpen by remember {
+        derivedStateOf { WindowInsets.ime.getBottom(density) > 0 }
     }
 
     var menuOpen by remember { mutableStateOf(false) }
@@ -566,6 +573,7 @@ fun LuteaScaffold(
                     .align(Alignment.BottomCenter)
                     .padding(bottom = effBottomDp + 56.dp),
                 onExpand = { playerVisible = true },
+                hidden = imeOpen,
             )
 
             // Bottom: nav capsule (fluid 3-circle expanding nav). Centered at

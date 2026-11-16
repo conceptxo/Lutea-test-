@@ -39,12 +39,13 @@ import com.rajatxo.lutea.ui.components.CalSansFamily
 fun MiniPlayer(
     modifier: Modifier = Modifier,
     onExpand: () -> Unit = {},
+    hidden: Boolean = false,
 ) {
     val currentSong by PlaybackConnection.currentSong.collectAsState()
     val isPlaying by PlaybackConnection.isPlaying.collectAsState()
 
     AnimatedVisibility(
-        visible = currentSong != null,
+        visible = currentSong != null && !hidden,
         enter = slideInVertically(animationSpec = tween(300)) { it } + fadeIn(),
         exit = slideOutVertically(animationSpec = tween(300)) { it } + fadeOut(),
         modifier = modifier,

@@ -109,10 +109,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import com.rajatxo.lutea.ui.components.LightRaysBackground
-import dev.chrisbanes.haze.HazeProgressive
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
+import com.rajatxo.lutea.ui.foundation.LocalLuteaWindowInsets
 import kotlin.math.abs
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -212,42 +209,50 @@ private data class CarouselCard(
 
 @Composable
 fun SearchScreen() {
-    // Haze state: everything inside the source box is what the header blur eats.
-    val hazeState = remember { HazeState() }
-    val density = LocalDensity.current
-    val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
-
-    // The static header zone: the headline lives here, and it never moves.
-    val headerZone = statusTop + 96.dp
-
+    var query by remember { mutableStateOf("") }
     val history = remember { sampleHistory() }
     val listState = rememberLazyListState()
 
+    val density = LocalDensity.current
+    val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+
+    // Static header zone: the headline lives here and never moves.
+    val headerZone = statusTop + 96.dp
+
+    // Keyboard + mini player both push the machine around.
+    val imeInsets = WindowInsets.ime
+    val keyboardOpen by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
+    val nowPlaying by PlaybackConnection.currentSong.collectAsState()
+    val navBottom = with(density) {
+        LocalLuteaWindowInsets.current.getBottom(this).toDp()
+    }
+
+    // Where the machine rests: on the keyboard when it is up, otherwise just
+    // above the mini player (when a song is loaded) or the nav bar.
+    val floor by animateDpAsState(
+        targetValue = when {
+            keyboardOpen -> 12.dp
+            nowPlaying != null -> navBottom + 44.dp
+            else -> navBottom
+        },
+        label = "machineFloor",
+    )
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // ── Everything the blur samples: background, rays, and the scrolling list ──
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .hazeSource(hazeState),
-        ) {
-            // Background: charcoal → black, the playlist page's gradient.
+        // ── The page: gradient, rays, and the scrolling history ──────────────
+        Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
             )
 
-            // The light rays.
             LightRaysBackground(modifier = Modifier.fillMaxSize())
 
-            // ── History: starts right under the headline, slides up into the blur ──
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                // No layout padding: the list runs all the way to the top of the
-                // screen so rows slide UNDER the header blur instead of being
-                // chopped at its edge. The padding only sets where row 1 starts.
-                contentPadding = PaddingValues(top = headerZone + 4.dp, bottom = 180.dp),
+                contentPadding = PaddingValues(top = headerZone + 4.dp, bottom = 220.dp),
             ) {
                 items(history) { entry ->
                     HistoryRow(text = entry)
@@ -255,10 +260,21 @@ fun SearchScreen() {
             }
         }
 
-        // ── The blur: pinned right under the headline, melting the list into it ──
-        HeaderBlur(hazeState = hazeState, height = headerZone + BlurRun)
+        // ── Top fade: a black gradient that swallows rows as they rise ───────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(headerZone + 76.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colorStops = TopFadeStops.map { (at, alpha) ->
+                            at to Color.Black.copy(alpha = alpha)
+                        }.toTypedArray(),
+                    ),
+                ),
+        )
 
-        // ── The headline: static, and always on top of the blur ──
+        // ── Headline: static, above the fade ─────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -266,66 +282,37 @@ fun SearchScreen() {
         ) {
             Headline()
         }
+
+        // ── The machine: pinned above the keyboard ───────────────────────────
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .imePadding()
+                .padding(bottom = floor),
+        ) {
+            SearchField(
+                query = query,
+                onQueryChange = { query = it },
+            )
+        }
     }
 }
 
-/** How far the blur runs below the headline before it is fully gone. */
-private val BlurRun = 132.dp
-
-/** Blur strength right under the headline (0..1). */
-private const val BlurPeak = 0.95f
-
 /**
- * The wash over the band, as (position, alpha) pairs. Nearly opaque at the very
- * top so rows genuinely disappear behind the title, then a smooth melt to clear
- * at the bottom of the band.
+ * The top fade, as (position, alpha) pairs. Solid black over the status bar and
+ * headline, melting to nothing [TopFadeRun] below, so rows dissolve as they
+ * slide up instead of being cut off.
  */
-private val BlurScrim = arrayOf(
-    0.00f to 0.86f,
-    0.22f to 0.80f,
-    0.44f to 0.50f,
-    0.70f to 0.20f,
+private val TopFadeStops = arrayOf(
+    0.00f to 1.00f,
+    0.26f to 0.97f,
+    0.50f to 0.64f,
+    0.74f to 0.26f,
     1.00f to 0.00f,
 )
 
-/**
- * The header blur — one band from the very top of the screen down past the
- * headline, so there is no seam behind the title. Content scrolling up behind it
- * is blurred as a progressive vertical gradient: full strength at the top,
- * easing out to nothing at the bottom of the band. A dark scrim rides on top,
- * fading with it, so the band reads as a single sheet of glass.
- */
-@Composable
-private fun HeaderBlur(hazeState: HazeState, height: Dp) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(height)
-            .hazeEffect(state = hazeState) {
-                blurRadius = 26.dp
-                noiseFactor = 0f
-                progressive = HazeProgressive.verticalGradient(
-                    easing = EaseOutCubic,
-                    startIntensity = BlurPeak,
-                    endIntensity = 0f,
-                )
-            },
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(height)
-            .background(
-                Brush.verticalGradient(
-                    colorStops = BlurScrim.map { (at, alpha) -> at to Color.Black.copy(alpha = alpha) }
-                        .toTypedArray(),
-                ),
-            ),
-    )
-}
-
-/** One recent search — plain text, bright enough to read the blur on. */
+/** One recent search — plain text, bright enough to read the fade on. */
 @Composable
 private fun HistoryRow(text: String) {
     Text(
@@ -340,7 +327,7 @@ private fun HistoryRow(text: String) {
     )
 }
 
-/** Placeholder recents, just to watch them slide under the blur. */
+/** Placeholder recents, just to watch them slide under the fade. */
 private fun sampleHistory(): List<String> = listOf(
     "coldplay",
     "colours",
@@ -363,64 +350,6 @@ private fun sampleHistory(): List<String> = listOf(
     "money trees",
     "frank ocean",
 )
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  1b. TOP BLUR — the header zone melts whatever sits under it
-// ═══════════════════════════════════════════════════════════════════════════
-
-/** How far past the header zone the blur runs before it has faded out. */
-private val TopBlurRun = 96.dp
-
-/** Blur strength at the very top of the band (0..1). */
-private const val TopBlurPeak = 0.9f
-
-/** Wash over the band, strongest at the top. Keeps the edge off the glass. */
-private const val TopScrimPeak = 0.38f
-
-/** Scrim stops — more stops means a smoother melt. */
-private const val TopScrimStops = 12
-
-/**
- * The top blur — a band across the header zone that blurs whatever is behind it
- * as a progressive vertical gradient: full strength at the status bar, easing
- * out to nothing [TopBlurRun] below the header. A soft scrim of the page colour
- * sits over it so the top reads as one sheet rather than a hard-edged strip.
- */
-@Composable
-private fun TopBlur(hazeState: HazeState) {
-    val density = LocalDensity.current
-    val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
-    val bandHeight = statusTop + 64.dp + TopBlurRun
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(bandHeight)
-            .hazeEffect(state = hazeState) {
-                blurRadius = 24.dp
-                noiseFactor = 0f
-                progressive = HazeProgressive.verticalGradient(
-                    easing = EaseOutCubic,
-                    startIntensity = TopBlurPeak,
-                    endIntensity = 0f,
-                )
-            },
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(bandHeight)
-            .background(
-                Brush.verticalGradient(
-                    colorStops = Array(TopScrimStops) { i ->
-                        val t = i / (TopScrimStops - 1f)
-                        t to PageTop.copy(alpha = TopScrimPeak * (1f - EaseOutCubic.transform(t)))
-                    },
-                ),
-            ),
-    )
-}
 
 private fun songMatches(song: Song, q: String): Boolean =
     song.title.contains(q, ignoreCase = true) ||
