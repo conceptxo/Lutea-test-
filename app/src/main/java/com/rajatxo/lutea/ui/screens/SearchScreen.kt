@@ -1240,13 +1240,13 @@ private fun SearchHistoryPaper(
     val view = LocalView.current
     val currentOnClear by rememberUpdatedState(onClear)
     val sim = remember { TearSim() }
-    var loopActive by remember { mutableStateOf(false) }
+    var wakeToken by remember { mutableStateOf(0) }
 
     val fibrePx = remember(density) {
         FloatArray(TearFibres.size) { TearFibres[it] * density.density }
     }
     val notchPx = with(density) { HistoryNotchRadius.toPx() }
-    val fallPx = with(density) { TearFallDistance.toPx() }
+    val fallPx = TearFallDistance * density.density
     val heightPx = with(density) { HistoryPaperHeight.toPx() }
 
     val bodyTear = remember { Path() }
@@ -1268,8 +1268,7 @@ private fun SearchHistoryPaper(
     // While the paper is held, springing back, or flying, this advances the sim
     // once a frame. Reads happen inside graphicsLayer / drawWithContent, so the
     // ticket animates without recomposing the list on every frame.
-    LaunchedEffect(loopActive) {
-        if (!loopActive) return@LaunchedEffect
+    LaunchedEffect(wakeToken) {
         val d = density.density
         var last = 0L
         while (true) {
@@ -1333,7 +1332,6 @@ private fun SearchHistoryPaper(
                 }
             }
         }
-        loopActive = false
     }
 
     Box(
@@ -1495,7 +1493,7 @@ private fun SearchHistoryPaper(
                         sim.pvx = 0f
                         sim.pvy = 0f
                         sim.hole = ((sim.angle / TearAngle).coerceIn(0f, 1f) * TearHoles).toInt()
-                        loopActive = true
+                        wakeToken++
 
                         var dragged = false
                         while (true) {
