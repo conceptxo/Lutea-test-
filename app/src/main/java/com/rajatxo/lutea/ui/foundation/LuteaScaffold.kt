@@ -146,8 +146,9 @@ fun LuteaScaffold(
 
     // The search page pins its machine to the keyboard; while the keyboard is
     // up the mini player would just sit behind it, so it gets out of the way.
+    val imeInsets = WindowInsets.ime
     val imeOpen by remember {
-        derivedStateOf { WindowInsets.ime.getBottom(density) > 0 }
+        derivedStateOf { imeInsets.getBottom(density) > 0 }
     }
 
     var menuOpen by remember { mutableStateOf(false) }
