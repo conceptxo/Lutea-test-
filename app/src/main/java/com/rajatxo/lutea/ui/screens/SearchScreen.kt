@@ -1,5 +1,6 @@
 package com.rajatxo.lutea.ui.screens
 
+import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
@@ -48,6 +49,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.RuntimeShader
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -116,9 +119,9 @@ private val TextStart = 58.dp               // margin + padding + glyph(18) + ga
 // ── the lamp: light released by the T hammer ──────────────────────────────
 private val LightColor = Color(0xFFFFE3A3)      // warm tungsten cream
 private val InkColor = Color(0xFF2B2416)        // typewriter ink: text turns to this inside the beam
-private const val BeamReachDp = 300f            // how far the light travels up the page
-private const val BeamHalfAngleDeg = 56f        // 112 degree spread
-private const val BeamLayers = 18               // stacked cones = soft, feathered edges (no hard cone line)
+private const val BeamReachFactor = 1.30f       // reach = 1.3x the height above the slot, so it fades past the top
+private const val BeamHalfAngleDeg = 52f        // 104 degree spread
+private const val BeamLayers = 18               // fallback only (pre-Android 13) — stacked cones
 
 /** Radial fall-off of the light (distance as a fraction of reach -> brightness): bright at the T, fading like real light. */
 private val LightFalloff = arrayOf(
@@ -171,6 +174,54 @@ private val SearchGlyph: ImageVector = ImageVector.Builder(
         lineTo(16.66f, 16.66f)
     }
 }.build()
+
+/**
+ * AGSL (Android Graphics Shading Language) — this is the thing that paints real light on Android: a fragment
+ * shader compiled by Skia at runtime. Every pixel works out its own distance and angle from the slot and fades
+ * itself, so the cone is perfectly smooth — no stacked triangles, no banding, no visible layer edges.
+ */
+private const val BeamShaderSource = """
+uniform float2 uApex;
+uniform float uReach;
+uniform float uHalf;
+uniform float uLevel;
+uniform float3 uColor;
+uniform float uInk;
+
+half4 main(float2 p) {
+    float2 d = p - uApex;
+    float up = -d.y;
+    if (up <= 0.0) {
+        return half4(0.0);
+    }
+    float dist = length(d);
+    float t = clamp(dist / max(uReach, 1.0), 0.0, 1.0);
+    float ang = atan(abs(d.x), max(up, 0.0001));
+    float u = clamp(ang / max(uHalf, 0.001), 0.0, 1.0);
+
+    float cone = 1.0 - smoothstep(0.52, 1.0, u);
+    float radial = pow(1.0 - t, 1.15);
+    float spill = (1.0 - smoothstep(0.0, 0.30, t)) * cone * 0.32;
+    float lightA = clamp((cone * radial + spill) * uLevel, 0.0, 1.0);
+
+    float inkA = clamp(cone * (1.0 - smoothstep(0.10, 0.44, t)) * uLevel * 3.0, 0.0, 1.0);
+
+    float a = mix(lightA, inkA, clamp(uInk, 0.0, 1.0));
+    float dither = (fract(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+    a = clamp(a + dither * (1.0 - clamp(uInk, 0.0, 1.0)), 0.0, 1.0);
+
+    return half4(uColor * a, a);
+}
+"""
+
+@Composable
+private fun rememberBeamShader(): RuntimeShader? = remember {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        runCatching { RuntimeShader(BeamShaderSource) }.getOrNull()
+    } else {
+        null
+    }
+}
 
 @Composable
 fun SearchScreen() {
@@ -291,17 +342,20 @@ private fun SearchMachine(
         label = "slot",
     )
 
-    // Beam geometry lives in the Column's own pixel space; the T's top edge is the light source.
+    // Beam geometry lives in the Column's own pixel space. The light comes out of
+    // the slot the T stands in — the little bar on the carriage's top edge — never
+    // out of the T's head, so the T is a dark silhouette in front of the beam.
     val unit = density.density * k                                   // px per scaled dp
     val railTopPx = with(density) { (CapsuleBarHeight + 2.dp).toPx() }
+    val slotPx = railTopPx + with(density) { 13.dp.toPx() } * k      // top edge of the carriage
     val beamPath = remember { Path() }
+    val beamShader = rememberBeamShader()
     var colRoot by remember { mutableStateOf(Offset.Zero) }
-    val apexProvider: () -> Offset = {
-        val hs = maxOf(strike.value, release.value).coerceIn(-0.3f, 1f)
-        Offset(
-            x = carriageX + capsuleWPx / 2f,
-            y = railTopPx + 1.2f * unit - 18f * unit * hs,           // same maths as the hammer in drawCarriage
-        )
+    val apexProvider: () -> Offset = { Offset(carriageX + capsuleWPx / 2f, slotPx) }
+    val reachProvider: () -> Float = {
+        val apex = apexProvider()
+        // cover the whole page above the machine and fade out past the top edge
+        ((apex.y + colRoot.y) * BeamReachFactor).coerceAtLeast(320f * unit)
     }
     val levelProvider: () -> Float = {
         (lightLevel.value * (1f + 0.05f * strike.value.coerceAtLeast(0f))).coerceIn(0f, 1.2f)
@@ -312,7 +366,15 @@ private fun SearchMachine(
             .onGloballyPositioned { colRoot = it.positionInRoot() }
             .drawBehind {
                 val level = levelProvider()
-                if (level > 0.003f) drawLightBeam(beamPath, apexProvider(), level, unit)
+                if (level > 0.003f) {
+                    val apex = apexProvider()
+                    val reach = reachProvider()
+                    if (beamShader != null) {
+                        drawShaderBeam(beamShader, apex, reach, level * 0.72f, LightColor, 0f)
+                    } else {
+                        drawLightBeam(beamPath, apex, reach, level, unit)
+                    }
+                }
             },
     ) {
         // ── the search box: just the icon and the text, straight on the page ──
@@ -337,14 +399,14 @@ private fun SearchMachine(
                 tint = Color.White.copy(alpha = 0.95f),
                 modifier = Modifier
                     .size(18.dp)
-                    .litByBeam({ colRoot }, apexProvider, levelProvider, unit, beamPath),
+                    .litByBeam({ colRoot }, apexProvider, levelProvider, reachProvider, unit, beamPath, beamShader),
             )
             Spacer(Modifier.width(20.dp))
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .onSizeChanged { viewportPx = it.width.toFloat() }
-                    .litByBeam({ colRoot }, apexProvider, levelProvider, unit, beamPath),
+                    .litByBeam({ colRoot }, apexProvider, levelProvider, reachProvider, unit, beamPath, beamShader),
             ) {
                 if (query.isEmpty()) {
                     Text(
@@ -558,6 +620,9 @@ private fun DrawScope.drawCarriage(strike: Float, slot: Color, glow: Float = 0f)
     val capTop = RailCenterY.toPx() - capH / 2f
     val corner = CornerRadius(capH / 2f)
     val cx = w * 0.5f
+    // The lamp sits behind the T: with the light on, the metal reads as a dark silhouette.
+    val backlit = glow.coerceIn(0f, 1f) * 0.82f
+    fun silhouette(c: Color): Color = lerp(c, Color(0xFF0B0A08), backlit)
 
     // ── smooth shadow cast by the capsule (visible on the pipe) ──
     softShadow(
@@ -587,10 +652,10 @@ private fun DrawScope.drawCarriage(strike: Float, slot: Color, glow: Float = 0f)
     )
     drawRect(
         brush = Brush.horizontalGradient(
-            0f to Color(0xFFD6D4CF),
-            0.15f to Color(0xFFC7C5C2),
-            0.80f to Color(0xFFC8C8C6),
-            1f to Color(0xFFA9AAA4),
+            0f to silhouette(Color(0xFFD6D4CF)),
+            0.15f to silhouette(Color(0xFFC7C5C2)),
+            0.80f to silhouette(Color(0xFFC8C8C6)),
+            1f to silhouette(Color(0xFFA9AAA4)),
             startX = cx - stemW / 2f,
             endX = cx + stemW / 2f,
         ),
@@ -599,11 +664,11 @@ private fun DrawScope.drawCarriage(strike: Float, slot: Color, glow: Float = 0f)
     )
     drawRoundRect(
         brush = Brush.verticalGradient(
-            0f to Color(0xFF555A5D),
-            0.25f to Color(0xFFA5AAAE),
-            0.50f to Color(0xFF686D71),
-            0.75f to Color(0xFF3F4346),
-            1f to Color(0xFF202425),
+            0f to silhouette(Color(0xFF555A5D)),
+            0.25f to silhouette(Color(0xFFA5AAAE)),
+            0.50f to silhouette(Color(0xFF686D71)),
+            0.75f to silhouette(Color(0xFF3F4346)),
+            1f to silhouette(Color(0xFF202425)),
             startY = barTop,
             endY = barTop + barH,
         ),
@@ -613,34 +678,9 @@ private fun DrawScope.drawCarriage(strike: Float, slot: Color, glow: Float = 0f)
     )
     for (ex in floatArrayOf(cx - barW / 2f + 0.4.dp.toPx(), cx + barW / 2f - 1.2.dp.toPx())) {
         drawRect(
-            color = Color(0xFFB8BCC0).copy(alpha = 0.55f),
+            color = silhouette(Color(0xFFB8BCC0)).copy(alpha = 0.55f),
             topLeft = Offset(ex, barTop + 0.8.dp.toPx()),
             size = Size(0.8.dp.toPx(), barH - 1.6.dp.toPx()),
-        )
-    }
-
-    // ── the T is the lamp: its top edge glows while the light is on ──
-    if (glow > 0.01f) {
-        val g = glow.coerceIn(0f, 1f)
-        val glowR = 15.dp.toPx()
-        val glowC = Offset(cx, barTop + barH * 0.3f)
-        drawCircle(
-            brush = Brush.radialGradient(
-                0f to LightColor.copy(alpha = 0.85f * g),
-                0.35f to LightColor.copy(alpha = 0.35f * g),
-                1f to Color.Transparent,
-                center = glowC,
-                radius = glowR,
-            ),
-            radius = glowR,
-            center = glowC,
-            blendMode = BlendMode.Plus,
-        )
-        drawRoundRect(
-            color = Color(0xFFFFF3CF).copy(alpha = 0.9f * g),
-            topLeft = Offset(cx - barW / 2f + 0.8.dp.toPx(), barTop),
-            size = Size(barW - 1.6.dp.toPx(), 1.2.dp.toPx()),
-            cornerRadius = CornerRadius(0.6.dp.toPx()),
         )
     }
 
@@ -806,8 +846,7 @@ private fun DrawScope.drawBeamLayers(
 }
 
 /** The warm beam itself: added onto the page (BlendMode.Plus) so the page brightens like paper under a lamp. */
-private fun DrawScope.drawLightBeam(path: Path, apex: Offset, level: Float, unit: Float) {
-    val reach = BeamReachDp * unit
+private fun DrawScope.drawLightBeam(path: Path, apex: Offset, reach: Float, level: Float, unit: Float) {
     val half = (BeamHalfAngleDeg * PI / 180.0).toFloat()
 
     // faint bounce light around the whole upper page
@@ -834,7 +873,7 @@ private fun DrawScope.drawLightBeam(path: Path, apex: Offset, level: Float, unit
     )
     drawBeamLayers(path, apex, reach, half, brush, strength = 0.85f * level, blend = BlendMode.Plus)
 
-    // hot spot right at the T
+    // hot spot right at the slot
     val hotR = 46f * unit
     drawCircle(
         brush = Brush.radialGradient(
@@ -850,9 +889,34 @@ private fun DrawScope.drawLightBeam(path: Path, apex: Offset, level: Float, unit
     )
 }
 
+/**
+ * The real thing: one fragment shader fills the whole cone. Every pixel computes its own distance and angle from
+ * the slot, so the light is perfectly smooth — no stacked triangles, no banding, no clipped bands.
+ */
+private fun DrawScope.drawShaderBeam(
+    shader: RuntimeShader,
+    apex: Offset,
+    reach: Float,
+    level: Float,
+    color: Color,
+    ink: Float,
+) {
+    shader.setFloatUniform("uApex", apex.x, apex.y)
+    shader.setFloatUniform("uReach", reach)
+    shader.setFloatUniform("uHalf", (BeamHalfAngleDeg * PI / 180.0).toFloat())
+    shader.setFloatUniform("uLevel", level)
+    shader.setFloatUniform("uColor", color.red, color.green, color.blue)
+    shader.setFloatUniform("uInk", ink)
+    drawRect(
+        brush = ShaderBrush(shader),
+        topLeft = Offset(apex.x - reach * 1.5f, apex.y - reach),
+        size = Size(reach * 3f, reach),
+        blendMode = if (ink > 0.5f) BlendMode.SrcAtop else BlendMode.Plus,
+    )
+}
+
 /** Same beam, but painted in ink colour over the content's own pixels only (SrcAtop): lit text turns dark like print on lit paper. */
-private fun DrawScope.drawBeamInk(path: Path, apex: Offset, level: Float, unit: Float) {
-    val reach = BeamReachDp * unit
+private fun DrawScope.drawBeamInk(path: Path, apex: Offset, reach: Float, level: Float, unit: Float) {
     val half = (BeamHalfAngleDeg * 0.8f * PI / 180.0).toFloat()    // ink sits inside the bright core
     val brush = Brush.radialGradient(
         colorStops = Array(InkFalloff.size) { InkFalloff[it].first to InkColor.copy(alpha = InkFalloff[it].second) },
@@ -868,8 +932,10 @@ private fun Modifier.litByBeam(
     columnRoot: () -> Offset,
     apex: () -> Offset,
     level: () -> Float,
+    reach: () -> Float,
     unit: Float,
     path: Path,
+    shader: RuntimeShader?,
 ): Modifier {
     var rootPos by remember { mutableStateOf(Offset.Zero) }
     return this
@@ -883,7 +949,11 @@ private fun Modifier.litByBeam(
             val l = level()
             if (l > 0.003f) {
                 val local = apex() - (rootPos - columnRoot())      // lamp position in this element's own space
-                drawBeamInk(path, local, l, unit)
+                if (shader != null) {
+                    drawShaderBeam(shader, local, reach(), l, InkColor, 1f)
+                } else {
+                    drawBeamInk(path, local, reach(), l, unit)
+                }
             }
         }
 }
