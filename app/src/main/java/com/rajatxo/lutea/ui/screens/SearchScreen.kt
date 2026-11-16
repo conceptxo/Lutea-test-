@@ -230,16 +230,19 @@ fun SearchScreen() {
     val density = LocalDensity.current
     val imeInsets = WindowInsets.ime
     val imeVisible by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
-    val bottomPad by animateDpAsState(
-        targetValue = if (imeVisible) 10.dp else 96.dp,
-        label = "bottomPad",
+    // Tighter gaps so the layout matches the reference video — everything sits
+    // much closer together. When the keyboard opens, the chips pin to a tiny
+    // gap above it (8dp) instead of leaving a wide moat.
+    val chipsBottomPad by animateDpAsState(
+        targetValue = if (imeVisible) 8.dp else 14.dp,
+        label = "chipsBottomPad",
     )
     val fieldGap by animateDpAsState(
-        targetValue = if (imeVisible) 10.dp else 22.dp,
+        targetValue = if (imeVisible) 10.dp else 14.dp,
         label = "fieldGap",
     )
     val cardFraction by animateFloatAsState(
-        targetValue = if (imeVisible) 0.44f else 0.54f,
+        targetValue = if (imeVisible) 0.46f else 0.58f,
         label = "cardWidth",
     )
 
@@ -293,11 +296,16 @@ fun SearchScreen() {
     }
 
     // The headline's height. The deck scrolls up under it, into the blur.
+    // Tighter when the keyboard is open (10dp) and tighter at rest (88dp
+    // instead of 112dp) so the card sits closer to the headline, matching
+    // the reference video's compact spacing.
     val headerSpace by animateDpAsState(
-        targetValue = if (imeVisible) 10.dp else 112.dp,
+        targetValue = if (imeVisible) 8.dp else 84.dp,
         label = "headerSpace",
     )
-    val bandHeight = headerSpace + 34.dp
+    // The progressive-blur band. Made SHORTER (headerSpace + 26dp instead of
+    // +34dp) and the gradient fade inside is much more gradual (see below).
+    val bandHeight = headerSpace + 26.dp
 
     Box(
         modifier = Modifier
@@ -334,6 +342,8 @@ fun SearchScreen() {
                                     if (song != null) {
                                         val queue = rankSongs(q, songs).ifEmpty { listOf(song) }
                                         PlaybackConnection.playSong(song, queue)
+                                        // A play from a typed query → that query was useful, remember it.
+                                        if (q.isNotEmpty()) SearchHistoryStore.add(q)
                                     } else {
                                         query = card.query
                                         filter = SearchFilter.ALL
@@ -351,18 +361,40 @@ fun SearchScreen() {
                     onQueryChange = { query = it },
                 )
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(10.dp))
 
                 FilterChips(
                     selected = filter,
                     onSelect = { filter = it },
                 )
 
-                Spacer(Modifier.height(bottomPad))
+                // ── Search history below the chips ──
+                // Shows the last few queries the user typed. Tap to re-run,
+                // tap the ✕ to forget one. Hidden while the deck is showing
+                // song cards (only renders when there's no active query so
+                // the carousel stays the visual focus).
+                if (q.isEmpty()) {
+                    SearchHistory(
+                        onPick = { term ->
+                            query = term
+                            filter = SearchFilter.ALL
+                        },
+                    )
+                }
+
+                Spacer(Modifier.height(chipsBottomPad))
             }
         }
 
         // ── 2. The blur — a band that melts whatever slides under the header ─
+        // GRADUAL FADE: the band is full-strength blur at the very top and
+        // fades out smoothly across the ENTIRE band height — not a hard
+        // cutoff. This is the "gradual fade that decreases blur intensity"
+        // the reference video has and the previous version was missing.
+        // DstOut keeps the blur where the gradient is transparent (top),
+        // and erases it progressively where the gradient turns opaque
+        // (bottom). The fade spans the whole band so the blur intensity
+        // ramps down linearly instead of dropping off a cliff.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -373,13 +405,10 @@ fun SearchScreen() {
                     shape = { RectangleShape },
                     effects = { blur(24.dp.toPx()) },
                     onDrawSurface = {
-                        // DstOut: keep the blur where the gradient is clear (top),
-                        // erase it where the gradient turns opaque (bottom of band).
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colorStops = arrayOf(
                                     0f to Color.Transparent,
-                                    0.45f to Color.Transparent,
                                     1f to Color.White,
                                 ),
                             ),
@@ -838,11 +867,38 @@ private fun SearchField(
                 keyboard?.show()
             },
     ) {
-        // ── typed line ──
-        Row(
+        // ── typed line — wrapped in a glassmorphism capsule ──
+        // The whole row sits inside a frosted pill: a translucent white
+        // fill, a soft white rim and a top sheen that sells the glass
+        // curvature. Matches the reference video's search box.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = TextSideInset)
+                .height(TypedLineHeight + 16.dp)
+                .clip(RoundedCornerShape((TypedLineHeight.value / 2f + 8f).dp))
+                .background(Color.White.copy(alpha = 0.10f))
+                .border(
+                    width = 1.dp,
+                    color = Color.White.copy(alpha = 0.28f),
+                    shape = RoundedCornerShape((TypedLineHeight.value / 2f + 8f).dp),
+                )
+                .drawWithCache {
+                    val sheen = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0f to Color.White.copy(alpha = 0.22f),
+                            0.5f to Color.Transparent,
+                            1f to Color.Transparent,
+                        ),
+                    )
+                    onDrawBehind { drawRect(sheen) }
+                }
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
                 .height(TypedLineHeight),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -906,6 +962,7 @@ private fun SearchField(
                 }
             }
         }
+        } // close glass capsule
 
         // ── rail + carriage: edge to edge, scaled to the screen width ──
         Box(
@@ -1264,21 +1321,40 @@ private fun FilterChips(
     ) {
         items(SearchFilter.entries.toList()) { f ->
             val on = f == selected
+            // Glassmorphism capsule: a frosted white-on-dark surface with a
+            // subtle white rim and an inner highlight, exactly like the
+            // reference video's filter chips. When selected, the glass
+            // brightens and the rim tightens.
+            val glassFill = if (on) Color.White.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.08f)
+            val glassRim = if (on) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.18f)
+            val glassHighlight = if (on) Color.White.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.12f)
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(if (on) Color.White else Color.White.copy(alpha = 0.07f))
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(glassFill)
                     .border(
                         width = 1.dp,
-                        color = if (on) Color.White else Color.White.copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(18.dp),
+                        color = glassRim,
+                        shape = RoundedCornerShape(20.dp),
                     )
+                    // Top sheen: a thin radial band across the upper third gives
+                    // the glass its 3D curvature.
+                    .drawWithCache {
+                        val sheen = Brush.verticalGradient(
+                            colorStops = arrayOf(
+                                0f to glassHighlight,
+                                0.45f to Color.Transparent,
+                                1f to Color.Transparent,
+                            ),
+                        )
+                        onDrawBehind { drawRect(sheen) }
+                    }
                     .clickable { onSelect(f) }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
             ) {
                 Text(
                     text = f.label,
-                    color = if (on) Color.Black else Color.White.copy(alpha = 0.78f),
+                    color = if (on) Color.White else Color.White.copy(alpha = 0.78f),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                 )
@@ -1501,6 +1577,127 @@ private fun EmptyNote(text: String) {
         )
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SEARCH HISTORY — recent queries shown below the filter chips
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * In-memory search history. Persists for the lifetime of the app process.
+ * A query is added when the user actually plays a result from it (a decent
+ * signal that the search was useful), capped at 8 entries, newest first.
+ */
+private object SearchHistoryStore {
+    private val _entries = mutableStateOf<List<String>>(emptyList())
+    val entries: androidx.compose.runtime.State<List<String>> = _entries
+
+    fun add(term: String) {
+        val t = term.trim()
+        if (t.isEmpty()) return
+        _entries.value = (listOf(t) + _entries.value.filter { it.equals(t, ignoreCase = true).not() }).take(8)
+    }
+
+    fun remove(term: String) {
+        _entries.value = _entries.value.filter { it != term }
+    }
+}
+
+/**
+ * Renders the recent-searches section below the filter chips.
+ * Each row: a small clock glyph, the query, and a ✕ to forget it.
+ * Tap the row (not the ✕) to re-run the query via [onPick].
+ * Hidden entirely when there is no history yet.
+ */
+@Composable
+private fun SearchHistory(
+    onPick: (String) -> Unit,
+) {
+    val items by SearchHistoryStore.entries.collectAsState()
+    if (items.isEmpty()) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 18.dp),
+    ) {
+        Text(
+            text = "RECENT",
+            color = Color.White.copy(alpha = 0.42f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.4.sp,
+            modifier = Modifier.padding(horizontal = 28.dp),
+        )
+        Spacer(Modifier.height(6.dp))
+        items.forEach { term ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(term) }
+                    .padding(horizontal = 28.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = HistoryGlyph,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.40f),
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = term,
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = 14.sp,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .clickable { SearchHistoryStore.remove(term) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "✕",
+                        color = Color.White.copy(alpha = 0.60f),
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Lucide clock glyph (MIT) — a small history icon for recent rows. */
+private val HistoryGlyph: ImageVector = ImageVector.Builder(
+    name = "History",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 2f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+        strokeLineMiter = 4f,
+    ) {
+        moveTo(3f, 3f)
+        verticalLineToRelative(5f)
+        horizontalLineToRelative(5f)
+        moveToRelative(-3.4f, -2f)
+        arcToRelative(10f, 10f, 0f, true, false, 2.6f, -3.4f)
+        lineTo(3f, 8f)
+        moveTo(12f, 7f)
+        verticalLineToRelative(5f)
+        lineToRelative(3f, 3f)
+    }
+}.build()
 
 private fun formatSearchDuration(ms: Long): String {
     val total = ms / 1000
