@@ -44,7 +44,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -72,10 +71,10 @@ import kotlinx.coroutines.delay
 //  Top to bottom:  the search capsule (carved INTO the screen, you type here) →
 //  the T hammer → the cream carriage on its steel rail. The carriage follows the
 //  caret; on every keystroke the hammer taps up under the text like a typebar.
-//  The carriage's top slot and its three LEDs show the typing state:
-//      green  = actively typing
-//      yellow = keyboard open, paused
-//      red    = search cleared (✕)
+//  The carriage's top slot and one of its three LEDs show the typing state:
+//      green  = actively typing          (LED 1, the others white)
+//      yellow = keyboard open, paused    (LED 2, the others white)
+//      red    = search cleared (✕)       (LED 3, the others white)
 //  Everything is drawn with gradients — no images.
 //
 //  The ensemble hangs in the top half of the page, its rail sitting on the
@@ -96,10 +95,10 @@ private val RailCenterY = 30.dp             // centre of the rail inside the rai
 
 // The pressed-in search capsule that sits right above the mechanism.
 private val CapsuleBarHeight = 42.dp
-private val CapsuleSideMargin = 16.dp
+private val CapsuleSideMargin = 0.dp
 private val CapsuleBevel = 1.5.dp
 private val CapsuleInnerPadding = 16.dp
-private val TextStart = 61.5.dp             // margin + bevel + padding + glyph(18) + gap(10): where typed text begins
+private val TextStart = 45.5.dp             // margin + bevel + padding + glyph(18) + gap(10): where typed text begins
 
 private enum class TypeState { IDLE, TYPING, PAUSED, CLEARED }
 
@@ -176,16 +175,18 @@ private fun SearchMachine(
     var viewportPx by remember { mutableStateOf(0f) }   // visible width of the text box
     var railPx by remember { mutableStateOf(0f) }       // rail width
 
-    // Carriage target: centre the capsule under the caret, keep it between the end collars.
+    // Carriage target: centre the capsule on the last glyph, never off the rail.
     val capsuleWPx = with(density) { CapsuleWidth.toPx() } * k
     val textStartPx = with(density) { TextStart.toPx() }
-    val edgePx = with(density) { 26.dp.toPx() } * k
-    val maxLeft = (railPx - capsuleWPx - edgePx).coerceAtLeast(edgePx)
-    val targetLeft = (textStartPx + minOf(caretPx, viewportPx) - capsuleWPx / 2f)
-        .coerceIn(edgePx, maxLeft)
+    val halfGlyphPx = with(density) { 4.2.dp.toPx() }          // caret sits AFTER the last letter
+    val minLeft = (textStartPx - capsuleWPx / 2f).coerceAtLeast(0f)
+    val maxLeft = (railPx - capsuleWPx).coerceAtLeast(minLeft)
+    val caretLead = minOf(caretPx, viewportPx) - if (query.isEmpty()) 0f else halfGlyphPx
+    val targetLeft = (textStartPx + caretLead - capsuleWPx / 2f)
+        .coerceIn(minLeft, maxLeft)
     val carriageX by animateFloatAsState(
         targetValue = targetLeft,
-        animationSpec = spring(dampingRatio = 0.62f, stiffness = 420f),
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 900f),
         label = "carriage",
     )
 
@@ -219,19 +220,29 @@ private fun SearchMachine(
             }
         }
     }
-    val statusColor by animateColorAsState(
+    val idleSlot = Color(0xFF1D1C18)
+    val slotColor by animateColorAsState(
         targetValue = when (mode) {
             TypeState.TYPING -> StateGreen
+            TypeState.PAUSED -> StateYellow
             TypeState.CLEARED -> StateRed
-            else -> StateYellow
+            TypeState.IDLE -> idleSlot
         },
         animationSpec = tween(160),
-        label = "status",
+        label = "slot",
     )
-    val lit by animateFloatAsState(
-        targetValue = if (mode == TypeState.IDLE) 0f else 1f,
-        animationSpec = tween(220),
-        label = "lit",
+    // One LED per state; the other two stay plain white.
+    val led1 by animateColorAsState(
+        targetValue = if (mode == TypeState.TYPING) StateGreen else Color.White,
+        animationSpec = tween(160), label = "led1",
+    )
+    val led2 by animateColorAsState(
+        targetValue = if (mode == TypeState.PAUSED) StateYellow else Color.White,
+        animationSpec = tween(160), label = "led2",
+    )
+    val led3 by animateColorAsState(
+        targetValue = if (mode == TypeState.CLEARED) StateRed else Color.White,
+        animationSpec = tween(160), label = "led3",
     )
 
     Column(modifier = modifier) {
@@ -271,7 +282,7 @@ private fun SearchMachine(
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
-                        color = TypeCream.copy(alpha = 0.34f),
+                        color = Color.White.copy(alpha = 0.42f),
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.2.sp,
@@ -285,12 +296,10 @@ private fun SearchMachine(
                     onValueChange = onQueryChange,
                     singleLine = true,
                     textStyle = TextStyle(
-                        color = Color(0xFFFFF8DC),
+                        color = Color.White,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
-                        // soft glow on the typed letters, like the lit "All" label
-                        shadow = Shadow(color = TypeCream.copy(alpha = 0.55f), blurRadius = 10f),
                     ),
                     cursorBrush = SolidColor(TypeCream),
                     onTextLayout = { layout ->
@@ -357,7 +366,7 @@ private fun SearchMachine(
                     modifier = Modifier
                         .size(CapsuleWidth, RailAreaHeight)
                         .graphicsLayer { translationX = carriageX }
-                        .drawBehind { drawCarriage(strike.value, statusColor, lit) },
+                        .drawBehind { drawCarriage(strike.value, slotColor, led1, led2, led3) },
                 )
             }
         }
@@ -527,10 +536,16 @@ private fun DrawScope.softShadow(
  * with a dark cylinder bar.
  * Local origin = top-left of the capsule's box; the capsule sits low so the hammer has room above it.
  * @param strike 1 right after a keystroke, easing back to 0
- * @param status colour of the slot + LEDs (green typing / yellow paused / red cleared)
- * @param lit 0 = idle (reference colours), 1 = fully showing [status]
+ * @param slot colour of the top slot (green typing / yellow paused / red cleared)
+ * @param led1 lit while typing, @param led2 while paused, @param led3 while cleared
  */
-private fun DrawScope.drawCarriage(strike: Float, status: Color, lit: Float) {
+private fun DrawScope.drawCarriage(
+    strike: Float,
+    slot: Color,
+    led1: Color,
+    led2: Color,
+    led3: Color,
+) {
     val w = size.width
     val capH = CapsuleHeight.toPx()
     val s = strike.coerceIn(-0.3f, 1f)
@@ -549,7 +564,7 @@ private fun DrawScope.drawCarriage(strike: Float, status: Color, lit: Float) {
     )
 
     // ── T hammer: sits above the capsule and strikes UP at the search capsule ──
-    val lift = 12.dp.toPx() * s
+    val lift = 18.dp.toPx() * s
     val barW = 15.dp.toPx()
     val barH = 4.8.dp.toPx()
     val stemW = 3.4.dp.toPx()
@@ -691,29 +706,15 @@ private fun DrawScope.drawCarriage(strike: Float, status: Color, lit: Float) {
         style = Stroke(width = 1.1.dp.toPx()),
     )
 
-    // ── status slot on the top edge: a dark recess that lights up green / yellow / red ──
+    // ── status slot on the top edge: flat colour, no glow ──
     val slotW = 16.5.dp.toPx()
     val slotH = 3.6.dp.toPx()
     val slotLeft = cx - slotW / 2f
-    if (lit > 0.01f) {
-        softShadow(
-            topLeft = Offset(slotLeft, capTop),
-            size = Size(slotW, slotH),
-            corner = 1.2.dp.toPx(),
-            color = status,
-            spread = 5.dp.toPx(),
-            alpha = 0.9f * lit,
-            steps = 8,
-        )
-    }
-    val slotDark = lerp(Color(0xFF1D1C18), lerp(Color.Black, status, 0.55f), lit)
     drawRoundRect(
         brush = Brush.verticalGradient(
-            0f to slotDark,
-            0.30f to slotDark,
-            0.50f to lerp(Color(0xFF36332E), lerp(Color.Black, status, 0.80f), lit),
-            0.80f to lerp(Color(0xFF5B574E), status, lit),
-            1f to lerp(Color(0xFF6E6A5F), lerp(status, Color.White, 0.35f), lit),
+            0f to lerp(slot, Color.Black, 0.45f),
+            0.55f to slot,
+            1f to lerp(slot, Color.White, 0.30f),
             startY = capTop,
             endY = capTop + slotH,
         ),
@@ -722,33 +723,17 @@ private fun DrawScope.drawCarriage(strike: Float, status: Color, lit: Float) {
         cornerRadius = CornerRadius(1.2.dp.toPx()),
     )
 
-    // ── LEDs: reference colours when idle; all three take the state colour otherwise ──
+    // ── LEDs: one state colour, the other two plain white — flat, no glow ──
     val ledR = 2.3.dp.toPx()
     val ledY = capTop + capH / 2f
     val ledX = w * 0.143f
     val gap = w * 0.113f
-    val idle = arrayOf(Color(0xFF7CCB5C), Color(0xFF3A130B), Color(0xFFD2A09B))
+    val leds = arrayOf(led1, led2, led3)
     for (i in 0..2) {
-        val c = Offset(ledX + gap * i, ledY)
-        val col = lerp(idle[i], status, lit)
-        if (lit > 0.01f) {
-            drawCircle(status.copy(alpha = 0.38f * lit), radius = ledR * 3f, center = c)
-        }
-        val ringAlpha = if (i == 0) 1f else lit
         drawCircle(
-            color = lerp(Color(0xFFD0DAC6), lerp(status, Color.White, 0.6f), lit).copy(alpha = ringAlpha),
-            radius = ledR + 0.9.dp.toPx(),
-            center = c,
-        )
-        drawCircle(
-            brush = Brush.radialGradient(
-                0f to lerp(col, Color.White, 0.25f * lit + if (i == 0) 0.18f else 0f),
-                1f to lerp(col, Color.Black, 0.22f),
-                center = c,
-                radius = ledR,
-            ),
+            color = leds[i],
             radius = ledR,
-            center = c,
+            center = Offset(ledX + gap * i, ledY),
         )
     }
 }
