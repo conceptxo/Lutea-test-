@@ -1,31 +1,17 @@
 package com.rajatxo.lutea.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.EaseOutCubic
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -34,23 +20,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -61,7 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -72,83 +51,60 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
-import com.rajatxo.lutea.R
-import com.rajatxo.lutea.data.model.Playlist
-import com.rajatxo.lutea.data.scanner.MusicScanner
-import com.rajatxo.lutea.data.store.PlaylistStore
-import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlin.random.Random
-import android.net.Uri
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
 import com.rajatxo.lutea.ui.components.LightRaysBackground
 import com.rajatxo.lutea.ui.foundation.LocalLuteaWindowInsets
-import kotlin.math.abs
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SEARCH PAGE — everything below is this page and nothing else.
+//  SEARCH PAGE — the page look plus one thing on it: the typewriter.
 //
-//  Self-contained on purpose: one file to read, one file to change.
-//    0. LOOK    — palette, display font and the one icon the page uses
-//    1. DATA    — the SearchScreen composable: scan, filter, state
-//    2. HEADER  — headline + the card deck (glow cards, or song cards while searching)
-//    3. FIELD   — typewriter search bar + filter chips
-//    4. ROWS    — result rows (song / artist / album / playlist)
+//  Top to bottom:  steel rail with the cream capsule carriage → the T hammer
+//  hanging under the capsule → the line you type on.
+//  The carriage follows the caret; on every keystroke the hammer strikes
+//  down onto the text and the first LED flashes amber.
+//  Everything is drawn with gradients — no images.
 //
-//  The only outside calls are the app services plus the shared light-ray
-//  backdrop (the same one the playlist page uses):
-//    MusicScanner.scanMusic(context)      -> List<Song>
-//    PlaylistStore.playlists              -> StateFlow<List<Playlist>>
-//    PlaybackConnection.playSong(song, queue)
-//    LightRaysBackground(modifier)
+//  The machine rides the keyboard: it is bottom-aligned inside the scaffold,
+//  padded by the IME, so it sits on the keys — and above the mini player when
+//  a song is loaded.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── 0. LOOK ────────────────────────────────────────────────────────────────
-
-/** X — the main colour (selected / active). */
-private val Mint = Color(0xFFD4FF9C)
-
-/** Y — the secondary colour (inactive / ambient). */
-private val Ice = Color(0xFF9EF9FF)
+private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
 
 /** The playlist page's charcoal → black backdrop, reused here. */
 private val PageTop = Color(0xFF3A3A3A)
 private val PageBottom = Color.Black
 
-/** Cal Sans, the app's display face, inlined so the page owns its type. */
-private val SearchSans = FontFamily(
-    Font(R.font.cal_sans_semibold, FontWeight.Normal),
-    Font(R.font.cal_sans_semibold, FontWeight.Medium),
-    Font(R.font.cal_sans_semibold, FontWeight.SemiBold),
-    Font(R.font.cal_sans_semibold, FontWeight.Bold),
+private val CapsuleWidth = 80.dp
+private val CapsuleHeight = 34.dp
+private val RailAreaHeight = 56.dp          // capsule on top, hammer hanging below it
+private val RailCenterY = 23.dp             // centre of the rail inside the rail area
+private val TextSideInset = 24.dp
+private val TextStart = 52.dp               // side inset + search glyph + gap: where typed text begins
+private val TypedLineHeight = 26.dp         // the text sits right under the hammer
+
+/** Top fade, as (position, alpha) pairs: black at the top, melting away below. */
+private val TopFadeStops = arrayOf(
+    0.00f to 1.00f,
+    0.26f to 0.97f,
+    0.50f to 0.64f,
+    0.74f to 0.26f,
+    1.00f to 0.00f,
 )
 
 /** Lucide search glyph (MIT), inlined so the page owns its icon. */
@@ -174,39 +130,6 @@ private val SearchGlyph: ImageVector = ImageVector.Builder(
         lineTo(16.66f, 16.66f)
     }
 }.build()
-
-// ── 1. DATA ────────────────────────────────────────────────────────────────
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  Search
-// ═══════════════════════════════════════════════════════════════════════════
-
-private enum class SearchFilter(val label: String) {
-    ALL("All"),
-    SONGS("Songs"),
-    ARTISTS("Artists"),
-    ALBUMS("Albums"),
-}
-
-/**
- * One card in the deck.
- *
- * With an empty query the deck shows playlists (or artists) as painted glow
- * cards. As soon as something is typed it switches to songs: [art] is the cover,
- * [matched] says whether the song still matches the query (misses stay in the
- * deck, blurred), and [song] is what a tap plays.
- */
-private data class CarouselCard(
-    val id: String,
-    val tag: String,
-    val title: String,
-    val subtitle: String,
-    val query: String,
-    val tone: Int,
-    val art: Uri? = null,
-    val matched: Boolean = true,
-    val song: Song? = null,
-)
 
 @Composable
 fun SearchScreen() {
@@ -234,15 +157,11 @@ fun SearchScreen() {
         label = "machineFloor",
     )
 
-    // The rail box keeps ~11dp of empty air under the capsule. With the keyboard
-    // up that air is pushed behind it, so the machine sits right on the keys
-    // instead of hovering over them.
-    val sink by animateDpAsState(
-        targetValue = if (keyboardOpen) 8.dp else 0.dp,
-        label = "machineSink",
-    )
-
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+    ) {
         // ── Background: charcoal → black, plus the light rays ────────────────
         Box(modifier = Modifier.fillMaxSize()) {
             Box(
@@ -272,7 +191,6 @@ fun SearchScreen() {
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .offset(y = sink)
                 .imePadding()
                 .padding(bottom = floor),
         ) {
@@ -283,387 +201,6 @@ fun SearchScreen() {
         }
     }
 }
-
-/**
- * The top fade, as (position, alpha) pairs. Solid black at the top of the
- * screen, melting to nothing further down, so anything that scrolls up
- * dissolves into black instead of being cut off.
- */
-private val TopFadeStops = arrayOf(
-    0.00f to 1.00f,
-    0.26f to 0.97f,
-    0.50f to 0.64f,
-    0.74f to 0.26f,
-    1.00f to 0.00f,
-)
-
-private fun songMatches(song: Song, q: String): Boolean =
-    song.title.contains(q, ignoreCase = true) ||
-        song.artist.contains(q, ignoreCase = true) ||
-        song.album.contains(q, ignoreCase = true)
-
-/** Best match first: title prefix, then title, then artist prefix, then artist. */
-private fun rankSongs(q: String, songs: List<Song>): List<Song> {
-    if (q.isEmpty()) return emptyList()
-    return songs.filter { songMatches(it, q) }
-        .sortedWith(
-            compareByDescending<Song> { it.title.startsWith(q, ignoreCase = true) }
-                .thenByDescending { it.title.contains(q, ignoreCase = true) }
-                .thenByDescending { it.artist.startsWith(q, ignoreCase = true) }
-                .thenByDescending { it.artist.contains(q, ignoreCase = true) },
-        )
-        .take(8)
-}
-
-private fun buildCards(playlists: List<Playlist>, songs: List<Song>): List<CarouselCard> {
-    if (playlists.isNotEmpty()) {
-        return playlists.take(8).mapIndexed { i, p ->
-            CarouselCard(
-                id = "pl:${p.id}",
-                tag = "Playlist",
-                title = p.name,
-                subtitle = if (p.songIds.size == 1) "1 song" else "${p.songIds.size} songs",
-                query = p.name,
-                tone = i,
-            )
-        }
-    }
-    return songs.groupBy { it.artist }
-        .entries
-        .sortedByDescending { it.value.size }
-        .take(8)
-        .mapIndexed { i, (artist, list) ->
-            CarouselCard(
-                id = "ar:$artist",
-                tag = "Artist",
-                title = artist,
-                subtitle = if (list.size == 1) "1 song" else "${list.size} songs",
-                query = artist,
-                tone = i,
-            )
-        }
-}
-
-private fun songsOf(playlist: Playlist, all: List<Song>): List<Song> {
-    if (all.isEmpty()) return emptyList()
-    val byId = all.associateBy { it.id }
-    return playlist.songIds.mapNotNull { byId[it] }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  2. HEADER — headline, the card deck and the card paint pipeline
-// ═══════════════════════════════════════════════════════════════════════════
-
-
-/**
- * A deck, not a pager: one card sits in the middle and its neighbours peek in
- * from both edges, scaled down a little. It snaps on release, and typing always
- * brings the best match back to the centre.
- */
-@Composable
-private fun CardCarousel(
-    cards: List<CarouselCard>,
-    fraction: Float,
-    resetKey: Any?,
-    onPick: (CarouselCard) -> Unit,
-) {
-    val state = rememberLazyListState()
-    LaunchedEffect(resetKey) {
-        if (cards.isNotEmpty() && state.firstVisibleItemIndex != 0) state.scrollToItem(0)
-    }
-
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val cardWidth = maxWidth * fraction
-        val cardHeight = cardWidth * 1.2f
-        val edge = (maxWidth - cardWidth) / 2f
-        val cardPx = with(LocalDensity.current) { cardWidth.toPx() }
-        val info = state.layoutInfo
-        val viewportCentre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
-
-        LazyRow(
-            state = state,
-            contentPadding = PaddingValues(horizontal = edge),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            flingBehavior = rememberSnapFlingBehavior(state),
-        ) {
-            items(cards, key = { it.id }) { card ->
-                val item = info.visibleItemsInfo.firstOrNull { it.key == card.id }
-                val scale = if (item == null || cardPx <= 0f || info.visibleItemsInfo.isEmpty()) {
-                    1f
-                } else {
-                    val centre = item.offset + item.size / 2f
-                    (1f - abs(centre - viewportCentre) / cardPx * 0.15f).coerceIn(0.86f, 1f)
-                }
-                CardView(card, cardWidth, cardHeight, scale, onPick)
-            }
-        }
-    }
-}
-
-@Composable
-private fun CardView(
-    card: CarouselCard,
-    width: Dp,
-    height: Dp,
-    scale: Float,
-    onPick: (CarouselCard) -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(width, height)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(RoundedCornerShape(26.dp))
-            .clickable(enabled = card.matched) { onPick(card) },
-    ) {
-        if (card.song != null) SongCard(card) else GlowCard(card)
-    }
-}
-
-/** A search result: cover art, a scrim, and the song name + artist at the bottom. */
-@Composable
-private fun SongCard(card: CarouselCard) {
-    val on = card.matched
-
-    // Base tone, so a song without a cover still reads as a card.
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.linearGradient(listOf(lerp(Mint, Color.Black, 0.55f), Color.Black))),
-    )
-    AsyncImage(
-        model = card.art,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-            .fillMaxSize()
-            .alpha(if (on) 1f else 0.55f)
-            .then(if (on) Modifier else Modifier.blur(9.dp)),
-    )
-    // Scrim so the type stays readable over any cover.
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    0f to Color.Transparent,
-                    0.42f to Color.Transparent,
-                    0.72f to Color.Black.copy(alpha = 0.45f),
-                    1f to Color.Black.copy(alpha = 0.92f),
-                ),
-            ),
-    )
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .border(
-                width = 1.dp,
-                color = Color.White.copy(alpha = if (on) 0.16f else 0.05f),
-                shape = RoundedCornerShape(26.dp),
-            ),
-    )
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Bottom,
-    ) {
-        Text(
-            text = card.title,
-            color = Color.White.copy(alpha = if (on) 1f else 0.55f),
-            fontSize = 19.sp,
-            lineHeight = 21.sp,
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = SearchSans,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(3.dp))
-        Text(
-            text = card.subtitle,
-            color = Color.White.copy(alpha = if (on) 0.62f else 0.35f),
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/**
- * The no-query card: a tinted base, a bloom in one corner, a dark oval that
- * carves the middle, a second soft light on the opposite edge, an inner rim
- * that brightens toward the bottom, and grain.
- */
-@Composable
-private fun GlowCard(card: CarouselCard) {
-    val hot = when (card.tone % 3) {
-        0 -> Mint
-        1 -> Ice
-        else -> lerp(Ice, Mint, 0.5f)
-    }
-    val seed = card.tone * 977 + 41
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .drawWithCache {
-                val rnd = Random(seed)
-                val grain = List(220) {
-                    floatArrayOf(
-                        rnd.nextFloat() * size.width,
-                        rnd.nextFloat() * size.height,
-                        0.02f + rnd.nextFloat() * 0.05f,
-                        0.7f + rnd.nextFloat() * 1.3f,
-                    )
-                }
-                onDrawBehind {
-                    paintGlowField(hot)
-                    grain.forEach { g ->
-                        drawCircle(
-                            color = Color.White.copy(alpha = g[2]),
-                            radius = g[3],
-                            center = Offset(g[0], g[1]),
-                        )
-                    }
-                }
-            },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(11.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.28f), RoundedCornerShape(11.dp))
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-            ) {
-                Text(
-                    text = card.tag,
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            Column {
-                Text(
-                    text = card.title,
-                    color = Color.White,
-                    fontSize = 23.sp,
-                    lineHeight = 25.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    fontFamily = SearchSans,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = card.subtitle,
-                    color = Color.White.copy(alpha = 0.62f),
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
-}
-
-private fun DrawScope.paintGlowField(hot: Color) {
-
-    val w = size.width
-    val h = size.height
-
-    // 1. Tinted base, light in the top-right corner falling to black.
-    drawRect(
-        brush = Brush.linearGradient(
-            colors = listOf(
-                lerp(hot, Color.Black, 0.38f),
-                lerp(hot, Color.Black, 0.82f),
-                Color.Black,
-            ),
-            start = Offset(w, 0f),
-            end = Offset(w * 0.15f, h),
-        ),
-    )
-
-    // 2. The bloom that lights the top corner.
-    drawOval(
-        brush = Brush.radialGradient(
-            colors = listOf(
-                hot.copy(alpha = 0.92f),
-                hot.copy(alpha = 0.28f),
-                Color.Transparent,
-            ),
-            center = Offset(w * 0.82f, h * 0.14f),
-            radius = w * 0.92f,
-        ),
-        topLeft = Offset(0f, -h * 0.22f),
-        size = Size(w * 1.05f, h * 0.95f),
-    )
-
-    // 3. Dark oval rising from the bottom — carves the middle of the field.
-    drawOval(
-        brush = Brush.radialGradient(
-            colors = listOf(
-                Color.Black.copy(alpha = 0.96f),
-                Color.Black.copy(alpha = 0.62f),
-                Color.Transparent,
-            ),
-            center = Offset(w * 0.46f, h * 1.06f),
-            radius = w * 0.84f,
-        ),
-        topLeft = Offset(-w * 0.16f, h * 0.36f),
-        size = Size(w * 1.32f, h * 1.02f),
-    )
-
-    // 4. A quieter light on the opposite edge, so the card is not one-sided.
-    drawOval(
-        brush = Brush.radialGradient(
-            colors = listOf(hot.copy(alpha = 0.30f), Color.Transparent),
-            center = Offset(w * 0.04f, h * 0.60f),
-            radius = w * 0.55f,
-        ),
-        topLeft = Offset(-w * 0.30f, h * 0.12f),
-        size = Size(w * 0.92f, h * 0.92f),
-    )
-
-    // 5. Inner rim, brighter along the bottom edge.
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(Color.Transparent, hot.copy(alpha = 0.55f)),
-            startY = h * 0.25f,
-            endY = h,
-        ),
-        topLeft = Offset(1.2f, 1.2f),
-        size = Size(w - 2.4f, h - 2.4f),
-        cornerRadius = CornerRadius(w * 0.11f),
-        style = Stroke(width = 1.4f),
-    )
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  3. FIELD — the typewriter search bar and the filter chips
-//
-//  One line of typewriter text sits above a steel rail on the black page. A
-//  cream capsule (the carriage) rides the rail and follows the caret; the
-//  T-shaped hammer on top strikes on every keystroke and the first LED flashes
-//  amber. Clearing the text slides the carriage back home.
-//  Everything is drawn with gradients and smooth layered shadows — no images.
-// ═══════════════════════════════════════════════════════════════════════════
-
-private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
-
-private val CapsuleWidth = 80.dp
-private val CapsuleHeight = 34.dp
-private val RailAreaHeight = 60.dp
-private val RailCenterY = 36.dp         // centre of the rail inside the rail area
-private val TextSideInset = 24.dp
-private val TextStart = 52.dp           // side inset + search glyph + gap: where typed text begins
-private val TypedLineHeight = 26.dp     // kept short so the text sits right above the hammer
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -679,9 +216,9 @@ private fun SearchField(
 
     var caretPx by remember { mutableStateOf(0f) }      // caret x inside the text box
     var viewportPx by remember { mutableStateOf(0f) }   // visible width of the text box
-    var railPx by remember { mutableStateOf(0f) }       // rail (= card) width
+    var railPx by remember { mutableStateOf(0f) }       // rail width
 
-    // Carriage target: centre the capsule under the caret, keep it between the end clamps.
+    // Carriage target: centre the capsule over the caret, keep it between the end collars.
     val capsuleWPx = with(density) { CapsuleWidth.toPx() } * k
     val textStartPx = with(density) { TextStart.toPx() }
     val edgePx = with(density) { 26.dp.toPx() } * k
@@ -694,14 +231,15 @@ private fun SearchField(
         label = "carriage",
     )
 
-    // One strike per keystroke: hammer jumps up, capsule dips, LED flashes.
+    // One strike per keystroke: hammer drops onto the text, then springs back; LED flashes.
     val strike = remember { Animatable(0f) }
     LaunchedEffect(query) {
         if (query.isNotEmpty()) {
-            strike.animateTo(1f, tween(40, easing = LinearOutSlowInEasing))   // hammer flies up to the text
-            strike.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 900f))   // and drops back
+            strike.animateTo(1f, tween(40, easing = LinearOutSlowInEasing))
+            strike.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 900f))
         }
     }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -713,7 +251,27 @@ private fun SearchField(
                 keyboard?.show()
             },
     ) {
-        // ── typed line ──
+        // ── rail + carriage + hammer: edge to edge, scaled to the screen width ──
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(RailAreaHeight * k)
+                .onSizeChanged { railPx = it.width.toFloat() },
+        ) {
+            CompositionLocalProvider(
+                LocalDensity provides Density(density.density * k, density.fontScale),
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) { drawRail(RailCenterY.toPx()) }
+                Box(
+                    modifier = Modifier
+                        .size(CapsuleWidth, RailAreaHeight)
+                        .graphicsLayer { translationX = carriageX }
+                        .drawBehind { drawCarriage(strike.value) },
+                )
+            }
+        }
+
+        // ── the line you type on ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -781,27 +339,6 @@ private fun SearchField(
                 }
             }
         }
-
-        // ── rail + carriage: edge to edge, scaled to the screen width ──
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(RailAreaHeight * k)
-                .onSizeChanged { railPx = it.width.toFloat() },
-        ) {
-            CompositionLocalProvider(
-                LocalDensity provides Density(density.density * k, density.fontScale),
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) { drawRail(RailCenterY.toPx()) }
-                Box(
-                    modifier = Modifier
-                        .size(CapsuleWidth, RailAreaHeight)
-                        .graphicsLayer { translationX = carriageX }
-                        .drawBehind { drawCarriage(strike.value) },
-                )
-            }
-        }
-        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -901,7 +438,7 @@ private fun DrawScope.softShadow(
 
 /**
  * The carriage, to the reference's proportions: flat warm-white capsule with a soft bevel line near
- * the top, edge-shaded underside, a dark hammer slot, three small flat LEDs and a light-grey T hammer
+ * the top, edge-shaded underside, a dark hammer slot on its underside, three small flat LEDs and a light-grey T hammer
  * with a dark cylinder bar.
  * Local origin = top-left of the capsule's box; the capsule sits low so the hammer has room above it.
  * @param strike 1 right after a keystroke, easing back to 0
@@ -910,7 +447,7 @@ private fun DrawScope.drawCarriage(strike: Float) {
     val w = size.width
     val capH = CapsuleHeight.toPx()
     val s = strike.coerceIn(-0.3f, 1f)
-    val capTop = (RailCenterY.toPx() - capH / 2f) + 1.dp.toPx() * s.coerceAtLeast(0f)
+    val capTop = RailCenterY.toPx() - capH / 2f
     val corner = CornerRadius(capH / 2f)
     val cx = w * 0.5f
 
@@ -924,13 +461,14 @@ private fun DrawScope.drawCarriage(strike: Float) {
         alpha = 0.9f,
     )
 
-    // ── T hammer: light-grey stem under a small dark cylinder bar ──
-    val lift = 14.dp.toPx() * s
+    // ── T hammer: hangs below the capsule and strikes DOWN onto the text line ──
+    val capBottom = capTop + capH
+    val lift = 7.dp.toPx() * s
     val barW = 15.dp.toPx()
     val barH = 4.8.dp.toPx()
     val stemW = 3.4.dp.toPx()
     val stemLen = 11.dp.toPx()
-    val barTop = capTop - stemLen - barH - lift
+    val barTop = capBottom + stemLen + lift
     softShadow(
         topLeft = Offset(cx - barW / 2f + 1.5.dp.toPx(), barTop + 2.dp.toPx()),
         size = Size(barW, barH),
@@ -949,8 +487,8 @@ private fun DrawScope.drawCarriage(strike: Float) {
             startX = cx - stemW / 2f,
             endX = cx + stemW / 2f,
         ),
-        topLeft = Offset(cx - stemW / 2f, barTop + barH - 0.5.dp.toPx()),
-        size = Size(stemW, capTop - (barTop + barH) + 1.5.dp.toPx()),
+        topLeft = Offset(cx - stemW / 2f, capBottom - 1.5.dp.toPx()),
+        size = Size(stemW, barTop - capBottom + 2.dp.toPx()),
     )
     drawRoundRect(
         brush = Brush.verticalGradient(
@@ -966,7 +504,6 @@ private fun DrawScope.drawCarriage(strike: Float) {
         size = Size(barW, barH),
         cornerRadius = CornerRadius(1.6.dp.toPx()),
     )
-    // pale rims on the bar's rounded ends
     for (ex in floatArrayOf(cx - barW / 2f + 0.4.dp.toPx(), cx + barW / 2f - 1.2.dp.toPx())) {
         drawRect(
             color = Color(0xFFB8BCC0).copy(alpha = 0.55f),
@@ -1078,10 +615,10 @@ private fun DrawScope.drawCarriage(strike: Float) {
             0.50f to Color(0xFF36332E),
             0.80f to Color(0xFF5B574E),
             1f to Color(0xFF6E6A5F),
-            startY = capTop,
-            endY = capTop + slotH,
+            startY = capTop + capH - slotH,
+            endY = capTop + capH,
         ),
-        topLeft = Offset(cx - slotW / 2f, capTop),
+        topLeft = Offset(cx - slotW / 2f, capTop + capH - slotH),
         size = Size(slotW, slotH),
         cornerRadius = CornerRadius(1.2.dp.toPx()),
     )
@@ -1126,258 +663,4 @@ private fun DrawScope.drawCarriage(strike: Float) {
         radius = ledR,
         center = c3,
     )
-}
-
-@Composable
-private fun FilterChips(
-    selected: SearchFilter,
-    onSelect: (SearchFilter) -> Unit,
-) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        items(SearchFilter.entries.toList()) { f ->
-            val on = f == selected
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(if (on) Color.White else Color.White.copy(alpha = 0.07f))
-                    .border(
-                        width = 1.dp,
-                        color = if (on) Color.White else Color.White.copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(18.dp),
-                    )
-                    .clickable { onSelect(f) }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                Text(
-                    text = f.label,
-                    color = if (on) Color.Black else Color.White.copy(alpha = 0.78f),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  4. ROWS — result rows: song, artist, album, playlist
-// ═══════════════════════════════════════════════════════════════════════════
-
-@Composable
-private fun SectionTitle(title: String, subtitle: String?) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = title.uppercase(),
-            color = Color.White.copy(alpha = 0.45f),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 1.4.sp,
-        )
-        if (subtitle != null) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = subtitle,
-                color = Color.White.copy(alpha = 0.35f),
-                fontSize = 12.sp,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SongRow(song: Song, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = song.albumArtUri,
-            contentDescription = null,
-            modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(Color.White.copy(alpha = 0.06f)),
-            contentScale = ContentScale.Crop,
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = song.title,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = song.artist,
-                color = Color.White.copy(alpha = 0.48f),
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = formatSearchDuration(song.duration),
-            color = Color.White.copy(alpha = 0.38f),
-            fontSize = 12.sp,
-        )
-    }
-}
-
-@Composable
-private fun ArtistRow(name: String, count: Int, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .clip(CircleShape)
-                .background(Ice.copy(alpha = 0.14f))
-                .border(1.dp, Ice.copy(alpha = 0.35f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = name.take(1).uppercase(),
-                color = Ice,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = SearchSans,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = name,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = if (count == 1) "1 song" else "$count songs",
-                color = Color.White.copy(alpha = 0.45f),
-                fontSize = 13.sp,
-            )
-        }
-    }
-}
-
-@Composable
-private fun AlbumRow(name: String, artist: String, art: android.net.Uri?, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = art,
-            contentDescription = null,
-            modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(Color.White.copy(alpha = 0.06f)),
-            contentScale = ContentScale.Crop,
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = name,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = artist,
-                color = Color.White.copy(alpha = 0.45f),
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun PlaylistRow(playlist: Playlist, art: android.net.Uri?, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = art,
-            contentDescription = null,
-            modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(Mint.copy(alpha = 0.10f)),
-            contentScale = ContentScale.Crop,
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = playlist.name,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = if (playlist.songIds.size == 1) "Playlist · 1 song" else "Playlist · ${playlist.songIds.size} songs",
-                color = Color.White.copy(alpha = 0.45f),
-                fontSize = 13.sp,
-            )
-        }
-    }
-}
-
-@Composable
-private fun EmptyNote(text: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 26.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            color = Color.White.copy(alpha = 0.40f),
-            fontSize = 14.sp,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-private fun formatSearchDuration(ms: Long): String {
-    val total = ms / 1000
-    return "%d:%02d".format(total / 60, total % 60)
 }
