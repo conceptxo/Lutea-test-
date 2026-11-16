@@ -95,10 +95,10 @@ private val RailCenterY = 30.dp             // centre of the rail inside the rai
 
 // The pressed-in search capsule that sits right above the mechanism.
 private val CapsuleBarHeight = 42.dp
-private val CapsuleSideMargin = 6.dp
-private val CapsuleBevel = 1.5.dp
-private val CapsuleInnerPadding = 16.dp
-private val TextStart = 51.5.dp             // margin + bevel + padding + glyph(18) + gap(10): where typed text begins
+private val CapsuleSideMargin = 10.dp
+private val CapsuleBevel = 2.dp
+private val CapsuleInnerPadding = 8.dp
+private val TextStart = 58.dp               // margin + bevel + padding + glyph(18) + gap(20): where typed text begins
 
 private enum class TypeState { IDLE, TYPING, PAUSED, CLEARED }
 
@@ -179,8 +179,10 @@ private fun SearchMachine(
     val capsuleWPx = with(density) { CapsuleWidth.toPx() } * k
     val textStartPx = with(density) { TextStart.toPx() }
     val halfGlyphPx = with(density) { 4.2.dp.toPx() }          // caret sits AFTER the last letter
-    val minLeft = (textStartPx - capsuleWPx / 2f).coerceAtLeast(0f)
-    val maxLeft = (railPx - capsuleWPx).coerceAtLeast(minLeft)
+    // The rail's end collars live in the first/last 17dp; the carriage must not cover them.
+    val notchClearPx = with(density) { 20.dp.toPx() } * k
+    val minLeft = notchClearPx
+    val maxLeft = (railPx - capsuleWPx - notchClearPx).coerceAtLeast(minLeft)
     val caretLead = minOf(caretPx, viewportPx) - if (query.isEmpty()) 0f else halfGlyphPx
     val targetLeft = (textStartPx + caretLead - capsuleWPx / 2f)
         .coerceIn(minLeft, maxLeft)
@@ -241,7 +243,15 @@ private fun SearchMachine(
                 .padding(horizontal = CapsuleSideMargin)
                 .height(CapsuleBarHeight)
                 .clip(CircleShape)
-                .background(Brush.verticalGradient(listOf(Color(0xFF040404), Color(0xFF39393B))))
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color(0xFF050506),
+                        0.20f to Color(0xFF141416),
+                        0.55f to Color(0xFF35353A),
+                        0.82f to Color(0xFF4B4B52),
+                        1f to Color(0xFF5F5F67),
+                    ),
+                )
                 .padding(CapsuleBevel)
                 .clip(CircleShape)
                 .drawBehind { drawPressedIn() }
@@ -258,10 +268,10 @@ private fun SearchMachine(
             Icon(
                 imageVector = SearchGlyph,
                 contentDescription = null,
-                tint = TypeCream.copy(alpha = 0.55f),
+                tint = Color.White.copy(alpha = 0.95f),
                 modifier = Modifier.size(18.dp),
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(20.dp))
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -271,7 +281,7 @@ private fun SearchMachine(
                     Text(
                         text = "Search songs, artists, albums",
                         color = Color.White.copy(alpha = 0.42f),
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.2.sp,
                         maxLines = 1,
@@ -293,7 +303,7 @@ private fun SearchMachine(
                     singleLine = true,
                     textStyle = TextStyle(
                         color = Color.White,
-                        fontSize = 14.sp,
+                        fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
                     ),
@@ -376,21 +386,23 @@ private fun SearchMachine(
 private fun DrawScope.drawPressedIn() {
     val h = size.height
     val w = size.width
-    // the well itself
+    // the well itself — a touch of light at the bottom so the lip shadows read
     drawRect(
         brush = Brush.verticalGradient(
             0f to Color(0xFF0B0B0C),
-            0.5f to Color(0xFF141415),
-            1f to Color(0xFF1F1F21),
+            0.45f to Color(0xFF141416),
+            1f to Color(0xFF26262B),
         ),
     )
-    // shadow cast by the top lip
+    // shadow cast by the top lip — deep and tall
     drawRect(
         brush = Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 0.90f),
+            0f to Color.Black.copy(alpha = 1f),
+            0.30f to Color.Black.copy(alpha = 0.85f),
+            0.62f to Color.Black.copy(alpha = 0.38f),
             1f to Color.Black.copy(alpha = 0f),
             startY = 0f,
-            endY = h * 0.55f,
+            endY = h * 0.92f,
         ),
     )
     // shadow down both curved sides
@@ -408,7 +420,7 @@ private fun DrawScope.drawPressedIn() {
     drawRoundRect(
         brush = Brush.verticalGradient(
             0.55f to Color.White.copy(alpha = 0f),
-            1f to Color.White.copy(alpha = 0.14f),
+            1f to Color.White.copy(alpha = 0.22f),
             startY = 0f,
             endY = h,
         ),
