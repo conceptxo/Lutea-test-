@@ -1,5 +1,6 @@
 package com.rajatxo.lutea.ui.screens
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -7,7 +8,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -38,11 +38,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -58,16 +60,22 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SEARCH PAGE — gradient, a search capsule, and the typewriter under it.
+//  SEARCH PAGE — gradient, a pressed-in search capsule, and the typewriter under it.
 //
-//  Top to bottom:  the search capsule (you type here) → the T hammer → the
-//  cream carriage on its steel rail. The carriage follows the caret; on every
-//  keystroke the hammer taps up at the capsule and the first LED flashes amber.
+//  Top to bottom:  the search capsule (carved INTO the screen, you type here) →
+//  the T hammer → the cream carriage on its steel rail. The carriage follows the
+//  caret; on every keystroke the hammer taps up under the text like a typebar.
+//  The carriage's top slot and its three LEDs show the typing state:
+//      green  = actively typing
+//      yellow = keyboard open, paused
+//      red    = search cleared (✕)
 //  Everything is drawn with gradients — no images.
 //
 //  The ensemble hangs in the top half of the page, its rail sitting on the
@@ -83,14 +91,21 @@ private val PageBottom = Color.Black
 
 private val CapsuleWidth = 80.dp
 private val CapsuleHeight = 34.dp
-private val RailAreaHeight = 60.dp          // rail at 36dp, hammer above it, air under the pipe
-private val RailCenterY = 36.dp             // centre of the rail inside the rail area
-private val TextStart = 66.dp               // margin + pill padding + glyph + gap: where typed text begins
+private val RailAreaHeight = 52.dp          // hammer on top, rail at 30dp, a little air under the pipe
+private val RailCenterY = 30.dp             // centre of the rail inside the rail area
 
-// The search capsule that floats above the mechanism.
-private val CapsuleBarHeight = 46.dp
-private val CapsuleSideMargin = 20.dp
-private val CapsuleInnerPadding = 18.dp
+// The pressed-in search capsule that sits right above the mechanism.
+private val CapsuleBarHeight = 42.dp
+private val CapsuleSideMargin = 16.dp
+private val CapsuleBevel = 1.5.dp
+private val CapsuleInnerPadding = 16.dp
+private val TextStart = 61.5.dp             // margin + bevel + padding + glyph(18) + gap(10): where typed text begins
+
+private enum class TypeState { IDLE, TYPING, PAUSED, CLEARED }
+
+private val StateGreen = Color(0xFF4DE05F)
+private val StateYellow = Color(0xFFFFC62E)
+private val StateRed = Color(0xFFFF4A3D)
 
 /** Lucide search glyph (MIT), inlined so the page owns its icon. */
 private val SearchGlyph: ImageVector = ImageVector.Builder(
@@ -161,7 +176,7 @@ private fun SearchMachine(
     var viewportPx by remember { mutableStateOf(0f) }   // visible width of the text box
     var railPx by remember { mutableStateOf(0f) }       // rail width
 
-    // Carriage target: centre the capsule over the caret, keep it between the end collars.
+    // Carriage target: centre the capsule under the caret, keep it between the end collars.
     val capsuleWPx = with(density) { CapsuleWidth.toPx() } * k
     val textStartPx = with(density) { TextStart.toPx() }
     val edgePx = with(density) { 26.dp.toPx() } * k
@@ -174,7 +189,7 @@ private fun SearchMachine(
         label = "carriage",
     )
 
-    // One strike per keystroke: hammer taps up onto the capsule, then springs back; LED flashes.
+    // One strike per keystroke: the typebar taps up under the text, then springs back.
     val strike = remember { Animatable(0f) }
     LaunchedEffect(query) {
         if (query.isNotEmpty()) {
@@ -183,16 +198,54 @@ private fun SearchMachine(
         }
     }
 
+    // ── typing state → colour of the carriage slot + LEDs ──
+    var focused by remember { mutableStateOf(false) }
+    var mode by remember { mutableStateOf(TypeState.IDLE) }
+    var clearTick by remember { mutableStateOf(0) }
+    LaunchedEffect(query) {
+        if (query.isNotEmpty()) {
+            mode = TypeState.TYPING            // green while keys are coming in
+            delay(650)
+        }
+        if (mode != TypeState.CLEARED) {
+            mode = if (focused) TypeState.PAUSED else TypeState.IDLE   // yellow: paused, keyboard still open
+        }
+    }
+    LaunchedEffect(clearTick) {
+        if (clearTick > 0) {
+            delay(900)                          // red flash after ✕
+            if (mode == TypeState.CLEARED) {
+                mode = if (focused) TypeState.PAUSED else TypeState.IDLE
+            }
+        }
+    }
+    val statusColor by animateColorAsState(
+        targetValue = when (mode) {
+            TypeState.TYPING -> StateGreen
+            TypeState.CLEARED -> StateRed
+            else -> StateYellow
+        },
+        animationSpec = tween(160),
+        label = "status",
+    )
+    val lit by animateFloatAsState(
+        targetValue = if (mode == TypeState.IDLE) 0f else 1f,
+        animationSpec = tween(220),
+        label = "lit",
+    )
+
     Column(modifier = modifier) {
-        // ── the search capsule: a lit pill floating above the mechanism ──
+        // ── the search capsule: carved into the screen (dark lip on top, light lip below) ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = CapsuleSideMargin)
                 .height(CapsuleBarHeight)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.07f))
-                .border(1.dp, TypeCream.copy(alpha = 0.30f), CircleShape)
+                .background(Brush.verticalGradient(listOf(Color(0xFF040404), Color(0xFF39393B))))
+                .padding(CapsuleBevel)
+                .clip(CircleShape)
+                .drawBehind { drawPressedIn() }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -218,11 +271,13 @@ private fun SearchMachine(
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
-                        color = TypeCream.copy(alpha = 0.35f),
-                        fontSize = 14.sp,
+                        color = TypeCream.copy(alpha = 0.34f),
+                        fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace,
-                        letterSpacing = 0.3.sp,
+                        letterSpacing = 0.2.sp,
                         maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 BasicTextField(
@@ -230,10 +285,12 @@ private fun SearchMachine(
                     onValueChange = onQueryChange,
                     singleLine = true,
                     textStyle = TextStyle(
-                        color = TypeCream,
+                        color = Color(0xFFFFF8DC),
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
+                        // soft glow on the typed letters, like the lit "All" label
+                        shadow = Shadow(color = TypeCream.copy(alpha = 0.55f), blurRadius = 10f),
                     ),
                     cursorBrush = SolidColor(TypeCream),
                     onTextLayout = { layout ->
@@ -242,7 +299,15 @@ private fun SearchMachine(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(focus),
+                        .focusRequester(focus)
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            if (!it.isFocused) {
+                                if (mode != TypeState.CLEARED) mode = TypeState.IDLE
+                            } else if (mode == TypeState.IDLE) {
+                                mode = TypeState.PAUSED
+                            }
+                        },
                 )
             }
             if (query.isNotEmpty()) {
@@ -252,7 +317,11 @@ private fun SearchMachine(
                         .size(22.dp)
                         .clip(CircleShape)
                         .background(Color.White.copy(alpha = 0.10f))
-                        .clickable { onQueryChange("") },
+                        .clickable {
+                            mode = TypeState.CLEARED       // red
+                            clearTick++
+                            onQueryChange("")
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -264,7 +333,7 @@ private fun SearchMachine(
             }
         }
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
 
         // ── rail + carriage + hammer: edge to edge, scaled to the screen width ──
         Box(
@@ -288,11 +357,74 @@ private fun SearchMachine(
                     modifier = Modifier
                         .size(CapsuleWidth, RailAreaHeight)
                         .graphicsLayer { translationX = carriageX }
-                        .drawBehind { drawCarriage(strike.value) },
+                        .drawBehind { drawCarriage(strike.value, statusColor, lit) },
                 )
             }
         }
     }
+}
+
+/**
+ * The inside of the pressed-in search capsule (already clipped to the pill): a dark well with a deep
+ * shadow under the top lip and down both sides, and a thin light line where the bottom lip catches light.
+ */
+private fun DrawScope.drawPressedIn() {
+    val h = size.height
+    val w = size.width
+    // the well itself
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to Color(0xFF0B0B0C),
+            0.5f to Color(0xFF141415),
+            1f to Color(0xFF1F1F21),
+        ),
+    )
+    // shadow cast by the top lip
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.90f),
+            1f to Color.Black.copy(alpha = 0f),
+            startY = 0f,
+            endY = h * 0.55f,
+        ),
+    )
+    // shadow down both curved sides
+    drawRect(
+        brush = Brush.horizontalGradient(
+            0f to Color.Black.copy(alpha = 0.55f),
+            0.12f to Color.Black.copy(alpha = 0f),
+            0.88f to Color.Black.copy(alpha = 0f),
+            1f to Color.Black.copy(alpha = 0.55f),
+            startX = 0f,
+            endX = w,
+        ),
+    )
+    // light catching the bottom lip
+    drawRoundRect(
+        brush = Brush.verticalGradient(
+            0.55f to Color.White.copy(alpha = 0f),
+            1f to Color.White.copy(alpha = 0.14f),
+            startY = 0f,
+            endY = h,
+        ),
+        topLeft = Offset(0.8.dp.toPx(), 0.8.dp.toPx()),
+        size = Size(w - 1.6.dp.toPx(), h - 1.6.dp.toPx()),
+        cornerRadius = CornerRadius(h / 2f - 0.8.dp.toPx()),
+        style = Stroke(width = 1.4.dp.toPx()),
+    )
+    // crisp dark edge along the top inside
+    drawRoundRect(
+        brush = Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.95f),
+            0.45f to Color.Black.copy(alpha = 0f),
+            startY = 0f,
+            endY = h,
+        ),
+        topLeft = Offset(0.6.dp.toPx(), 0.6.dp.toPx()),
+        size = Size(w - 1.2.dp.toPx(), h - 1.2.dp.toPx()),
+        cornerRadius = CornerRadius(h / 2f - 0.6.dp.toPx()),
+        style = Stroke(width = 1.2.dp.toPx()),
+    )
 }
 
 /** Slate pipe: soft top edge, broad pale highlight band at ~40%, falling to near-black. */
@@ -395,8 +527,10 @@ private fun DrawScope.softShadow(
  * with a dark cylinder bar.
  * Local origin = top-left of the capsule's box; the capsule sits low so the hammer has room above it.
  * @param strike 1 right after a keystroke, easing back to 0
+ * @param status colour of the slot + LEDs (green typing / yellow paused / red cleared)
+ * @param lit 0 = idle (reference colours), 1 = fully showing [status]
  */
-private fun DrawScope.drawCarriage(strike: Float) {
+private fun DrawScope.drawCarriage(strike: Float, status: Color, lit: Float) {
     val w = size.width
     val capH = CapsuleHeight.toPx()
     val s = strike.coerceIn(-0.3f, 1f)
@@ -415,11 +549,11 @@ private fun DrawScope.drawCarriage(strike: Float) {
     )
 
     // ── T hammer: sits above the capsule and strikes UP at the search capsule ──
-    val lift = 7.dp.toPx() * s
+    val lift = 12.dp.toPx() * s
     val barW = 15.dp.toPx()
     val barH = 4.8.dp.toPx()
     val stemW = 3.4.dp.toPx()
-    val stemLen = 11.dp.toPx()
+    val stemLen = 7.dp.toPx()
     val barTop = capTop - stemLen - barH - lift
     softShadow(
         topLeft = Offset(cx - barW / 2f + 1.5.dp.toPx(), barTop + 2.dp.toPx()),
@@ -557,62 +691,64 @@ private fun DrawScope.drawCarriage(strike: Float) {
         style = Stroke(width = 1.1.dp.toPx()),
     )
 
-    // ── hammer slot: dark recess, lighter toward its lower lip ──
+    // ── status slot on the top edge: a dark recess that lights up green / yellow / red ──
     val slotW = 16.5.dp.toPx()
     val slotH = 3.6.dp.toPx()
+    val slotLeft = cx - slotW / 2f
+    if (lit > 0.01f) {
+        softShadow(
+            topLeft = Offset(slotLeft, capTop),
+            size = Size(slotW, slotH),
+            corner = 1.2.dp.toPx(),
+            color = status,
+            spread = 5.dp.toPx(),
+            alpha = 0.9f * lit,
+            steps = 8,
+        )
+    }
+    val slotDark = lerp(Color(0xFF1D1C18), lerp(Color.Black, status, 0.55f), lit)
     drawRoundRect(
         brush = Brush.verticalGradient(
-            0f to Color(0xFF1D1C18),
-            0.30f to Color(0xFF1D1C18),
-            0.50f to Color(0xFF36332E),
-            0.80f to Color(0xFF5B574E),
-            1f to Color(0xFF6E6A5F),
-            startY = capTop + capH - slotH,
-            endY = capTop + capH,
+            0f to slotDark,
+            0.30f to slotDark,
+            0.50f to lerp(Color(0xFF36332E), lerp(Color.Black, status, 0.80f), lit),
+            0.80f to lerp(Color(0xFF5B574E), status, lit),
+            1f to lerp(Color(0xFF6E6A5F), lerp(status, Color.White, 0.35f), lit),
+            startY = capTop,
+            endY = capTop + slotH,
         ),
-        topLeft = Offset(cx - slotW / 2f, capTop + capH - slotH),
+        topLeft = Offset(slotLeft, capTop),
         size = Size(slotW, slotH),
         cornerRadius = CornerRadius(1.2.dp.toPx()),
     )
 
-    // ── LEDs: small and flat — green (amber while a key is struck), dark brown, dusty rose ──
+    // ── LEDs: reference colours when idle; all three take the state colour otherwise ──
     val ledR = 2.3.dp.toPx()
     val ledY = capTop + capH / 2f
     val ledX = w * 0.143f
     val gap = w * 0.113f
-    val sc = s.coerceIn(0f, 1f)
-    val c1 = Offset(ledX, ledY)
-    drawCircle(lerp(Color(0xFFD0DAC6), Color(0xFFFFE3B8), sc), radius = ledR + 0.9.dp.toPx(), center = c1)
-    drawCircle(
-        brush = Brush.radialGradient(
-            0f to lerp(Color(0xFF8CDA66), Color(0xFFFFB84D), sc),
-            1f to lerp(Color(0xFF72C255), Color(0xFFF08F1F), sc),
-            center = c1,
+    val idle = arrayOf(Color(0xFF7CCB5C), Color(0xFF3A130B), Color(0xFFD2A09B))
+    for (i in 0..2) {
+        val c = Offset(ledX + gap * i, ledY)
+        val col = lerp(idle[i], status, lit)
+        if (lit > 0.01f) {
+            drawCircle(status.copy(alpha = 0.38f * lit), radius = ledR * 3f, center = c)
+        }
+        val ringAlpha = if (i == 0) 1f else lit
+        drawCircle(
+            color = lerp(Color(0xFFD0DAC6), lerp(status, Color.White, 0.6f), lit).copy(alpha = ringAlpha),
+            radius = ledR + 0.9.dp.toPx(),
+            center = c,
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                0f to lerp(col, Color.White, 0.25f * lit + if (i == 0) 0.18f else 0f),
+                1f to lerp(col, Color.Black, 0.22f),
+                center = c,
+                radius = ledR,
+            ),
             radius = ledR,
-        ),
-        radius = ledR,
-        center = c1,
-    )
-    val c2 = Offset(ledX + gap, ledY)
-    drawCircle(
-        brush = Brush.radialGradient(
-            0f to Color(0xFF3A130B),
-            1f to Color(0xFF240A04),
-            center = c2,
-            radius = ledR,
-        ),
-        radius = ledR,
-        center = c2,
-    )
-    val c3 = Offset(ledX + gap * 2f, ledY)
-    drawCircle(
-        brush = Brush.radialGradient(
-            0f to Color(0xFFD9A8A3),
-            1f to Color(0xFFBF908B),
-            center = c3,
-            radius = ledR,
-        ),
-        radius = ledR,
-        center = c3,
-    )
+            center = c,
+        )
+    }
 }
