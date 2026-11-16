@@ -243,10 +243,11 @@ fun SearchScreen() {
             // ── History: starts right under the headline, slides up into the blur ──
             LazyColumn(
                 state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = headerZone),
-                contentPadding = PaddingValues(bottom = 180.dp),
+                modifier = Modifier.fillMaxSize(),
+                // No layout padding: the list runs all the way to the top of the
+                // screen so rows slide UNDER the header blur instead of being
+                // chopped at its edge. The padding only sets where row 1 starts.
+                contentPadding = PaddingValues(top = headerZone + 4.dp, bottom = 180.dp),
             ) {
                 items(history) { entry ->
                     HistoryRow(text = entry)
@@ -274,10 +275,18 @@ private val BlurRun = 132.dp
 /** Blur strength right under the headline (0..1). */
 private const val BlurPeak = 0.95f
 
-/** Dark wash over the band, strongest at its top — kills any pale seam. */
-private const val BlurScrimPeak = 0.46f
-
-private const val BlurScrimStops = 12
+/**
+ * The wash over the band, as (position, alpha) pairs. Nearly opaque at the very
+ * top so rows genuinely disappear behind the title, then a smooth melt to clear
+ * at the bottom of the band.
+ */
+private val BlurScrim = arrayOf(
+    0.00f to 0.86f,
+    0.22f to 0.80f,
+    0.44f to 0.50f,
+    0.70f to 0.20f,
+    1.00f to 0.00f,
+)
 
 /**
  * The header blur — one band from the very top of the screen down past the
@@ -309,10 +318,8 @@ private fun HeaderBlur(hazeState: HazeState, height: Dp) {
             .height(height)
             .background(
                 Brush.verticalGradient(
-                    colorStops = Array(BlurScrimStops) { i ->
-                        val t = i / (BlurScrimStops - 1f)
-                        t to Color.Black.copy(alpha = BlurScrimPeak * (1f - EaseOutCubic.transform(t)))
-                    },
+                    colorStops = BlurScrim.map { (at, alpha) -> at to Color.Black.copy(alpha = alpha) }
+                        .toTypedArray(),
                 ),
             ),
     )
