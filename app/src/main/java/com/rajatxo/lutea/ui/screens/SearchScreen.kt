@@ -7,18 +7,19 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -62,16 +63,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SEARCH PAGE — the page look plus one thing on it: the typewriter.
+//  SEARCH PAGE — gradient, a search capsule, and the typewriter under it.
 //
-//  Top to bottom:  steel rail with the cream capsule carriage → the T hammer
-//  hanging under the capsule → the line you type on.
-//  The carriage follows the caret; on every keystroke the hammer strikes
-//  down onto the text and the first LED flashes amber.
+//  Top to bottom:  the search capsule (you type here) → the T hammer → the
+//  cream carriage on its steel rail. The carriage follows the caret; on every
+//  keystroke the hammer taps up at the capsule and the first LED flashes amber.
 //  Everything is drawn with gradients — no images.
 //
-//  The machine is anchored under the status bar and never moves — the keyboard,
-//  the mini player and the nav bar cannot push it around.
+//  The ensemble hangs in the top half of the page, its rail sitting on the
+//  horizontal centre line. The keyboard starts below the middle of the screen,
+//  so it can never cover it — no IME padding, no movement, ever.
 // ═══════════════════════════════════════════════════════════════════════════
 
 private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
@@ -82,11 +83,14 @@ private val PageBottom = Color.Black
 
 private val CapsuleWidth = 80.dp
 private val CapsuleHeight = 34.dp
-private val RailAreaHeight = 56.dp          // capsule on top, hammer hanging below it
-private val RailCenterY = 23.dp             // centre of the rail inside the rail area
-private val TextSideInset = 24.dp
-private val TextStart = 52.dp               // side inset + search glyph + gap: where typed text begins
-private val TypedLineHeight = 26.dp         // the text sits right under the hammer
+private val RailAreaHeight = 60.dp          // rail at 36dp, hammer above it, air under the pipe
+private val RailCenterY = 36.dp             // centre of the rail inside the rail area
+private val TextStart = 66.dp               // margin + pill padding + glyph + gap: where typed text begins
+
+// The search capsule that floats above the mechanism.
+private val CapsuleBarHeight = 46.dp
+private val CapsuleSideMargin = 20.dp
+private val CapsuleInnerPadding = 18.dp
 
 /** Lucide search glyph (MIT), inlined so the page owns its icon. */
 private val SearchGlyph: ImageVector = ImageVector.Builder(
@@ -121,17 +125,20 @@ fun SearchScreen() {
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
     ) {
-        // The machine lives here, under the status bar, and never moves:
-        // no IME padding, no mini player math. It is immune to the keyboard.
-        Column(
+        // The machine is parked in the top half of the page with its rail sitting
+        // on the horizontal centre line. The keyboard starts below the middle on
+        // every phone, so it can never reach it — no insets, no movement.
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .padding(top = 12.dp),
+                .fillMaxWidth()
+                .fillMaxHeight(0.5f),
         ) {
-            SearchField(
+            SearchMachine(
                 query = query,
                 onQueryChange = { query = it },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
             )
         }
     }
@@ -139,9 +146,10 @@ fun SearchScreen() {
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-private fun SearchField(
+private fun SearchMachine(
     query: String,
     onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val focus = remember { FocusRequester() }
@@ -166,7 +174,7 @@ private fun SearchField(
         label = "carriage",
     )
 
-    // One strike per keystroke: hammer drops onto the text, then springs back; LED flashes.
+    // One strike per keystroke: hammer taps up onto the capsule, then springs back; LED flashes.
     val strike = remember { Animatable(0f) }
     LaunchedEffect(query) {
         if (query.isNotEmpty()) {
@@ -175,49 +183,30 @@ private fun SearchField(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) {
-                focus.requestFocus()
-                keyboard?.show()
-            },
-    ) {
-        // ── rail + carriage + hammer: edge to edge, scaled to the screen width ──
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(RailAreaHeight * k)
-                .onSizeChanged { railPx = it.width.toFloat() },
-        ) {
-            CompositionLocalProvider(
-                LocalDensity provides Density(density.density * k, density.fontScale),
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) { drawRail(RailCenterY.toPx()) }
-                Box(
-                    modifier = Modifier
-                        .size(CapsuleWidth, RailAreaHeight)
-                        .graphicsLayer { translationX = carriageX }
-                        .drawBehind { drawCarriage(strike.value) },
-                )
-            }
-        }
-
-        // ── the line you type on ──
+    Column(modifier = modifier) {
+        // ── the search capsule: a lit pill floating above the mechanism ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = TextSideInset)
-                .height(TypedLineHeight),
+                .padding(horizontal = CapsuleSideMargin)
+                .height(CapsuleBarHeight)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.07f))
+                .border(1.dp, TypeCream.copy(alpha = 0.30f), CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    focus.requestFocus()
+                    keyboard?.show()
+                }
+                .padding(horizontal = CapsuleInnerPadding),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = SearchGlyph,
                 contentDescription = null,
-                tint = TypeCream.copy(alpha = 0.5f),
+                tint = TypeCream.copy(alpha = 0.55f),
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(10.dp))
@@ -229,7 +218,7 @@ private fun SearchField(
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
-                        color = TypeCream.copy(alpha = 0.32f),
+                        color = TypeCream.copy(alpha = 0.35f),
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
@@ -272,6 +261,35 @@ private fun SearchField(
                         fontSize = 11.sp,
                     )
                 }
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        // ── rail + carriage + hammer: edge to edge, scaled to the screen width ──
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(RailAreaHeight * k)
+                .onSizeChanged { railPx = it.width.toFloat() }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    focus.requestFocus()
+                    keyboard?.show()
+                },
+        ) {
+            CompositionLocalProvider(
+                LocalDensity provides Density(density.density * k, density.fontScale),
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) { drawRail(RailCenterY.toPx()) }
+                Box(
+                    modifier = Modifier
+                        .size(CapsuleWidth, RailAreaHeight)
+                        .graphicsLayer { translationX = carriageX }
+                        .drawBehind { drawCarriage(strike.value) },
+                )
             }
         }
     }
@@ -396,14 +414,13 @@ private fun DrawScope.drawCarriage(strike: Float) {
         alpha = 0.9f,
     )
 
-    // ── T hammer: hangs below the capsule and strikes DOWN onto the text line ──
-    val capBottom = capTop + capH
+    // ── T hammer: sits above the capsule and strikes UP at the search capsule ──
     val lift = 7.dp.toPx() * s
     val barW = 15.dp.toPx()
     val barH = 4.8.dp.toPx()
     val stemW = 3.4.dp.toPx()
     val stemLen = 11.dp.toPx()
-    val barTop = capBottom + stemLen + lift
+    val barTop = capTop - stemLen - barH - lift
     softShadow(
         topLeft = Offset(cx - barW / 2f + 1.5.dp.toPx(), barTop + 2.dp.toPx()),
         size = Size(barW, barH),
@@ -422,8 +439,8 @@ private fun DrawScope.drawCarriage(strike: Float) {
             startX = cx - stemW / 2f,
             endX = cx + stemW / 2f,
         ),
-        topLeft = Offset(cx - stemW / 2f, capBottom - 1.5.dp.toPx()),
-        size = Size(stemW, barTop - capBottom + 2.dp.toPx()),
+        topLeft = Offset(cx - stemW / 2f, barTop + barH - 0.5.dp.toPx()),
+        size = Size(stemW, capTop - (barTop + barH) + 1.5.dp.toPx()),
     )
     drawRoundRect(
         brush = Brush.verticalGradient(
