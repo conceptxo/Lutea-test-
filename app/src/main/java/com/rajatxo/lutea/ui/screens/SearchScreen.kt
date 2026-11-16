@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -227,7 +228,15 @@ fun SearchScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(PageBackground),
+            .background(
+                Brush.verticalGradient(
+                    0f to PageBackground,
+                    0.20f to PageBackground,
+                    0.50f to Color(0xFF0A0A0A),
+                    0.545f to Color.Black,      // solid black just under the rail
+                    1f to Color.Black,
+                ),
+            ),
     ) {
         // The machine is parked in the top half of the page with its rail sitting
         // on the horizontal centre line. The keyboard starts below the middle on
@@ -357,6 +366,12 @@ private fun SearchMachine(
     val levelProvider: () -> Float = {
         (lightLevel.value * (1f + 0.05f * strike.value.coerceAtLeast(0f))).coerceIn(0f, 1.2f)
     }
+    // backspace / ✕ → the lamp itself goes red, matching the carriage slot
+    val beamColor by animateColorAsState(
+        targetValue = if (mode == TypeState.CLEARED) Color(0xFFFF5347) else LightColor,
+        animationSpec = tween(160),
+        label = "beamColor",
+    )
 
     Column(
         modifier = modifier
@@ -367,7 +382,7 @@ private fun SearchMachine(
                     val apex = apexProvider()
                     val reach = reachProvider()
                     if (beamShader != null) {
-                        drawShaderBeam(beamShader, apex, reach, level * 0.30f, LightColor, 0f, 12.dp.toPx())
+                        drawShaderBeam(beamShader, apex, reach, level * 0.36f, beamColor, 0f, 12.dp.toPx())
                     } else {
                         drawLightBeam(beamPath, apex, reach, level * 0.35f, unit)
                     }
@@ -405,13 +420,20 @@ private fun SearchMachine(
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
-                        color = Color.White.copy(alpha = 0.55f),
+                        color = Color.White.copy(alpha = 0.62f),
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.2.sp,
                         maxLines = 1,
                         softWrap = false,
                         overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(
+                            shadow = Shadow(
+                                color = Color.Black.copy(alpha = 0.70f),
+                                offset = Offset(0f, 1.5f),
+                                blurRadius = 6f,
+                            ),
+                        ),
                     )
                 }
                 BasicTextField(
@@ -431,6 +453,11 @@ private fun SearchMachine(
                         fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
+                        shadow = Shadow(
+                            color = Color.Black.copy(alpha = 0.75f),
+                            offset = Offset(0f, 1.5f),
+                            blurRadius = 6f,
+                        ),
                     ),
                     cursorBrush = SolidColor(TypeCream),
                     onTextLayout = { layout ->
