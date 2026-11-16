@@ -101,6 +101,13 @@ import com.rajatxo.lutea.playback.PlaybackConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
+import android.net.Uri
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import com.rajatxo.lutea.ui.components.LightRaysBackground
+import kotlin.math.abs
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SEARCH PAGE — everything below is this page and nothing else.
@@ -108,14 +115,16 @@ import kotlin.random.Random
 //  Self-contained on purpose: one file to read, one file to change.
 //    0. LOOK    — palette, display font and the one icon the page uses
 //    1. DATA    — the SearchScreen composable: scan, filter, state
-//    2. HEADER  — headline + glow-card carousel
-//    3. FIELD   — search pill + filter chips
+//    2. HEADER  — headline + the card deck (glow cards, or song cards while searching)
+//    3. FIELD   — typewriter search bar + filter chips
 //    4. ROWS    — result rows (song / artist / album / playlist)
 //
-//  The only outside calls are the three app services:
+//  The only outside calls are the app services plus the shared light-ray
+//  backdrop (the same one the playlist page uses):
 //    MusicScanner.scanMusic(context)      -> List<Song>
 //    PlaylistStore.playlists              -> StateFlow<List<Playlist>>
 //    PlaybackConnection.playSong(song, queue)
+//    LightRaysBackground(modifier)
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── 0. LOOK ────────────────────────────────────────────────────────────────
@@ -125,6 +134,10 @@ private val Mint = Color(0xFFD4FF9C)
 
 /** Y — the secondary colour (inactive / ambient). */
 private val Ice = Color(0xFF9EF9FF)
+
+/** The playlist page's charcoal → black backdrop, reused here. */
+private val PageTop = Color(0xFF3A3A3A)
+private val PageBottom = Color.Black
 
 /** Cal Sans, the app's display face, inlined so the page owns its type. */
 private val SearchSans = FontFamily(
@@ -171,13 +184,24 @@ private enum class SearchFilter(val label: String) {
     ALBUMS("Albums"),
 }
 
-/** One card in the top carousel. The field is drawn from nothing but [tone]. */
-private data class GlowCard(
+/**
+ * One card in the deck.
+ *
+ * With an empty query the deck shows playlists (or artists) as painted glow
+ * cards. As soon as something is typed it switches to songs: [art] is the cover,
+ * [matched] says whether the song still matches the query (misses stay in the
+ * deck, blurred), and [song] is what a tap plays.
+ */
+private data class CarouselCard(
+    val id: String,
     val tag: String,
     val title: String,
     val subtitle: String,
     val query: String,
     val tone: Int,
+    val art: Uri? = null,
+    val matched: Boolean = true,
+    val song: Song? = null,
 )
 
 @Composable
@@ -188,14 +212,15 @@ fun SearchScreen() {
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(SearchFilter.ALL) }
     val playlists by PlaylistStore.playlists.collectAsState()
+    val listState = rememberLazyListState()
 
     LaunchedEffect(Unit) {
         songs = withContext(Dispatchers.IO) { MusicScanner.scanMusic(context) }
         scanning = false
     }
 
-    // Keyboard open → the top of the page folds away so the search bar and the
-    // results sit right above the keyboard instead of being covered by it.
+    // Keyboard open → the headline folds away and the deck shrinks, but neither
+    // the deck nor the search bar is ever pushed off screen.
     val density = LocalDensity.current
     val imeInsets = WindowInsets.ime
     val imeVisible by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
@@ -204,20 +229,54 @@ fun SearchScreen() {
         label = "bottomPad",
     )
     val fieldGap by animateDpAsState(
-        targetValue = if (imeVisible) 10.dp else 26.dp,
+        targetValue = if (imeVisible) 10.dp else 22.dp,
         label = "fieldGap",
+    )
+    val cardFraction by animateFloatAsState(
+        targetValue = if (imeVisible) 0.44f else 0.54f,
+        label = "cardWidth",
     )
 
     val q = query.trim()
-    val cards = remember(playlists, songs) { buildCards(playlists, songs) }
+
+    // Deck memory: a song that stops matching stays on the deck, blurred, so the
+    // row never blinks or collapses under your fingers. Derived eagerly (not in a
+    // LaunchedEffect) so the first keystroke already has its cards.
+    val deckMemory = remember { mutableStateOf<List<Song>>(emptyList()) }
+    val deckSongs: List<Song> = remember(q, songs) {
+        if (q.isEmpty()) {
+            deckMemory.value = emptyList()
+            emptyList()
+        } else {
+            val hits = rankSongs(q, songs)
+            val keep = deckMemory.value.filter { old -> hits.none { it.id == old.id } }
+            (hits + keep).distinctBy { it.id }.take(8).also { deckMemory.value = it }
+        }
+    }
+
+    val deck = remember(q, deckSongs, playlists, songs) {
+        if (q.isEmpty()) {
+            buildCards(playlists, songs)
+        } else {
+            deckSongs.map { song ->
+                CarouselCard(
+                    id = "song:${song.id}",
+                    tag = "Song",
+                    title = song.title,
+                    subtitle = song.artist,
+                    query = song.title,
+                    tone = 0,
+                    art = song.albumArtUri,
+                    matched = songMatches(song, q),
+                    song = song,
+                )
+            }
+        }
+    }
 
     val songHits = remember(q, songs) {
         if (q.isEmpty()) emptyList()
-        else songs.filter {
-            it.title.contains(q, ignoreCase = true) ||
-                it.artist.contains(q, ignoreCase = true) ||
-                it.album.contains(q, ignoreCase = true)
-        }
+        else songs.filter { songMatches(it, q) }
     }
     val artistHits = remember(q, songs) {
         if (q.isEmpty()) emptyList()
@@ -244,12 +303,22 @@ fun SearchScreen() {
         else songs.shuffled(Random(songs.size * 31 + 7)).take(5)
     }
 
+    // The deck and the field are the point of the page: when the keyboard opens,
+    // jump back to the top so neither can be scrolled out of the way.
+    LaunchedEffect(imeVisible) {
+        if (imeVisible) listState.scrollToItem(0)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
     ) {
+        // Same soft light rays as the playlist page.
+        LightRaysBackground(modifier = Modifier.fillMaxSize())
+
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
@@ -264,23 +333,25 @@ fun SearchScreen() {
                 ) { Headline() }
             }
 
-            if (cards.isNotEmpty()) {
+            if (deck.isNotEmpty()) {
                 item {
-                    AnimatedVisibility(
-                        visible = !imeVisible,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut(),
-                    ) {
-                        Column {
-                            Spacer(Modifier.height(24.dp))
-                            CardCarousel(
-                                cards = cards,
-                                onPick = { card ->
+                    Column {
+                        Spacer(Modifier.height(if (imeVisible) 8.dp else 22.dp))
+                        CardCarousel(
+                            cards = deck,
+                            fraction = cardFraction,
+                            resetKey = q,
+                            onPick = { card ->
+                                val song = card.song
+                                if (song != null) {
+                                    val queue = rankSongs(q, songs).ifEmpty { listOf(song) }
+                                    PlaybackConnection.playSong(song, queue)
+                                } else {
                                     query = card.query
                                     filter = SearchFilter.ALL
-                                },
-                            )
-                        }
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -406,10 +477,29 @@ fun SearchScreen() {
     }
 }
 
-private fun buildCards(playlists: List<Playlist>, songs: List<Song>): List<GlowCard> {
+private fun songMatches(song: Song, q: String): Boolean =
+    song.title.contains(q, ignoreCase = true) ||
+        song.artist.contains(q, ignoreCase = true) ||
+        song.album.contains(q, ignoreCase = true)
+
+/** Best match first: title prefix, then title, then artist prefix, then artist. */
+private fun rankSongs(q: String, songs: List<Song>): List<Song> {
+    if (q.isEmpty()) return emptyList()
+    return songs.filter { songMatches(it, q) }
+        .sortedWith(
+            compareByDescending<Song> { it.title.startsWith(q, ignoreCase = true) }
+                .thenByDescending { it.title.contains(q, ignoreCase = true) }
+                .thenByDescending { it.artist.startsWith(q, ignoreCase = true) }
+                .thenByDescending { it.artist.contains(q, ignoreCase = true) },
+        )
+        .take(8)
+}
+
+private fun buildCards(playlists: List<Playlist>, songs: List<Song>): List<CarouselCard> {
     if (playlists.isNotEmpty()) {
         return playlists.take(8).mapIndexed { i, p ->
-            GlowCard(
+            CarouselCard(
+                id = "pl:${p.id}",
                 tag = "Playlist",
                 title = p.name,
                 subtitle = if (p.songIds.size == 1) "1 song" else "${p.songIds.size} songs",
@@ -423,7 +513,8 @@ private fun buildCards(playlists: List<Playlist>, songs: List<Song>): List<GlowC
         .sortedByDescending { it.value.size }
         .take(8)
         .mapIndexed { i, (artist, list) ->
-            GlowCard(
+            CarouselCard(
+                id = "ar:$artist",
                 tag = "Artist",
                 title = artist,
                 subtitle = if (list.size == 1) "1 song" else "${list.size} songs",
@@ -440,7 +531,7 @@ private fun songsOf(playlist: Playlist, all: List<Song>): List<Song> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  2. HEADER — headline, glow-card carousel and the card paint pipeline
+//  2. HEADER — headline, the card deck and the card paint pipeline
 // ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
@@ -459,54 +550,159 @@ private fun Headline() {
     )
 }
 
+/**
+ * A deck, not a pager: one card sits in the middle and its neighbours peek in
+ * from both edges, scaled down a little. It snaps on release, and typing always
+ * brings the best match back to the centre.
+ */
 @Composable
 private fun CardCarousel(
-    cards: List<GlowCard>,
-    onPick: (GlowCard) -> Unit,
+    cards: List<CarouselCard>,
+    fraction: Float,
+    resetKey: Any?,
+    onPick: (CarouselCard) -> Unit,
 ) {
+    val state = rememberLazyListState()
+    LaunchedEffect(resetKey) {
+        if (cards.isNotEmpty() && state.firstVisibleItemIndex != 0) state.scrollToItem(0)
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val cardWidth = maxWidth * 0.63f
-        val cardHeight = cardWidth * 1.16f
+        val cardWidth = maxWidth * fraction
+        val cardHeight = cardWidth * 1.2f
         val edge = (maxWidth - cardWidth) / 2f
+        val cardPx = with(LocalDensity.current) { cardWidth.toPx() }
+        val info = state.layoutInfo
+        val viewportCentre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+
         LazyRow(
+            state = state,
             contentPadding = PaddingValues(horizontal = edge),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            flingBehavior = rememberSnapFlingBehavior(state),
         ) {
-            items(cards) { card ->
-                GlowCardView(
-                    card = card,
-                    width = cardWidth,
-                    height = cardHeight,
-                    onClick = { onPick(card) },
-                )
+            items(cards, key = { it.id }) { card ->
+                val item = info.visibleItemsInfo.firstOrNull { it.key == card.id }
+                val scale = if (item == null || cardPx <= 0f || info.visibleItemsInfo.isEmpty()) {
+                    1f
+                } else {
+                    val centre = item.offset + item.size / 2f
+                    (1f - abs(centre - viewportCentre) / cardPx * 0.15f).coerceIn(0.86f, 1f)
+                }
+                CardView(card, cardWidth, cardHeight, scale, onPick)
             }
         }
     }
 }
 
-/**
- * The card artwork is a small paint pipeline, not a single brush: a tinted base,
- * a bloom in one corner, a dark oval that carves the middle, a second soft light
- * on the opposite edge, an inner rim that brightens toward the bottom, and grain.
- * Same idea as the reference card — the gradient carries the whole card.
- */
 @Composable
-private fun GlowCardView(
-    card: GlowCard,
+private fun CardView(
+    card: CarouselCard,
     width: Dp,
     height: Dp,
-    onClick: () -> Unit,
+    scale: Float,
+    onPick: (CarouselCard) -> Unit,
 ) {
+    Box(
+        modifier = Modifier
+            .size(width, height)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(26.dp))
+            .clickable(enabled = card.matched) { onPick(card) },
+    ) {
+        if (card.song != null) SongCard(card) else GlowCard(card)
+    }
+}
+
+/** A search result: cover art, a scrim, and the song name + artist at the bottom. */
+@Composable
+private fun SongCard(card: CarouselCard) {
+    val on = card.matched
+
+    // Base tone, so a song without a cover still reads as a card.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.linearGradient(listOf(lerp(Mint, Color.Black, 0.55f), Color.Black))),
+    )
+    AsyncImage(
+        model = card.art,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .fillMaxSize()
+            .alpha(if (on) 1f else 0.55f)
+            .then(if (on) Modifier else Modifier.blur(9.dp)),
+    )
+    // Scrim so the type stays readable over any cover.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to Color.Transparent,
+                    0.42f to Color.Transparent,
+                    0.72f to Color.Black.copy(alpha = 0.45f),
+                    1f to Color.Black.copy(alpha = 0.92f),
+                ),
+            ),
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = if (on) 0.16f else 0.05f),
+                shape = RoundedCornerShape(26.dp),
+            ),
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.Bottom,
+    ) {
+        Text(
+            text = card.title,
+            color = Color.White.copy(alpha = if (on) 1f else 0.55f),
+            fontSize = 19.sp,
+            lineHeight = 21.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = SearchSans,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = card.subtitle,
+            color = Color.White.copy(alpha = if (on) 0.62f else 0.35f),
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * The no-query card: a tinted base, a bloom in one corner, a dark oval that
+ * carves the middle, a second soft light on the opposite edge, an inner rim
+ * that brightens toward the bottom, and grain.
+ */
+@Composable
+private fun GlowCard(card: CarouselCard) {
     val hot = when (card.tone % 3) {
         0 -> Mint
         1 -> Ice
         else -> lerp(Ice, Mint, 0.5f)
     }
     val seed = card.tone * 977 + 41
+
     Box(
         modifier = Modifier
-            .size(width, height)
-            .clip(RoundedCornerShape(28.dp))
+            .fillMaxSize()
             .drawWithCache {
                 val rnd = Random(seed)
                 val grain = List(220) {
@@ -527,9 +723,7 @@ private fun GlowCardView(
                         )
                     }
                 }
-            }
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.TopStart,
+            },
     ) {
         Column(
             modifier = Modifier
@@ -574,6 +768,7 @@ private fun GlowCardView(
 }
 
 private fun DrawScope.paintGlowField(hot: Color) {
+
     val w = size.width
     val h = size.height
 
@@ -925,7 +1120,7 @@ private fun DrawScope.drawCarriage(strike: Float) {
     )
 
     // ── T hammer: light-grey stem under a small dark cylinder bar ──
-    val lift = 9.dp.toPx() * s
+    val lift = 14.dp.toPx() * s
     val barW = 15.dp.toPx()
     val barH = 4.8.dp.toPx()
     val stemW = 3.4.dp.toPx()
