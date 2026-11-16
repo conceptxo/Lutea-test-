@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -210,14 +211,9 @@ private data class CarouselCard(
 @Composable
 fun SearchScreen() {
     var query by remember { mutableStateOf("") }
-    val history = remember { sampleHistory() }
-    val listState = rememberLazyListState()
 
     val density = LocalDensity.current
     val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
-
-    // Static header zone: the headline lives here and never moves.
-    val headerZone = statusTop + 96.dp
 
     // Keyboard + mini player both push the machine around.
     val imeInsets = WindowInsets.ime
@@ -227,44 +223,41 @@ fun SearchScreen() {
         LocalLuteaWindowInsets.current.getBottom(this).toDp()
     }
 
-    // Where the machine rests: on the keyboard when it is up, otherwise just
-    // above the mini player (when a song is loaded) or the nav bar.
+    // Where the machine rests: right on the keyboard when it is up, otherwise
+    // just above the mini player (when a song is loaded) or the nav bar.
     val floor by animateDpAsState(
         targetValue = when {
-            keyboardOpen -> 12.dp
+            keyboardOpen -> 0.dp
             nowPlaying != null -> navBottom + 44.dp
             else -> navBottom
         },
         label = "machineFloor",
     )
 
+    // The rail box keeps ~11dp of empty air under the capsule. With the keyboard
+    // up that air is pushed behind it, so the machine sits right on the keys
+    // instead of hovering over them.
+    val sink by animateDpAsState(
+        targetValue = if (keyboardOpen) 8.dp else 0.dp,
+        label = "machineSink",
+    )
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // ── The page: gradient, rays, and the scrolling history ──────────────
+        // ── Background: charcoal → black, plus the light rays ────────────────
         Box(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
             )
-
             LightRaysBackground(modifier = Modifier.fillMaxSize())
-
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(top = headerZone + 4.dp, bottom = 220.dp),
-            ) {
-                items(history) { entry ->
-                    HistoryRow(text = entry)
-                }
-            }
         }
 
-        // ── Top fade: a black gradient that swallows rows as they rise ───────
+        // ── Top fade: a black gradient that eats whatever rises under it ─────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(headerZone + 76.dp)
+                .height(statusTop + 150.dp)
                 .background(
                     Brush.verticalGradient(
                         colorStops = TopFadeStops.map { (at, alpha) ->
@@ -274,20 +267,12 @@ fun SearchScreen() {
                 ),
         )
 
-        // ── Headline: static, above the fade ─────────────────────────────────
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding(),
-        ) {
-            Headline()
-        }
-
         // ── The machine: pinned above the keyboard ───────────────────────────
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .offset(y = sink)
                 .imePadding()
                 .padding(bottom = floor),
         ) {
@@ -300,9 +285,9 @@ fun SearchScreen() {
 }
 
 /**
- * The top fade, as (position, alpha) pairs. Solid black over the status bar and
- * headline, melting to nothing [TopFadeRun] below, so rows dissolve as they
- * slide up instead of being cut off.
+ * The top fade, as (position, alpha) pairs. Solid black at the top of the
+ * screen, melting to nothing further down, so anything that scrolls up
+ * dissolves into black instead of being cut off.
  */
 private val TopFadeStops = arrayOf(
     0.00f to 1.00f,
@@ -310,45 +295,6 @@ private val TopFadeStops = arrayOf(
     0.50f to 0.64f,
     0.74f to 0.26f,
     1.00f to 0.00f,
-)
-
-/** One recent search — plain text, bright enough to read the fade on. */
-@Composable
-private fun HistoryRow(text: String) {
-    Text(
-        text = text,
-        color = Color.White.copy(alpha = 0.92f),
-        fontSize = 22.sp,
-        fontWeight = FontWeight.Medium,
-        fontFamily = SearchSans,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-    )
-}
-
-/** Placeholder recents, just to watch them slide under the fade. */
-private fun sampleHistory(): List<String> = listOf(
-    "coldplay",
-    "colours",
-    "cubic",
-    "midnight city",
-    "the weeknd",
-    "sunflower",
-    "lofi beats to study",
-    "arctic monkeys",
-    "do i wanna know",
-    "tame impala",
-    "let it happen",
-    "pink floyd",
-    "comfortably numb",
-    "daft punk",
-    "instant crush",
-    "radiohead",
-    "weird fishes",
-    "kendrick lamar",
-    "money trees",
-    "frank ocean",
 )
 
 private fun songMatches(song: Song, q: String): Boolean =
@@ -408,21 +354,6 @@ private fun songsOf(playlist: Playlist, all: List<Song>): List<Song> {
 //  2. HEADER — headline, the card deck and the card paint pipeline
 // ═══════════════════════════════════════════════════════════════════════════
 
-@Composable
-private fun Headline() {
-    Text(
-        text = "What do you\nfeel like playing?",
-        color = Color.White,
-        fontSize = 30.sp,
-        lineHeight = 34.sp,
-        fontWeight = FontWeight.Bold,
-        fontFamily = SearchSans,
-        textAlign = TextAlign.Center,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 32.dp, vertical = 14.dp),
-    )
-}
 
 /**
  * A deck, not a pager: one card sits in the middle and its neighbours peek in
