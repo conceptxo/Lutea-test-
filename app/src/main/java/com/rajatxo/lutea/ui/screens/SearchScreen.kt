@@ -3,6 +3,7 @@ package com.rajatxo.lutea.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -106,15 +108,11 @@ import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.rememberGraphicsLayer
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
 import com.rajatxo.lutea.ui.components.LightRaysBackground
+import dev.chrisbanes.haze.HazeProgressive
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
 import kotlin.math.abs
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -214,226 +212,90 @@ private data class CarouselCard(
 
 @Composable
 fun SearchScreen() {
-    val context = LocalContext.current
-    var songs by remember { mutableStateOf<List<Song>>(emptyList()) }
-    var query by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(SearchFilter.ALL) }
-    val playlists by PlaylistStore.playlists.collectAsState()
-    val listState = rememberLazyListState()
+    // Haze state: everything inside the source box is what the top band blurs.
+    val hazeState = remember { HazeState() }
 
-    LaunchedEffect(Unit) {
-        songs = withContext(Dispatchers.IO) { MusicScanner.scanMusic(context) }
-    }
-
-    // Keyboard open → the headline folds away and the deck shrinks, but neither
-    // the deck nor the search bar is ever pushed off screen.
-    val density = LocalDensity.current
-    val imeInsets = WindowInsets.ime
-    val imeVisible by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
-    // Tighter gaps so the layout matches the reference video — everything sits
-    // much closer together. When the keyboard opens, the chips pin to a tiny
-    // gap above it (8dp) instead of leaving a wide moat.
-    val chipsBottomPad by animateDpAsState(
-        targetValue = if (imeVisible) 8.dp else 14.dp,
-        label = "chipsBottomPad",
-    )
-    val fieldGap by animateDpAsState(
-        targetValue = if (imeVisible) 10.dp else 14.dp,
-        label = "fieldGap",
-    )
-    val cardFraction by animateFloatAsState(
-        targetValue = if (imeVisible) 0.46f else 0.58f,
-        label = "cardWidth",
-    )
-
-    val q = query.trim()
-
-    // Deck memory: a song that stops matching stays on the deck, blurred, so the
-    // row never blinks or collapses under your fingers. Derived eagerly (not in a
-    // LaunchedEffect) so the first keystroke already has its cards.
-    val deckMemory = remember { mutableStateOf<List<Song>>(emptyList()) }
-    val deckSongs: List<Song> = remember(q, songs) {
-        if (q.isEmpty()) {
-            deckMemory.value = emptyList()
-            emptyList()
-        } else {
-            val hits = rankSongs(q, songs)
-            val keep = deckMemory.value.filter { old -> hits.none { it.id == old.id } }
-            (hits + keep).distinctBy { it.id }.take(8).also { deckMemory.value = it }
-        }
-    }
-
-    val deck = remember(q, deckSongs, playlists, songs) {
-        if (q.isEmpty()) {
-            buildCards(playlists, songs)
-        } else {
-            deckSongs.map { song ->
-                CarouselCard(
-                    id = "song:${song.id}",
-                    tag = "Song",
-                    title = song.title,
-                    subtitle = song.artist,
-                    query = song.title,
-                    tone = 0,
-                    art = song.albumArtUri,
-                    matched = songMatches(song, q),
-                    song = song,
-                )
-            }
-        }
-    }
-
-    // The deck and the field are the point of the page: when the keyboard opens,
-    // put the deck back at the top so it can never be scrolled out of the way.
-    LaunchedEffect(imeVisible) {
-        if (imeVisible && listState.layoutInfo.totalItemsCount > 0) listState.scrollToItem(0)
-    }
-
-    // Results are parked for now: the space under the machine stays empty.
-    val graphicsLayer = rememberGraphicsLayer()
-    val backdrop = rememberLayerBackdrop(graphicsLayer = graphicsLayer) {
-        drawContent()
-    }
-
-    // The headline's height. The deck scrolls up under it, into the blur.
-    // Tighter when the keyboard is open (10dp) and tighter at rest (88dp
-    // instead of 112dp) so the card sits closer to the headline, matching
-    // the reference video's compact spacing.
-    val headerSpace by animateDpAsState(
-        targetValue = if (imeVisible) 8.dp else 84.dp,
-        label = "headerSpace",
-    )
-    // The progressive-blur band. Made SHORTER (headerSpace + 26dp instead of
-    // +34dp) and the gradient fade inside is much more gradual (see below).
-    val bandHeight = headerSpace + 26.dp
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
-    ) {
-        // ── 1. The page itself — captured so the band above can blur it ─────
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        // ── What the page is made of (and what the top band blurs) ───────────
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop),
+                .hazeSource(hazeState),
         ) {
-            Column(
+            // Background: charcoal → black, the playlist page's gradient.
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .imePadding(),
-            ) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentPadding = PaddingValues(top = headerSpace, bottom = 12.dp),
-                ) {
-                    if (deck.isNotEmpty()) {
-                        item {
-                            CardCarousel(
-                                cards = deck,
-                                fraction = cardFraction,
-                                resetKey = q,
-                                onPick = { card ->
-                                    val song = card.song
-                                    if (song != null) {
-                                        val queue = rankSongs(q, songs).ifEmpty { listOf(song) }
-                                        PlaybackConnection.playSong(song, queue)
-                                        // A play from a typed query → that query was useful, remember it.
-                                        if (q.isNotEmpty()) SearchHistoryStore.add(q)
-                                    } else {
-                                        query = card.query
-                                        filter = SearchFilter.ALL
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
+                    .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
+            )
 
-                Spacer(Modifier.height(fieldGap))
+            // The light rays.
+            LightRaysBackground(modifier = Modifier.fillMaxSize())
 
-                SearchField(
-                    query = query,
-                    onQueryChange = { query = it },
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                FilterChips(
-                    selected = filter,
-                    onSelect = { filter = it },
-                )
-
-                // ── Search history below the chips ──
-                // Shows the last few queries the user typed. Tap to re-run,
-                // tap the ✕ to forget one. Hidden while the deck is showing
-                // song cards (only renders when there's no active query so
-                // the carousel stays the visual focus).
-                if (q.isEmpty()) {
-                    SearchHistory(
-                        onPick = { term ->
-                            query = term
-                            filter = SearchFilter.ALL
-                        },
-                    )
-                }
-
-                Spacer(Modifier.height(chipsBottomPad))
-            }
+            // ── the deck, the machine and the chips come back here, one at a time ──
         }
 
-        // ── 2. The blur — a band that melts whatever slides under the header ─
-        // GRADUAL FADE: the band is full-strength blur at the very top and
-        // fades out smoothly across the ENTIRE band height — not a hard
-        // cutoff. This is the "gradual fade that decreases blur intensity"
-        // the reference video has and the previous version was missing.
-        // DstOut keeps the blur where the gradient is transparent (top),
-        // and erases it progressively where the gradient turns opaque
-        // (bottom). The fade spans the whole band so the blur intensity
-        // ramps down linearly instead of dropping off a cliff.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(bandHeight)
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { RectangleShape },
-                    effects = { blur(24.dp.toPx()) },
-                    onDrawSurface = {
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colorStops = arrayOf(
-                                    0f to Color.Transparent,
-                                    1f to Color.White,
-                                ),
-                            ),
-                            blendMode = BlendMode.DstOut,
-                        )
+        // ── The header blur ──────────────────────────────────────────────────
+        TopBlur(hazeState)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  1b. TOP BLUR — the header zone melts whatever sits under it
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** How far past the header zone the blur runs before it has faded out. */
+private val TopBlurRun = 96.dp
+
+/** Blur strength at the very top of the band (0..1). */
+private const val TopBlurPeak = 0.9f
+
+/** Wash over the band, strongest at the top. Keeps the edge off the glass. */
+private const val TopScrimPeak = 0.38f
+
+/** Scrim stops — more stops means a smoother melt. */
+private const val TopScrimStops = 12
+
+/**
+ * The top blur — a band across the header zone that blurs whatever is behind it
+ * as a progressive vertical gradient: full strength at the status bar, easing
+ * out to nothing [TopBlurRun] below the header. A soft scrim of the page colour
+ * sits over it so the top reads as one sheet rather than a hard-edged strip.
+ */
+@Composable
+private fun TopBlur(hazeState: HazeState) {
+    val density = LocalDensity.current
+    val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+    val bandHeight = statusTop + 64.dp + TopBlurRun
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(bandHeight)
+            .hazeEffect(state = hazeState) {
+                blurRadius = 24.dp
+                noiseFactor = 0f
+                progressive = HazeProgressive.verticalGradient(
+                    easing = EaseOutCubic,
+                    startIntensity = TopBlurPeak,
+                    endIntensity = 0f,
+                )
+            },
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(bandHeight)
+            .background(
+                Brush.verticalGradient(
+                    colorStops = Array(TopScrimStops) { i ->
+                        val t = i / (TopScrimStops - 1f)
+                        t to PageTop.copy(alpha = TopScrimPeak * (1f - EaseOutCubic.transform(t)))
                     },
                 ),
-        )
-
-        // ── 3. Light rays, on top of the blur so the light stays crisp ──────
-        LightRaysBackground(modifier = Modifier.fillMaxSize())
-
-        // ── 4. The headline, on top of everything ───────────────────────────
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding(),
-        ) {
-            AnimatedVisibility(
-                visible = !imeVisible,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut(),
-            ) { Headline() }
-        }
-    }
+            ),
+    )
 }
 
 private fun songMatches(song: Song, q: String): Boolean =
@@ -867,38 +729,11 @@ private fun SearchField(
                 keyboard?.show()
             },
     ) {
-        // ── typed line — wrapped in a glassmorphism capsule ──
-        // The whole row sits inside a frosted pill: a translucent white
-        // fill, a soft white rim and a top sheen that sells the glass
-        // curvature. Matches the reference video's search box.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = TextSideInset)
-                .height(TypedLineHeight + 16.dp)
-                .clip(RoundedCornerShape((TypedLineHeight.value / 2f + 8f).dp))
-                .background(Color.White.copy(alpha = 0.10f))
-                .border(
-                    width = 1.dp,
-                    color = Color.White.copy(alpha = 0.28f),
-                    shape = RoundedCornerShape((TypedLineHeight.value / 2f + 8f).dp),
-                )
-                .drawWithCache {
-                    val sheen = Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0f to Color.White.copy(alpha = 0.22f),
-                            0.5f to Color.Transparent,
-                            1f to Color.Transparent,
-                        ),
-                    )
-                    onDrawBehind { drawRect(sheen) }
-                }
-                .padding(horizontal = 14.dp),
-            contentAlignment = Alignment.Center,
-        ) {
+        // ── typed line ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = TextSideInset)
                 .height(TypedLineHeight),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -962,7 +797,6 @@ private fun SearchField(
                 }
             }
         }
-        } // close glass capsule
 
         // ── rail + carriage: edge to edge, scaled to the screen width ──
         Box(
@@ -1321,40 +1155,21 @@ private fun FilterChips(
     ) {
         items(SearchFilter.entries.toList()) { f ->
             val on = f == selected
-            // Glassmorphism capsule: a frosted white-on-dark surface with a
-            // subtle white rim and an inner highlight, exactly like the
-            // reference video's filter chips. When selected, the glass
-            // brightens and the rim tightens.
-            val glassFill = if (on) Color.White.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.08f)
-            val glassRim = if (on) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.18f)
-            val glassHighlight = if (on) Color.White.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.12f)
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(glassFill)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(if (on) Color.White else Color.White.copy(alpha = 0.07f))
                     .border(
                         width = 1.dp,
-                        color = glassRim,
-                        shape = RoundedCornerShape(20.dp),
+                        color = if (on) Color.White else Color.White.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(18.dp),
                     )
-                    // Top sheen: a thin radial band across the upper third gives
-                    // the glass its 3D curvature.
-                    .drawWithCache {
-                        val sheen = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0f to glassHighlight,
-                                0.45f to Color.Transparent,
-                                1f to Color.Transparent,
-                            ),
-                        )
-                        onDrawBehind { drawRect(sheen) }
-                    }
                     .clickable { onSelect(f) }
-                    .padding(horizontal = 16.dp, vertical = 9.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 Text(
                     text = f.label,
-                    color = if (on) Color.White else Color.White.copy(alpha = 0.78f),
+                    color = if (on) Color.Black else Color.White.copy(alpha = 0.78f),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                 )
@@ -1577,132 +1392,6 @@ private fun EmptyNote(text: String) {
         )
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  SEARCH HISTORY — recent queries shown below the filter chips
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * In-memory search history. Persists for the lifetime of the app process.
- * A query is added when the user actually plays a result from it (a decent
- * signal that the search was useful), capped at 8 entries, newest first.
- */
-object SearchHistoryStore {
-    private val _entries = androidx.compose.runtime.mutableStateListOf<String>()
-    val entries: List<String> get() = _entries
-
-    fun add(term: String) {
-        val t = term.trim()
-        if (t.isEmpty()) return
-        _entries.removeAll { it.equals(t, ignoreCase = true) }
-        _entries.add(0, t)
-        while (_entries.size > 8) _entries.removeAt(_entries.size - 1)
-    }
-
-    fun remove(term: String) {
-        _entries.removeAll { it == term }
-    }
-}
-
-/**
- * Renders the recent-searches section below the filter chips.
- * Each row: a small clock glyph, the query, and a ✕ to forget it.
- * Tap the row (not the ✕) to re-run the query via [onPick].
- * Hidden entirely when there is no history yet.
- */
-@Composable
-private fun SearchHistory(
-    onPick: (String) -> Unit,
-) {
-    // Reading SearchHistoryStore.entries (a SnapshotStateList) inside a
-    // composable registers as a snapshot read, so the section rebuilds
-    // whenever a query is added or removed.
-    val items = SearchHistoryStore.entries
-    if (items.isEmpty()) return
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 18.dp),
-    ) {
-        Text(
-            text = "RECENT",
-            color = Color.White.copy(alpha = 0.42f),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 1.4.sp,
-            modifier = Modifier.padding(horizontal = 28.dp),
-        )
-        Spacer(Modifier.height(6.dp))
-        items.forEach { term ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onPick(term) }
-                    .padding(horizontal = 28.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = HistoryGlyph,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.40f),
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = term,
-                    color = Color.White.copy(alpha = 0.82f),
-                    fontSize = 14.sp,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.08f))
-                        .clickable { SearchHistoryStore.remove(term) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "✕",
-                        color = Color.White.copy(alpha = 0.60f),
-                        fontSize = 10.sp,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** Lucide clock glyph (MIT) — a small history icon for recent rows. */
-private val HistoryGlyph: ImageVector = ImageVector.Builder(
-    name = "History",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        fill = null,
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2f,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-        strokeLineMiter = 4f,
-    ) {
-        moveTo(3f, 3f)
-        verticalLineToRelative(5f)
-        horizontalLineToRelative(5f)
-        moveToRelative(-3.4f, -2f)
-        arcToRelative(10f, 10f, 0f, true, false, 2.6f, -3.4f)
-        lineTo(3f, 8f)
-        moveTo(12f, 7f)
-        verticalLineToRelative(5f)
-        lineToRelative(3f, 3f)
-    }
-}.build()
 
 private fun formatSearchDuration(ms: Long): String {
     val total = ms / 1000
