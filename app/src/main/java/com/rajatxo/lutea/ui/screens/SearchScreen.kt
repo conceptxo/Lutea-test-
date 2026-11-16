@@ -66,9 +66,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SEARCH PAGE — gradient, a pressed-in search capsule, and the typewriter under it.
+//  SEARCH PAGE — a bare search line and the typewriter under it.
 //
-//  Top to bottom:  the search capsule (carved INTO the screen, you type here) →
+//  Top to bottom:  the search icon + text box (nothing around them, straight on
+//  the page — you type here) →
 //  the T hammer → the cream carriage on its steel rail. The carriage follows the
 //  caret; on every keystroke the hammer taps up under the text like a typebar.
 //  The carriage's top slot shows the typing state:
@@ -93,12 +94,12 @@ private val CapsuleHeight = 34.dp
 private val RailAreaHeight = 52.dp          // hammer on top, rail at 30dp, a little air under the pipe
 private val RailCenterY = 30.dp             // centre of the rail inside the rail area
 
-// The pressed-in search capsule that sits right above the mechanism.
+// The search box that sits right above the mechanism — just the icon and the
+// text, printed straight onto the page. No capsule, no border, no fill.
 private val CapsuleBarHeight = 42.dp
 private val CapsuleSideMargin = 10.dp
-private val CapsuleBevel = 2.dp
-private val CapsuleInnerPadding = 8.dp
-private val TextStart = 58.dp               // margin + bevel + padding + glyph(18) + gap(20): where typed text begins
+private val CapsuleInnerPadding = 10.dp
+private val TextStart = 58.dp               // margin + padding + glyph(18) + gap(20): where typed text begins
 
 private enum class TypeState { IDLE, TYPING, PAUSED, CLEARED }
 
@@ -236,25 +237,12 @@ private fun SearchMachine(
 
 
     Column(modifier = modifier) {
-        // ── the search capsule: carved into the screen (dark lip on top, light lip below) ──
+        // ── the search box: just the icon and the text, straight on the page ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = CapsuleSideMargin)
                 .height(CapsuleBarHeight)
-                .clip(CircleShape)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color(0xFF050506),
-                        0.20f to Color(0xFF141416),
-                        0.55f to Color(0xFF35353A),
-                        0.82f to Color(0xFF4B4B52),
-                        1f to Color(0xFF5F5F67),
-                    ),
-                )
-                .padding(CapsuleBevel)
-                .clip(CircleShape)
-                .drawBehind { drawPressedIn() }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -377,71 +365,6 @@ private fun SearchMachine(
             }
         }
     }
-}
-
-/**
- * The inside of the pressed-in search capsule (already clipped to the pill): a dark well with a deep
- * shadow under the top lip and down both sides, and a thin light line where the bottom lip catches light.
- */
-private fun DrawScope.drawPressedIn() {
-    val h = size.height
-    val w = size.width
-    // the well itself — a touch of light at the bottom so the lip shadows read
-    drawRect(
-        brush = Brush.verticalGradient(
-            0f to Color(0xFF0B0B0C),
-            0.45f to Color(0xFF141416),
-            1f to Color(0xFF26262B),
-        ),
-    )
-    // shadow cast by the top lip — deep and tall
-    drawRect(
-        brush = Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 1f),
-            0.30f to Color.Black.copy(alpha = 0.85f),
-            0.62f to Color.Black.copy(alpha = 0.38f),
-            1f to Color.Black.copy(alpha = 0f),
-            startY = 0f,
-            endY = h * 0.92f,
-        ),
-    )
-    // shadow down both curved sides
-    drawRect(
-        brush = Brush.horizontalGradient(
-            0f to Color.Black.copy(alpha = 0.55f),
-            0.12f to Color.Black.copy(alpha = 0f),
-            0.88f to Color.Black.copy(alpha = 0f),
-            1f to Color.Black.copy(alpha = 0.55f),
-            startX = 0f,
-            endX = w,
-        ),
-    )
-    // light catching the bottom lip
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            0.55f to Color.White.copy(alpha = 0f),
-            1f to Color.White.copy(alpha = 0.22f),
-            startY = 0f,
-            endY = h,
-        ),
-        topLeft = Offset(0.8.dp.toPx(), 0.8.dp.toPx()),
-        size = Size(w - 1.6.dp.toPx(), h - 1.6.dp.toPx()),
-        cornerRadius = CornerRadius(h / 2f - 0.8.dp.toPx()),
-        style = Stroke(width = 1.4.dp.toPx()),
-    )
-    // crisp dark edge along the top inside
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            0f to Color.Black.copy(alpha = 0.95f),
-            0.45f to Color.Black.copy(alpha = 0f),
-            startY = 0f,
-            endY = h,
-        ),
-        topLeft = Offset(0.6.dp.toPx(), 0.6.dp.toPx()),
-        size = Size(w - 1.2.dp.toPx(), h - 1.2.dp.toPx()),
-        cornerRadius = CornerRadius(h / 2f - 0.6.dp.toPx()),
-        style = Stroke(width = 1.2.dp.toPx()),
-    )
 }
 
 /** Slate pipe: soft top edge, broad pale highlight band at ~40%, falling to near-black. */
