@@ -71,10 +71,11 @@ import kotlinx.coroutines.delay
 //  Top to bottom:  the search capsule (carved INTO the screen, you type here) →
 //  the T hammer → the cream carriage on its steel rail. The carriage follows the
 //  caret; on every keystroke the hammer taps up under the text like a typebar.
-//  The carriage's top slot and one of its three LEDs show the typing state:
-//      green  = actively typing          (LED 1, the others white)
-//      yellow = keyboard open, paused    (LED 2, the others white)
-//      red    = search cleared (✕)       (LED 3, the others white)
+//  The carriage's top slot shows the typing state:
+//      green  = actively typing
+//      yellow = keyboard open, paused
+//      red    = backspace / ✕ pressed
+//  The three dots on the carriage are a speaker grille: always black.
 //  Everything is drawn with gradients — no images.
 //
 //  The ensemble hangs in the top half of the page, its rail sitting on the
@@ -84,9 +85,8 @@ import kotlinx.coroutines.delay
 
 private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
 
-/** The playlist page's charcoal → black backdrop, reused here. */
-private val PageTop = Color(0xFF3A3A3A)
-private val PageBottom = Color.Black
+/** One flat colour behind everything: 90% black, never pure black. */
+private val PageBackground = Color(0xFF1A1A1A)
 
 private val CapsuleWidth = 80.dp
 private val CapsuleHeight = 34.dp
@@ -95,10 +95,10 @@ private val RailCenterY = 30.dp             // centre of the rail inside the rai
 
 // The pressed-in search capsule that sits right above the mechanism.
 private val CapsuleBarHeight = 42.dp
-private val CapsuleSideMargin = 0.dp
+private val CapsuleSideMargin = 6.dp
 private val CapsuleBevel = 1.5.dp
 private val CapsuleInnerPadding = 16.dp
-private val TextStart = 45.5.dp             // margin + bevel + padding + glyph(18) + gap(10): where typed text begins
+private val TextStart = 51.5.dp             // margin + bevel + padding + glyph(18) + gap(10): where typed text begins
 
 private enum class TypeState { IDLE, TYPING, PAUSED, CLEARED }
 
@@ -137,7 +137,7 @@ fun SearchScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
+            .background(PageBackground),
     ) {
         // The machine is parked in the top half of the page with its rail sitting
         // on the horizontal centre line. The keyboard starts below the middle on
@@ -205,7 +205,7 @@ private fun SearchMachine(
     var clearTick by remember { mutableStateOf(0) }
     LaunchedEffect(query) {
         if (query.isNotEmpty()) {
-            mode = TypeState.TYPING            // green while keys are coming in
+            if (mode != TypeState.CLEARED) mode = TypeState.TYPING   // green while keys come in
             delay(650)
         }
         if (mode != TypeState.CLEARED) {
@@ -231,19 +231,7 @@ private fun SearchMachine(
         animationSpec = tween(160),
         label = "slot",
     )
-    // One LED per state; the other two stay plain white.
-    val led1 by animateColorAsState(
-        targetValue = if (mode == TypeState.TYPING) StateGreen else Color.White,
-        animationSpec = tween(160), label = "led1",
-    )
-    val led2 by animateColorAsState(
-        targetValue = if (mode == TypeState.PAUSED) StateYellow else Color.White,
-        animationSpec = tween(160), label = "led2",
-    )
-    val led3 by animateColorAsState(
-        targetValue = if (mode == TypeState.CLEARED) StateRed else Color.White,
-        animationSpec = tween(160), label = "led3",
-    )
+
 
     Column(modifier = modifier) {
         // ── the search capsule: carved into the screen (dark lip on top, light lip below) ──
@@ -293,7 +281,15 @@ private fun SearchMachine(
                 }
                 BasicTextField(
                     value = query,
-                    onValueChange = onQueryChange,
+                    onValueChange = { next ->
+                        if (next.length < query.length) {
+                            mode = TypeState.CLEARED       // backspace → red
+                            clearTick++
+                        } else if (next.length > query.length) {
+                            mode = TypeState.TYPING        // a new letter → green
+                        }
+                        onQueryChange(next)
+                    },
                     singleLine = true,
                     textStyle = TextStyle(
                         color = Color.White,
@@ -366,7 +362,7 @@ private fun SearchMachine(
                     modifier = Modifier
                         .size(CapsuleWidth, RailAreaHeight)
                         .graphicsLayer { translationX = carriageX }
-                        .drawBehind { drawCarriage(strike.value, slotColor, led1, led2, led3) },
+                        .drawBehind { drawCarriage(strike.value, slotColor) },
                 )
             }
         }
@@ -537,15 +533,8 @@ private fun DrawScope.softShadow(
  * Local origin = top-left of the capsule's box; the capsule sits low so the hammer has room above it.
  * @param strike 1 right after a keystroke, easing back to 0
  * @param slot colour of the top slot (green typing / yellow paused / red cleared)
- * @param led1 lit while typing, @param led2 while paused, @param led3 while cleared
  */
-private fun DrawScope.drawCarriage(
-    strike: Float,
-    slot: Color,
-    led1: Color,
-    led2: Color,
-    led3: Color,
-) {
+private fun DrawScope.drawCarriage(strike: Float, slot: Color) {
     val w = size.width
     val capH = CapsuleHeight.toPx()
     val s = strike.coerceIn(-0.3f, 1f)
@@ -723,17 +712,16 @@ private fun DrawScope.drawCarriage(
         cornerRadius = CornerRadius(1.2.dp.toPx()),
     )
 
-    // ── LEDs: one state colour, the other two plain white — flat, no glow ──
-    val ledR = 2.3.dp.toPx()
-    val ledY = capTop + capH / 2f
-    val ledX = w * 0.143f
+    // ── speaker grille: three flat black holes, never coloured ──
+    val dotR = 2.3.dp.toPx()
+    val dotY = capTop + capH / 2f
+    val dotX = w * 0.143f
     val gap = w * 0.113f
-    val leds = arrayOf(led1, led2, led3)
     for (i in 0..2) {
         drawCircle(
-            color = leds[i],
-            radius = ledR,
-            center = Offset(ledX + gap * i, ledY),
+            color = Color(0xFF141414),
+            radius = dotR,
+            center = Offset(dotX + gap * i, dotY),
         )
     }
 }
