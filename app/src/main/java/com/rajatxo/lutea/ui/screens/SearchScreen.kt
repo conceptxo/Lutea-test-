@@ -2,7 +2,6 @@ package com.rajatxo.lutea.ui.screens
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -14,15 +13,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -31,8 +27,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,9 +60,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.rajatxo.lutea.playback.PlaybackConnection
-import com.rajatxo.lutea.ui.components.LightRaysBackground
-import com.rajatxo.lutea.ui.foundation.LocalLuteaWindowInsets
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SEARCH PAGE — the page look plus one thing on it: the typewriter.
@@ -79,9 +70,8 @@ import com.rajatxo.lutea.ui.foundation.LocalLuteaWindowInsets
 //  down onto the text and the first LED flashes amber.
 //  Everything is drawn with gradients — no images.
 //
-//  The machine rides the keyboard: it is bottom-aligned inside the scaffold,
-//  padded by the IME, so it sits on the keys — and above the mini player when
-//  a song is loaded.
+//  The machine is anchored under the status bar and never moves — the keyboard,
+//  the mini player and the nav bar cannot push it around.
 // ═══════════════════════════════════════════════════════════════════════════
 
 private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
@@ -97,15 +87,6 @@ private val RailCenterY = 23.dp             // centre of the rail inside the rai
 private val TextSideInset = 24.dp
 private val TextStart = 52.dp               // side inset + search glyph + gap: where typed text begins
 private val TypedLineHeight = 26.dp         // the text sits right under the hammer
-
-/** Top fade, as (position, alpha) pairs: black at the top, melting away below. */
-private val TopFadeStops = arrayOf(
-    0.00f to 1.00f,
-    0.26f to 0.97f,
-    0.50f to 0.64f,
-    0.74f to 0.26f,
-    1.00f to 0.00f,
-)
 
 /** Lucide search glyph (MIT), inlined so the page owns its icon. */
 private val SearchGlyph: ImageVector = ImageVector.Builder(
@@ -135,64 +116,18 @@ private val SearchGlyph: ImageVector = ImageVector.Builder(
 fun SearchScreen() {
     var query by remember { mutableStateOf("") }
 
-    val density = LocalDensity.current
-    val statusTop = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
-
-    // Keyboard + mini player both push the machine around.
-    val imeInsets = WindowInsets.ime
-    val keyboardOpen by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
-    val nowPlaying by PlaybackConnection.currentSong.collectAsState()
-    val navBottom = with(density) {
-        LocalLuteaWindowInsets.current.getBottom(this).toDp()
-    }
-
-    // Where the machine rests: right on the keyboard when it is up, otherwise
-    // just above the mini player (when a song is loaded) or the nav bar.
-    val floor by animateDpAsState(
-        targetValue = when {
-            keyboardOpen -> 0.dp
-            nowPlaying != null -> navBottom + 44.dp
-            else -> navBottom
-        },
-        label = "machineFloor",
-    )
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
     ) {
-        // ── Background: charcoal → black, plus the light rays ────────────────
-        Box(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Brush.verticalGradient(listOf(PageTop, PageBottom))),
-            )
-            LightRaysBackground(modifier = Modifier.fillMaxSize())
-        }
-
-        // ── Top fade: a black gradient that eats whatever rises under it ─────
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(statusTop + 150.dp)
-                .background(
-                    Brush.verticalGradient(
-                        colorStops = TopFadeStops.map { (at, alpha) ->
-                            at to Color.Black.copy(alpha = alpha)
-                        }.toTypedArray(),
-                    ),
-                ),
-        )
-
-        // ── The machine: pinned above the keyboard ───────────────────────────
+        // The machine lives here, under the status bar, and never moves:
+        // no IME padding, no mini player math. It is immune to the keyboard.
         Column(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .imePadding()
-                .padding(bottom = floor),
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(top = 12.dp),
         ) {
             SearchField(
                 query = query,
