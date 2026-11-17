@@ -163,7 +163,10 @@ fun LuteaScaffold(
     val searchHistoryOverlay = remember { SearchHistoryOverlayState() }
     val context = LocalContext.current
     val searchStyleOverlay = remember(context) {
-        SearchStyleOverlayState(loadSearchSurfaceStyle(context))
+        SearchStyleOverlayState(
+            initialStyle = loadSearchSurfaceStyle(context),
+            initialTypingSoundEnabled = loadTypingSoundEnabled(context),
+        )
     }
     val currentSong by PlaybackConnection.currentSong.collectAsState()
 
@@ -180,6 +183,11 @@ fun LuteaScaffold(
         animationSpec = tween(320, easing = FastOutSlowInEasing),
         label = "searchClearAllBottom",
     )
+
+    // The long-press style card floats above the nav, and above the mini
+    // player when one is showing.
+    val searchStyleCardBottom =
+        effBottomDp + if (currentSong != null && !imeOpen) 132.dp else 70.dp
 
     CompositionLocalProvider(
         LocalLuteaWindowInsets provides insets,
@@ -685,6 +693,14 @@ fun LuteaScaffold(
                     activeTab = activeTab,
                     onTabSelected = onTabSelected,
                     backdrop = glassBackdrop,
+                    onSearchLongPress = {
+                        if (!playerVisible && !showLyrics) {
+                            if (activeTab != LuteaTab.Search) onTabSelected(LuteaTab.Search)
+                            menuOpen = false
+                            searchHistoryOverlay.expanded = false
+                            searchStyleOverlay.expanded = true
+                        }
+                    },
                 )
             }
 
@@ -705,14 +721,15 @@ fun LuteaScaffold(
             }
 
             // ★ Search style menu — also a sibling of the layerBackdrop, so
-            //    the button and its card are REAL kyant glass. It only exists
-            //    on the Search tab and gets out of the way of the player.
+            //    the card is REAL kyant glass. It only exists on the Search
+            //    tab and gets out of the way of the player.
             SearchStyleOverlay(
                 state = searchStyleOverlay,
                 backdrop = glassBackdrop,
                 visible = activeTab == LuteaTab.Search &&
                     !playerVisible &&
                     !showLyrics,
+                bottomPadding = searchStyleCardBottom,
             )
 
             // ★ Full player — overlays the entire screen when expanded.

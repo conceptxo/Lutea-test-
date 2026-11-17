@@ -147,6 +147,7 @@ fun LuteaTabCapsule(
     onTabSelected: (LuteaTab) -> Unit,
     modifier: Modifier = Modifier,
     backdrop: LayerBackdrop? = null,
+    onSearchLongPress: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -227,13 +228,25 @@ fun LuteaTabCapsule(
         ) {
             orderedTabs.forEach { tab ->
                 key(tab) {
-                    FluidNavItem(
-                        tab = tab,
-                        isActive = tab == activeTab,
-                        metrics = metrics,
-                        backdrop = backdrop,
-                        onClick = { select(tab) },
-                    )
+                    if (tab == LuteaTab.Search && onSearchLongPress != null) {
+                        SearchTabHold(onComplete = onSearchLongPress) {
+                            FluidNavItem(
+                                tab = tab,
+                                isActive = tab == activeTab,
+                                metrics = metrics,
+                                backdrop = backdrop,
+                                onClick = { select(tab) },
+                            )
+                        }
+                    } else {
+                        FluidNavItem(
+                            tab = tab,
+                            isActive = tab == activeTab,
+                            metrics = metrics,
+                            backdrop = backdrop,
+                            onClick = { select(tab) },
+                        )
+                    }
                 }
             }
         }

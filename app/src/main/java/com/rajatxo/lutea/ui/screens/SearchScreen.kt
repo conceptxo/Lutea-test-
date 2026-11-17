@@ -385,7 +385,9 @@ fun SearchScreen() {
     val scope = rememberCoroutineScope()
     var historyRevision by remember { mutableStateOf(0) }
     val historyOverlay = LocalSearchHistoryOverlay.current
-    val searchStyle = LocalSearchStyleOverlay.current.style
+    val searchStyleState = LocalSearchStyleOverlay.current
+    val searchStyle = searchStyleState.style
+    val typingSoundEnabled = searchStyleState.typingSoundEnabled
 
     // The real library, scanned once off the main thread. Results are just the
     // songs whose title, artist or album matches what is typed above the machine.
@@ -481,8 +483,8 @@ fun SearchScreen() {
         // The machine is parked in the top half of the page with its rail sitting
         // on the horizontal centre line. The keyboard starts below the middle on
         // every phone, so it can never reach it — no insets, no movement.
-        // Everything above the machine is the result list; it is drawn first so
-        // the beam from the carriage lights it.
+        // Everything above the machine is the result list; it is drawn above
+        // the carriage beam so the lamp only ever lights the background.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -507,13 +509,18 @@ fun SearchScreen() {
                 },
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    // The typewriter beam is drawn by the machine below. Keep
+                    // results, jellyfish and cards above it so the lamp stays
+                    // a background light instead of washing out content.
+                    .zIndex(1f),
             )
 
             SearchMachine(
                 query = query,
                 onQueryChange = { query = it },
                 onSearch = { submitSearch(query) },
+                typingSoundEnabled = typingSoundEnabled,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -649,12 +656,17 @@ private fun SearchResults(
                 // swipeable stack as the supplied SongCardCarousel.
                 val cardSongs = if (query.isBlank()) library else songs
                 if (cardSongs.isNotEmpty()) {
-                    SongCardCarousel(
-                        songs = cardSongs,
-                        nowPlayingId = nowPlayingId,
-                        onPlay = onPlay,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    // Rebuild the pager at the idle/search boundary. Deleting
+                    // the last character swaps the whole backing list, and a
+                    // retained pager can briefly ask for an old page index.
+                    key(if (query.isBlank()) "library" else "results") {
+                        SongCardCarousel(
+                            songs = cardSongs,
+                            nowPlayingId = nowPlayingId,
+                            onPlay = onPlay,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 } else {
                     CardStyleEmpty(loaded = loaded, searching = query.isNotBlank())
                 }
@@ -685,8 +697,7 @@ private fun JellySongList(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // End inset keeps the count clear of the glass style button.
-                .padding(start = 18.dp, end = 72.dp, top = 6.dp, bottom = 4.dp),
+                .padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -725,8 +736,6 @@ private fun JellySongList(
                     .weight(1f),
                 contentPadding = PaddingValues(
                     start = 8.dp,
-                    // The glass style button floats over the top-right corner.
-                    top = 34.dp,
                     end = 8.dp,
                     bottom = 10.dp,
                 ),
@@ -752,7 +761,7 @@ private fun CardStyleEmpty(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .padding(start = 22.dp, top = 58.dp, end = 72.dp),
+            .padding(start = 22.dp, top = 58.dp, end = 22.dp),
     ) {
         Text(
             text = when {
@@ -850,6 +859,7 @@ private fun SearchMachine(
     query: String,
     onQueryChange: (String) -> Unit,
     onSearch: () -> Unit,
+    typingSoundEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -1033,7 +1043,7 @@ private fun SearchMachine(
                             clearTick++
                         } else if (next.length > query.length) {
                             mode = TypeState.TYPING        // a new letter → green
-                            TypewriterSound.playKey()
+                            if (typingSoundEnabled) TypewriterSound.playKey()
                         }
                         onQueryChange(next)
                     },

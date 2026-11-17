@@ -6,8 +6,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -23,13 +26,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,10 +55,10 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -63,7 +66,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
-import com.rajatxo.lutea.R
+import com.rajatxo.lutea.audio.TypewriterSound
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -72,19 +75,27 @@ internal enum class SearchSurfaceStyle { JELLY, CARDS }
 
 private const val StylePrefs = "lutea_search"
 private const val StyleKey = "search_surface_style"
+private const val TypingSoundKey = "typing_sound_enabled"
 
 private val StyleCream = Color(0xFFFCF2C7)
 private val StyleJelly = Color(0xFF9188FF)
 private val StyleJellyPink = Color(0xFFFFA0C6)
 
 @Stable
-internal class SearchStyleOverlayState(initialStyle: SearchSurfaceStyle) {
+internal class SearchStyleOverlayState(
+    initialStyle: SearchSurfaceStyle,
+    initialTypingSoundEnabled: Boolean,
+) {
     var style by mutableStateOf(initialStyle)
+    var typingSoundEnabled by mutableStateOf(initialTypingSoundEnabled)
     var expanded by mutableStateOf(false)
 }
 
 internal val LocalSearchStyleOverlay = staticCompositionLocalOf {
-    SearchStyleOverlayState(SearchSurfaceStyle.JELLY)
+    SearchStyleOverlayState(
+        initialStyle = SearchSurfaceStyle.JELLY,
+        initialTypingSoundEnabled = true,
+    )
 }
 
 internal fun loadSearchSurfaceStyle(context: Context): SearchSurfaceStyle {
@@ -94,8 +105,15 @@ internal fun loadSearchSurfaceStyle(context: Context): SearchSurfaceStyle {
         ?: SearchSurfaceStyle.JELLY
 }
 
+internal fun loadTypingSoundEnabled(context: Context): Boolean {
+    return context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+        .getBoolean(TypingSoundKey, true)
+}
+
 /**
- * The glass style button in the search page's top-right corner and its card.
+ * The glass search-style card. It has no permanent button any more: the card
+ * is opened by holding the Search tab on the nav, and the countdown capsule
+ * itself lives beside the tab.
  *
  * This lives in LuteaScaffold as a sibling of the layerBackdrop producer, the
  * same way the Hold to delete button does. Calling drawBackdrop inside the
@@ -106,6 +124,7 @@ internal fun SearchStyleOverlay(
     state: SearchStyleOverlayState,
     backdrop: LayerBackdrop?,
     visible: Boolean,
+    bottomPadding: Dp,
     modifier: Modifier = Modifier,
 ) {
     LaunchedEffect(visible) {
@@ -127,128 +146,68 @@ internal fun SearchStyleOverlay(
             )
         }
 
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = 8.dp, end = 16.dp),
-            contentAlignment = Alignment.TopEnd,
-        ) {
-            StyleButton(
-                expanded = state.expanded,
-                backdrop = backdrop,
-                onClick = { state.expanded = !state.expanded },
-            )
-
-            AnimatedVisibility(
-                visible = state.expanded,
-                enter = fadeIn(tween(180)) + scaleIn(
+        AnimatedVisibility(
+            visible = state.expanded,
+            enter = fadeIn(tween(180)) +
+                scaleIn(
                     animationSpec = tween(230, easing = FastOutSlowInEasing),
-                    initialScale = 0.88f,
-                    transformOrigin = TransformOrigin(1f, 0f),
+                    initialScale = 0.90f,
+                    transformOrigin = TransformOrigin(0.5f, 1f),
+                ) +
+                slideInVertically(
+                    animationSpec = tween(260, easing = FastOutSlowInEasing),
+                    initialOffsetY = { it / 4 },
                 ),
-                exit = fadeOut(tween(140)) + scaleOut(
-                    animationSpec = tween(160, easing = FastOutSlowInEasing),
+            exit = fadeOut(tween(150)) +
+                scaleOut(
+                    animationSpec = tween(170, easing = FastOutSlowInEasing),
                     targetScale = 0.94f,
-                    transformOrigin = TransformOrigin(1f, 0f),
+                    transformOrigin = TransformOrigin(0.5f, 1f),
+                ) +
+                slideOutVertically(
+                    animationSpec = tween(170, easing = FastOutSlowInEasing),
+                    targetOffsetY = { it / 5 },
                 ),
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 52.dp),
-            ) {
-                StyleCard(
-                    selected = state.style,
-                    backdrop = backdrop,
-                    onSelect = { style ->
-                        state.style = style
-                        state.expanded = false
-                        context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
-                            .edit()
-                            .putString(StyleKey, style.name)
-                            .apply()
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StyleButton(
-    expanded: Boolean,
-    backdrop: LayerBackdrop?,
-    onClick: () -> Unit,
-) {
-    val glass = if (backdrop != null) {
-        Modifier.drawBackdrop(
-            backdrop = backdrop,
-            shape = { CircleShape },
-            effects = {
-                vibrancy()
-                colorControls(
-                    brightness = 0.05f,
-                    contrast = 1f,
-                    saturation = 1.4f,
-                )
-                blur(20.dp.toPx())
-            },
-            onDrawSurface = {
-                drawRect(Color.Black.copy(alpha = 0.30f))
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        0f to Color.White.copy(alpha = 0.20f),
-                        0.55f to Color.White.copy(alpha = 0.05f),
-                        1f to Color.Transparent,
-                    ),
-                )
-            },
-        )
-    } else {
-        Modifier.background(
-            brush = Brush.verticalGradient(
-                0f to Color(0xFF353535),
-                1f to Color(0xFF272727),
-            ),
-            shape = CircleShape,
-        )
-    }
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(44.dp)
-            .shadow(15.dp, CircleShape, clip = false)
-            .clip(CircleShape)
-            .then(glass)
-            .border(
-                width = 1.dp,
-                brush = Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.52f),
-                    0.50f to Color.White.copy(alpha = 0.16f),
-                    1f to Color.White.copy(alpha = 0.08f),
-                ),
-                shape = CircleShape,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = bottomPadding),
+        ) {
+            StyleCard(
+                selected = state.style,
+                typingSoundEnabled = state.typingSoundEnabled,
+                backdrop = backdrop,
+                onSelect = { style ->
+                    state.style = style
+                    state.expanded = false
+                    context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(StyleKey, style.name)
+                        .apply()
+                },
+                onTypingSoundToggle = { enabled ->
+                    state.typingSoundEnabled = enabled
+                    context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(TypingSoundKey, enabled)
+                        .apply()
+                    if (enabled) {
+                        TypewriterSound.init(context)
+                    } else {
+                        TypewriterSound.stopAll()
+                    }
+                },
             )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_search_style),
-            contentDescription = if (expanded) "Close search style menu" else "Choose search style",
-            tint = Color.White.copy(alpha = 0.94f),
-            modifier = Modifier.size(20.dp),
-        )
+        }
     }
 }
 
 @Composable
 private fun StyleCard(
     selected: SearchSurfaceStyle,
+    typingSoundEnabled: Boolean,
     backdrop: LayerBackdrop?,
     onSelect: (SearchSurfaceStyle) -> Unit,
+    onTypingSoundToggle: (Boolean) -> Unit,
 ) {
     val shape = RoundedCornerShape(20.dp)
     val glass = if (backdrop != null) {
@@ -343,6 +302,12 @@ private fun StyleCard(
             onClick = { onSelect(SearchSurfaceStyle.CARDS) },
         )
 
+        Spacer(Modifier.height(9.dp))
+        TypingSoundRow(
+            enabled = typingSoundEnabled,
+            onToggle = { onTypingSoundToggle(!typingSoundEnabled) },
+        )
+
         Spacer(Modifier.size(7.dp))
         Text(
             text = "TAP TO SWITCH",
@@ -351,6 +316,90 @@ private fun StyleCard(
             fontFamily = FontFamily.Monospace,
             letterSpacing = 1.2.sp,
             modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
+    }
+}
+
+@Composable
+private fun TypingSoundRow(
+    enabled: Boolean,
+    onToggle: () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.025f))
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = 0.07f),
+                shape = shape,
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onToggle,
+            )
+            .padding(horizontal = 9.dp, vertical = 8.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Typing sound",
+                color = StyleCream.copy(alpha = 0.90f),
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.size(2.dp))
+            Text(
+                text = if (enabled) "Typewriter keys · on" else "Typewriter keys · off",
+                color = StyleCream.copy(alpha = 0.38f),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.size(8.dp))
+        TypingSoundSwitch(enabled = enabled)
+    }
+}
+
+@Composable
+private fun TypingSoundSwitch(enabled: Boolean) {
+    val knobX by animateDpAsState(
+        targetValue = if (enabled) 18.dp else 2.dp,
+        animationSpec = tween(170, easing = FastOutSlowInEasing),
+        label = "typingSoundKnob",
+    )
+    Box(
+        modifier = Modifier
+            .width(36.dp)
+            .height(20.dp)
+            .clip(CircleShape)
+            .background(
+                if (enabled) StyleCream.copy(alpha = 0.92f)
+                else Color.White.copy(alpha = 0.10f)
+            )
+            .border(
+                width = 1.dp,
+                color = if (enabled) StyleCream.copy(alpha = 0.40f)
+                else Color.White.copy(alpha = 0.15f),
+                shape = CircleShape,
+            ),
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = knobX)
+                .size(16.dp)
+                .clip(CircleShape)
+                .background(
+                    if (enabled) Color(0xFF17130F)
+                    else StyleCream.copy(alpha = 0.72f)
+                ),
         )
     }
 }

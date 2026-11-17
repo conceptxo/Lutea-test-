@@ -84,9 +84,12 @@ internal fun SongCardCarousel(
     val pagerState = rememberPagerState(pageCount = { songs.size })
     val scope = rememberCoroutineScope()
 
-    // new results → back to the first card
+    // new results → back to the first card. The page count can briefly be
+    // zero while a list swap is settling, so never scroll then.
     LaunchedEffect(songs) {
-        if (songs.isNotEmpty()) pagerState.scrollToPage(0)
+        if (songs.isNotEmpty() && pagerState.pageCount > 0) {
+            pagerState.scrollToPage(0)
+        }
     }
 
     // the whole stack rises in when the results appear
@@ -118,32 +121,34 @@ internal fun SongCardCarousel(
                 contentPadding = PaddingValues(horizontal = (maxWidth - cardW) / 2),
                 pageSize = PageSize.Fixed(cardW),
                 pageSpacing = 0.dp,
-                key = { songs[it].id },
+                key = { index -> songs.getOrNull(index)?.id ?: "page-$index" },
             ) { page ->
-                val song = songs[page]
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        // the centred card is always on top of its neighbours
-                        .zIndex(-abs(page - pagerState.currentPage).toFloat()),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    SongCard(
-                        song = song,
-                        playing = song.id == nowPlayingId,
-                        page = page,
-                        pager = pagerState,
+                val song = songs.getOrNull(page)
+                if (song != null) {
+                    Box(
                         modifier = Modifier
-                            .width(cardW)
-                            .height(cardH),
-                        onClick = {
-                            if (page == pagerState.currentPage) {
-                                onPlay(song)
-                            } else {
-                                scope.launch { pagerState.animateScrollToPage(page) }
-                            }
-                        },
-                    )
+                            .fillMaxSize()
+                            // the centred card is always on top of its neighbours
+                            .zIndex(-abs(page - pagerState.currentPage).toFloat()),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        SongCard(
+                            song = song,
+                            playing = song.id == nowPlayingId,
+                            page = page,
+                            pager = pagerState,
+                            modifier = Modifier
+                                .width(cardW)
+                                .height(cardH),
+                            onClick = {
+                                if (page == pagerState.currentPage) {
+                                    onPlay(song)
+                                } else {
+                                    scope.launch { pagerState.animateScrollToPage(page) }
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -151,7 +156,7 @@ internal fun SongCardCarousel(
         if (songs.size > 1) {
             CarouselDots(
                 count = songs.size,
-                current = pagerState.currentPage,
+                current = pagerState.currentPage.coerceIn(0, songs.lastIndex),
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
                     .padding(top = 2.dp, bottom = 8.dp)
