@@ -3,6 +3,9 @@ package com.rajatxo.lutea.ui.screens
 import android.content.Context
 import android.graphics.RuntimeShader
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -29,9 +32,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -42,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -82,6 +88,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
@@ -99,8 +106,14 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import coil3.compose.AsyncImage
+import com.rajatxo.lutea.data.scanner.MusicScanner
+import com.rajatxo.lutea.domain.model.Song
+import com.rajatxo.lutea.playback.PlaybackConnection
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import kotlin.math.PI
 import kotlin.math.abs
@@ -309,7 +322,23 @@ private fun rememberBeamShader(): RuntimeShader? = remember {
 fun SearchScreen() {
     var query by remember { mutableStateOf("") }
     val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val history = remember { mutableStateListOf<String>() }
+    val historyList = rememberLazyListState()
+    var historyRevision by remember { mutableStateOf(0) }
+
+    // The real library, scanned once off the main thread. Results are just the
+    // songs whose title, artist or album matches what is typed above the machine.
+    var library by remember { mutableStateOf<List<Song>>(emptyList()) }
+    var libraryReady by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        library = runCatching {
+            withContext(Dispatchers.IO) { MusicScanner.scanMusic(context) }
+        }.getOrDefault(emptyList())
+        libraryReady = true
+    }
+    val nowPlaying by PlaybackConnection.currentSong.collectAsState()
+    val results = remember(query, library) { searchLibrary(library, query) }
 
     // Searches live between launches. A fresh install is seeded with a few papers
     // so the tear-off stack has something to show before real results are wired.
@@ -323,6 +352,13 @@ fun SearchScreen() {
         }
     }
 
+    // A search inserts at index 0. With keyed items a lazy list keeps the old
+    // first row anchored, which parks the new paper above the viewport (behind
+    // the fade). Pin the list to the newest row after every search.
+    LaunchedEffect(historyRevision) {
+        if (historyRevision > 0 && history.isNotEmpty()) historyList.scrollToItem(0)
+    }
+
     fun addToHistory(raw: String) {
         val entry = raw.trim()
         if (entry.isEmpty()) return
@@ -330,6 +366,7 @@ fun SearchScreen() {
         history.add(0, entry)
         while (history.size > 30) history.removeAt(history.lastIndex)
         saveSearchHistory(context, history)
+        historyRevision++
     }
 
     Box(
@@ -348,18 +385,33 @@ fun SearchScreen() {
         // The machine is parked in the top half of the page with its rail sitting
         // on the horizontal centre line. The keyboard starts below the middle on
         // every phone, so it can never reach it — no insets, no movement.
-        Box(
+        // Everything above the machine is the result list; it is drawn first so
+        // the beam from the carriage lights it.
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.5f),
         ) {
+            SearchResults(
+                query = query,
+                songs = results,
+                loaded = libraryReady,
+                nowPlayingId = nowPlaying?.id,
+                onPlay = { song ->
+                    addToHistory(query)
+                    PlaybackConnection.playSong(song, results)
+                    keyboard?.hide()
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            )
+
             SearchMachine(
                 query = query,
                 onQueryChange = { query = it },
                 onSearch = { addToHistory(query) },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
             )
         }
 
@@ -373,6 +425,7 @@ fun SearchScreen() {
                 .align(Alignment.BottomCenter),
         ) {
             LazyColumn(
+                state = historyList,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = 14.dp,
@@ -394,6 +447,8 @@ fun SearchScreen() {
             }
 
             // Same black the page gradient already has here → no colour seam.
+            // Eased in several stops so the hand-off from black to paper is soft
+            // instead of a visible band.
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -402,13 +457,196 @@ fun SearchScreen() {
                     .background(
                         Brush.verticalGradient(
                             0f to Color.Black,
-                            0.55f to Color.Black,
+                            0.10f to Color.Black,
+                            0.20f to Color.Black.copy(alpha = 0.88f),
+                            0.32f to Color.Black.copy(alpha = 0.72f),
+                            0.44f to Color.Black.copy(alpha = 0.54f),
+                            0.56f to Color.Black.copy(alpha = 0.38f),
+                            0.68f to Color.Black.copy(alpha = 0.23f),
+                            0.80f to Color.Black.copy(alpha = 0.10f),
+                            0.90f to Color.Black.copy(alpha = 0.035f),
                             1f to Color.Transparent,
                         ),
                     ),
             )
         }
     }
+}
+
+/** Ranked library matches for the bare search line. */
+private fun searchLibrary(songs: List<Song>, rawQuery: String): List<Song> {
+    val q = rawQuery.trim()
+    if (q.isEmpty()) return emptyList()
+    return songs.asSequence()
+        .filter {
+            it.title.contains(q, ignoreCase = true) ||
+                it.artist.contains(q, ignoreCase = true) ||
+                it.album.contains(q, ignoreCase = true)
+        }
+        .sortedWith(
+            compareByDescending<Song> { it.title.equals(q, ignoreCase = true) }
+                .thenByDescending { it.title.startsWith(q, ignoreCase = true) }
+                .thenBy { it.title.lowercase() },
+        )
+        .take(40)
+        .toList()
+}
+
+/**
+ * The area above the machine. It always occupies its weight so the machine stays
+ * parked on the centre line, even while nothing is typed.
+ */
+@Composable
+private fun SearchResults(
+    query: String,
+    songs: List<Song>,
+    loaded: Boolean,
+    nowPlayingId: Long?,
+    onPlay: (Song) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
+        if (query.isNotBlank()) {
+            val listState = rememberLazyListState()
+            LaunchedEffect(query) {
+                if (songs.isNotEmpty()) listState.scrollToItem(0)
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "SONGS",
+                        color = Color.White.copy(alpha = 0.36f),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.8.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (songs.isNotEmpty()) {
+                        Text(
+                            text = songs.size.toString(),
+                            color = Color.White.copy(alpha = 0.28f),
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+
+                if (songs.isEmpty()) {
+                    if (loaded) {
+                        Text(
+                            text = "No songs found",
+                            color = Color.White.copy(alpha = 0.38f),
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(start = 20.dp, top = 18.dp),
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentPadding = PaddingValues(horizontal = 8.dp, bottom = 10.dp),
+                    ) {
+                        items(songs, key = { it.id }) { song ->
+                            SearchResultRow(
+                                song = song,
+                                playing = song.id == nowPlayingId,
+                                onClick = { onPlay(song) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultRow(
+    song: Song,
+    playing: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(Color(0xFF2A2622)),
+        ) {
+            AsyncImage(
+                model = song.albumArtUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                color = if (playing) TypeCream else Color.White,
+                fontSize = 14.sp,
+                fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = song.artist,
+                color = Color.White.copy(alpha = 0.45f),
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        if (playing) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                for (bar in floatArrayOf(6f, 12f, 8f)) {
+                    Box(
+                        modifier = Modifier
+                            .width(2.dp)
+                            .height(bar.dp)
+                            .clip(CircleShape)
+                            .background(TypeCream.copy(alpha = 0.85f)),
+                    )
+                    Spacer(Modifier.width(2.dp))
+                }
+            }
+        } else {
+            Text(
+                text = formatResultDuration(song.duration),
+                color = Color.White.copy(alpha = 0.30f),
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
+private fun formatResultDuration(ms: Long): String {
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    return "${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
 }
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -1139,8 +1377,8 @@ private const val TearFallDistance = 190f   // dp
 
 /** Ragged edge of the tear, offsets in dp along the perforation. */
 private val TearFibres = floatArrayOf(
-    1.6f, 0.4f, 2.2f, 0.9f, 1.8f, 0.2f, 2.4f, 1.1f, 0.5f, 2f,
-    1.4f, 0.3f, 2.3f, 0.8f, 1.7f, 0.1f, 2.1f, 1.2f, 0.6f, 1.9f,
+    3.8f, 1.1f, 5.2f, 2.4f, 4.3f, 0.8f, 5.6f, 2.9f, 1.6f, 4.8f,
+    3.1f, 0.6f, 5.0f, 2.0f, 4.0f, 1.2f, 5.4f, 2.7f, 1.5f, 4.5f,
 )
 
 /** History is stored as a JSON array; `null` means "never seeded", `[]` means "cleared". */
@@ -1208,6 +1446,27 @@ private fun buildTearPath(
     path.close()
 }
 
+/** Paper face of the stub: fill, printed contents, then the dotted perforation. */
+private fun DrawScope.drawStubFace(
+    paper: Brush,
+    notch: Float,
+    content: DrawScope.() -> Unit,
+) {
+    drawRect(brush = paper, size = size)
+    content()
+    drawLine(
+        color = HistoryInk.copy(alpha = 0.30f),
+        start = Offset(1.dp.toPx(), notch + 1.dp.toPx()),
+        end = Offset(1.dp.toPx(), size.height - notch - 1.dp.toPx()),
+        strokeWidth = 1.8.dp.toPx(),
+        cap = StrokeCap.Round,
+        pathEffect = PathEffect.dashPathEffect(
+            floatArrayOf(0.1f, 4.4.dp.toPx()),
+            0f,
+        ),
+    )
+}
+
 private class TearSim {
     var angle by mutableFloatStateOf(0f)
     var speed = 0f
@@ -1229,6 +1488,16 @@ private class TearSim {
     var pvy = 0f
 }
 
+/** The device's default vibrator, whichever API way is available. */
+@Suppress("DEPRECATION")
+private fun defaultVibrator(context: Context): Vibrator? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
+            ?.defaultVibrator
+    } else {
+        context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    }
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun SearchHistoryPaper(
@@ -1237,10 +1506,15 @@ private fun SearchHistoryPaper(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    val context = LocalContext.current
     val view = LocalView.current
     val currentOnClear by rememberUpdatedState(onClear)
     val sim = remember { TearSim() }
     var wakeToken by remember { mutableStateOf(0) }
+
+    // A real Vibrator, not View haptics: short one-shots are felt even when the
+    // system's touch-feedback haptics are off, which is what the tear needs.
+    val vibrator = remember(context) { defaultVibrator(context) }
 
     val fibrePx = remember(density) {
         FloatArray(TearFibres.size) { TearFibres[it] * density.density }
@@ -1261,9 +1535,16 @@ private fun SearchHistoryPaper(
         Brush.verticalGradient(0f to HistoryPaperTop, 1f to HistoryPaperBottom)
     }
 
-    fun tick() {
-        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    fun buzz(ms: Long, amplitude: Int) {
+        val v = vibrator
+        if (v != null && v.hasVibrator()) {
+            v.vibrate(VibrationEffect.createOneShot(ms, amplitude))
+        } else {
+            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        }
     }
+
+    fun tick() = buzz(12L, 200)
 
     // While the paper is held, springing back, or flying, this advances the sim
     // once a frame. Reads happen inside graphicsLayer / drawWithContent, so the
@@ -1306,13 +1587,7 @@ private fun SearchHistoryPaper(
 
                 if (active && sim.angle >= TearAngle * 0.995f) {
                     sim.held = false
-                    view.performHapticFeedback(
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            HapticFeedbackConstants.CONFIRM
-                        } else {
-                            HapticFeedbackConstants.LONG_PRESS
-                        },
-                    )
+                    buzz(32L, 255)
                     // Leaves with the swing it had, plus the hand's throw.
                     val rad = sim.angle * PI.toFloat() / 180f
                     val tangential = (sim.speed * PI.toFloat() / 180f) * heightPx
@@ -1346,13 +1621,19 @@ private fun SearchHistoryPaper(
                 .fillMaxSize()
                 .padding(end = HistoryStubWidth)
                 .clip(bodyShape)
-                .background(paperBrush)
                 .drawWithContent {
                     val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
                     if (tip > 0.5f) {
                         buildTearPath(bodyTear, size.width, size.height, tip, 1, fibrePx)
-                        clipPath(bodyTear) { this@drawWithContent.drawContent() }
+                        // The paper itself lives inside the ragged clip. Drawing
+                        // it as a background would leave a clean rectangle behind
+                        // and the tear would only clip the text.
+                        clipPath(bodyTear) {
+                            drawRect(brush = paperBrush, size = size)
+                            this@drawWithContent.drawContent()
+                        }
                     } else {
+                        drawRect(brush = paperBrush, size = size)
                         this@drawWithContent.drawContent()
                     }
                     // Ticket notches: the black behind the paper shows through
@@ -1423,28 +1704,20 @@ private fun SearchHistoryPaper(
                     }
                 }
                 .clip(stubShape)
-                .background(paperBrush)
                 .drawWithContent {
                     val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
                     if (tip > 0.5f) {
                         buildTearPath(stubTear, size.width, size.height, tip, -1, fibrePx)
-                        clipPath(stubTear) { this@drawWithContent.drawContent() }
+                        clipPath(stubTear) {
+                            drawStubFace(paperBrush, notchPx) {
+                                this@drawWithContent.drawContent()
+                            }
+                        }
                     } else {
-                        this@drawWithContent.drawContent()
+                        drawStubFace(paperBrush, notchPx) {
+                            this@drawWithContent.drawContent()
+                        }
                     }
-                    // The perforation: a dotted line that lives on the stub, so
-                    // it swings and falls with it.
-                    drawLine(
-                        color = HistoryInk.copy(alpha = 0.30f),
-                        start = Offset(1.dp.toPx(), notchPx + 1.dp.toPx()),
-                        end = Offset(1.dp.toPx(), size.height - notchPx - 1.dp.toPx()),
-                        strokeWidth = 1.8.dp.toPx(),
-                        cap = StrokeCap.Round,
-                        pathEffect = PathEffect.dashPathEffect(
-                            floatArrayOf(0.1f, 4.4.dp.toPx()),
-                            0f,
-                        ),
-                    )
                     drawCircle(Color.Black, notchPx, Offset(0f, 0f))
                     drawCircle(Color.Black, notchPx, Offset(0f, size.height))
                 },
