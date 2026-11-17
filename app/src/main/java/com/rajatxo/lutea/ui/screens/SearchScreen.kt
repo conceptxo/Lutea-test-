@@ -68,6 +68,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -121,6 +122,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -482,46 +484,64 @@ fun SearchScreen() {
             )
         }
 
-        // Search history: a stack of tear-off papers below the machine. The
-        // newest paper is on top; dragging up lifts it away and brings the next
-        // one forward. Papers dissolve into black before they reach the rail.
+        // Search history: a stack of tear-off papers below the machine. Every size
+        // here is a fraction of the screen (or the machine's own scale), never a
+        // fixed dp, so it looks the same on a small phone and a tall one.
+        val screenH = LocalConfiguration.current.screenHeightDp.dp
+        val scale = (LocalConfiguration.current.screenWidthDp / 360f).coerceIn(0.85f, 1.35f)
+        val fadeHeight = screenH * 0.05f            // the black fade under the machine
+        val deckTopInset = fadeHeight * 0.45f       // first paper starts inside the fade's tail
+        val deckBottomInset = screenH * 0.11f       // keeps the last paper clear of the bottom bar
+        // The history area starts right under the carriage instead of a screen-half below it.
+        val liftPx = with(LocalDensity.current) {
+            ((RailAreaHeight - RailCenterY - 18.dp) * scale).toPx()
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.5f)
-                .align(Alignment.BottomCenter),
+                .align(Alignment.BottomCenter)
+                .layout { measurable, constraints ->
+                    val h = (constraints.maxHeight * 0.5f + liftPx).roundToInt()
+                        .coerceIn(0, constraints.maxHeight)
+                    val placeable = measurable.measure(
+                        constraints.copy(minHeight = h, maxHeight = h),
+                    )
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
+                // Papers that scroll past the top edge vanish here, under the fade
+                // below, instead of sliding over the machine.
+                .clipToBounds(),
         ) {
             SearchHistoryDeck(
                 entries = history,
                 resetKey = historyRevision,
+                bottomInset = deckBottomInset,
                 onClear = { entry ->
                     history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
                     saveSearchHistory(context, history)
                 },
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(start = 14.dp, end = 14.dp, top = 52.dp),
+                    .padding(start = 14.dp, end = 14.dp, top = deckTopInset),
             )
 
             // Same black the page gradient already has here → no colour seam.
-            // Eased in several stops so the hand-off from black to paper is soft
-            // instead of a visible band.
+            // Drawn after the deck, so papers always slide in behind it.
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(HistoryFadeHeight)
+                    .height(fadeHeight)
                     .background(
                         Brush.verticalGradient(
                             0f to Color.Black,
-                            0.10f to Color.Black,
-                            0.20f to Color.Black.copy(alpha = 0.88f),
-                            0.32f to Color.Black.copy(alpha = 0.72f),
-                            0.44f to Color.Black.copy(alpha = 0.54f),
-                            0.56f to Color.Black.copy(alpha = 0.38f),
-                            0.68f to Color.Black.copy(alpha = 0.23f),
-                            0.80f to Color.Black.copy(alpha = 0.10f),
-                            0.90f to Color.Black.copy(alpha = 0.035f),
+                            0.18f to Color.Black,
+                            0.30f to Color.Black.copy(alpha = 0.88f),
+                            0.42f to Color.Black.copy(alpha = 0.72f),
+                            0.54f to Color.Black.copy(alpha = 0.54f),
+                            0.66f to Color.Black.copy(alpha = 0.36f),
+                            0.77f to Color.Black.copy(alpha = 0.20f),
+                            0.88f to Color.Black.copy(alpha = 0.07f),
                             1f to Color.Transparent,
                         ),
                     ),
@@ -1418,7 +1438,6 @@ private data class SearchHistoryEntry(
 private val HistoryPaperHeight = 64.dp
 private val HistoryStubWidth = 74.dp
 private val HistoryNotchRadius = 7.dp
-private val HistoryFadeHeight = 44.dp
 
 /**
  * Card-switcher layout: the front paper is full size, every other paper is a
@@ -1781,6 +1800,7 @@ private fun defaultVibrator(context: Context): Vibrator? =
 private fun SearchHistoryDeck(
     entries: List<SearchHistoryEntry>,
     resetKey: Int,
+    bottomInset: Dp,
     onClear: (SearchHistoryEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1791,16 +1811,18 @@ private fun SearchHistoryDeck(
     val scroll = remember { mutableFloatStateOf(0f) }       // stack position, in cards
     val listScroll = remember { mutableFloatStateOf(0f) }   // list position, in px
     val viewportPx = remember { mutableFloatStateOf(0f) }
-    val expandT = remember { Animatable(0f) }               // 0 = stack, 1 = list
+    val expandT = remember { mutableFloatStateOf(0f) }      // 0 = stack, 1 = list (follows the finger)
     val closeP = remember { Animatable(0f) }                // 0..1 while a torn paper closes up
     var expanded by remember { mutableStateOf(false) }
     var closingIndex by remember { mutableStateOf(-1) }
     var snapJob by remember { mutableStateOf<Job?>(null) }
+    var expandJob by remember { mutableStateOf<Job?>(null) }
 
     val cardHeightPx = with(density) { HistoryPaperHeight.toPx() }
     val pillPx = with(density) { HistoryPillHeight.toPx() }
     val gapPx = with(density) { HistoryStackGap.toPx() }
     val listGapPx = with(density) { HistoryListGap.toPx() }
+    val bottomInsetPx = with(density) { bottomInset.toPx() }
     val maxIndex = entries.lastIndex.coerceAtLeast(0)
 
     val activeIndex by remember {
@@ -1816,7 +1838,7 @@ private fun SearchHistoryDeck(
             val a = scroll.floatValue.roundToInt().coerceIn(0, maxIndex)
             var lo = (a - 2).coerceAtLeast(0)
             var hi = (a + StackVisibleBehind).coerceAtMost(maxIndex)
-            val t = expandT.value
+            val t = expandT.floatValue
             if (expanded || t > 0.001f) {
                 val step = cardHeightPx + listGapPx
                 val l0 = (floor(listScroll.floatValue / step).toInt() - 1).coerceIn(0, maxIndex)
@@ -1835,7 +1857,7 @@ private fun SearchHistoryDeck(
     }
 
     fun maxListScroll(): Float =
-        (entries.size * (cardHeightPx + listGapPx) - listGapPx - viewportPx.floatValue)
+        (entries.size * (cardHeightPx + listGapPx) - listGapPx - viewportPx.floatValue + bottomInsetPx)
             .coerceAtLeast(0f)
 
     // Every new search puts its paper on top of the deck.
@@ -1854,15 +1876,26 @@ private fun SearchHistoryDeck(
         }
         val maxList = maxListScroll()
         if (listScroll.floatValue > maxList) listScroll.floatValue = maxList
-        if (entries.isEmpty()) expanded = false
+        if (entries.isEmpty()) {
+            expanded = false
+            expandT.floatValue = 0f
+        }
     }
 
-    // Stack <-> list morph: one soft spring with a tiny overshoot, like the reference.
-    LaunchedEffect(expanded) {
-        expandT.animateTo(
-            targetValue = if (expanded) 1f else 0f,
-            animationSpec = spring(dampingRatio = 0.86f, stiffness = 320f),
-        )
+    // Stack <-> list morph: one soft spring with a tiny overshoot, starting from
+    // wherever the finger left it.
+    fun settleExpand(open: Boolean) {
+        expandJob?.cancel()
+        expanded = open
+        expandJob = scope.launch {
+            animate(
+                initialValue = expandT.floatValue,
+                targetValue = if (open) 1f else 0f,
+                animationSpec = spring(dampingRatio = 0.86f, stiffness = 320f),
+            ) { value, _ ->
+                expandT.floatValue = value
+            }
+        }
     }
 
     fun focusIndex(target: Int) {
@@ -1882,13 +1915,13 @@ private fun SearchHistoryDeck(
         snapJob?.cancel()
         val step = cardHeightPx + listGapPx
         listScroll.floatValue = (activeIndex * step).coerceIn(0f, maxListScroll())
-        expanded = true
+        settleExpand(true)
     }
 
     fun collapseDeck(to: Int) {
         snapJob?.cancel()
         scroll.floatValue = to.coerceIn(0, maxIndex).toFloat()
-        expanded = false
+        settleExpand(false)
     }
 
     /** A torn paper folds shut while everything after it slides up, then it is really removed. */
@@ -1909,7 +1942,7 @@ private fun SearchHistoryDeck(
                 }
             }
             val newMaxList = ((entries.size - 1) * (cardHeightPx + listGapPx) - listGapPx -
-                viewportPx.floatValue).coerceAtLeast(0f)
+                viewportPx.floatValue + bottomInsetPx).coerceAtLeast(0f)
             if (listScroll.floatValue > newMaxList) {
                 launch {
                     animate(
@@ -1936,7 +1969,7 @@ private fun SearchHistoryDeck(
 
     fun eOf(i: Int): Float {
         val stackE = (1f - abs(relOf(i))).coerceIn(0f, 1f)
-        return mixF(stackE, 1f, expandT.value)
+        return mixF(stackE, 1f, expandT.floatValue)
     }
 
     fun hOf(i: Int): Float = mixF(pillPx, cardHeightPx, eOf(i))
@@ -1959,7 +1992,7 @@ private fun SearchHistoryDeck(
         val shift = if (c in 0 until i) closeP.value else 0f
         val listY = i * (cardHeightPx + listGapPx) - listScroll.floatValue -
             shift * (cardHeightPx + listGapPx)
-        return mixF(base + raw, listY, expandT.value)
+        return mixF(base + raw, listY, expandT.floatValue)
     }
 
     fun alphaOf(i: Int): Float {
@@ -1971,7 +2004,7 @@ private fun SearchHistoryDeck(
             else -> (0.92f - (rel - 1f) * 0.23f).coerceIn(0f, 1f)
         }
         val fade = if (i == closingIndex) 1f - closeP.value else 1f
-        return (mixF(stackA, 1f, expandT.value) * fade).coerceIn(0f, 1f)
+        return (mixF(stackA, 1f, expandT.floatValue) * fade).coerceIn(0f, 1f)
     }
 
     if (entries.isEmpty()) {
@@ -1994,7 +2027,10 @@ private fun SearchHistoryDeck(
                     var previousY = down.position.y
                     var travel = 0f
                     var dragging = false
-                    val listMode = expanded
+                    var listMode = expanded
+                    var primed = false
+                    // How far a swipe must travel before the pills have fully grown.
+                    val openDistance = cardHeightPx * 1.5f
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -2008,12 +2044,23 @@ private fun SearchHistoryDeck(
                         }
                         if (dragging) {
                             snapJob?.cancel()
+                            expandJob?.cancel()
                             if (listMode) {
                                 listScroll.floatValue =
                                     (listScroll.floatValue - dy).coerceIn(0f, maxListScroll())
                             } else {
-                                scroll.floatValue = (scroll.floatValue - dy / cardHeightPx)
-                                    .coerceIn(0f, maxIndex.toFloat())
+                                // Swiping up or down on the stack: the pills grow with the finger.
+                                if (!primed) {
+                                    listScroll.floatValue = (activeIndex * (cardHeightPx + listGapPx))
+                                        .coerceIn(0f, maxListScroll())
+                                    primed = true
+                                }
+                                val pull = (abs(travel) / openDistance).coerceIn(0f, 1f)
+                                expandT.floatValue = pull
+                                if (pull >= 1f) {
+                                    expanded = true     // fully open: keep swiping to scroll the list
+                                    listMode = true
+                                }
                             }
                             change.consume()
                         }
@@ -2034,18 +2081,8 @@ private fun SearchHistoryDeck(
                                 }
                             }
                         } else {
-                            val fling = if (abs(vy) > 650f) -sign(vy) else 0f
-                            val target = (scroll.floatValue.roundToInt() + fling)
-                                .coerceIn(0f, maxIndex.toFloat())
-                            snapJob = scope.launch {
-                                animate(
-                                    initialValue = scroll.floatValue,
-                                    targetValue = target,
-                                    animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
-                                ) { value, _ ->
-                                    scroll.floatValue = value
-                                }
-                            }
+                            // Let go part-way: a decent pull or a flick opens it, a small one springs shut.
+                            settleExpand(expandT.floatValue > 0.3f || abs(vy) > 900f)
                         }
                     }
                 }
