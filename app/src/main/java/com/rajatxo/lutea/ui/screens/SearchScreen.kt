@@ -557,7 +557,7 @@ private fun SearchResults(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentPadding = PaddingValues(horizontal = 8.dp, bottom = 10.dp),
+                        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 10.dp),
                     ) {
                         items(songs, key = { it.id }) { song ->
                             SearchResultRow(
