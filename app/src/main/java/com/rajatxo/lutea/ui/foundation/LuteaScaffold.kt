@@ -66,6 +66,7 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -160,7 +161,17 @@ fun LuteaScaffold(
     var playerVisible by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     val searchHistoryOverlay = remember { SearchHistoryOverlayState() }
+    val context = LocalContext.current
+    val searchStyleOverlay = remember(context) {
+        SearchStyleOverlayState(loadSearchSurfaceStyle(context))
+    }
     val currentSong by PlaybackConnection.currentSong.collectAsState()
+
+    // Leaving the Search tab always closes the style menu, so it cannot
+    // reappear unexpectedly when the user comes back.
+    LaunchedEffect(activeTab) {
+        if (activeTab != LuteaTab.Search) searchStyleOverlay.expanded = false
+    }
 
     // Clear All sits above the nav (48dp + 8dp gap). When the mini player is
     // visible it lifts another 64dp to stay 8dp above the mini player.
@@ -179,6 +190,7 @@ fun LuteaScaffold(
         },
         LocalSearchOpen provides searchOpenState,
         LocalSearchHistoryOverlay provides searchHistoryOverlay,
+        LocalSearchStyleOverlay provides searchStyleOverlay,
     ) {
         // ★ Law 7: BoxWithConstraints at root (NEVER screenHeightDp).
         //    Works in multi-window, split-screen, floating windows, foldables.
@@ -187,10 +199,13 @@ fun LuteaScaffold(
                 .fillMaxSize()
                 .background(Color.Black)
         ) {
-            // ★ BackHandler — closes search first (if open), then menu, on back press.
-            //    Mutually exclusive: only one can be open at a time.
-            BackHandler(enabled = searchOpen || menuOpen) {
-                if (searchOpen) { searchOpen = false; searchOpenState.value = false }
+            // ★ BackHandler — the search style menu closes first, then the
+            //    search overlay, then the Library menu.
+            BackHandler(
+                enabled = searchStyleOverlay.expanded || searchOpen || menuOpen,
+            ) {
+                if (searchStyleOverlay.expanded) searchStyleOverlay.expanded = false
+                else if (searchOpen) { searchOpen = false; searchOpenState.value = false }
                 else if (menuOpen) menuOpen = false
             }
 
@@ -688,6 +703,17 @@ fun LuteaScaffold(
                         .padding(bottom = clearAllBottom),
                 )
             }
+
+            // ★ Search style menu — also a sibling of the layerBackdrop, so
+            //    the button and its card are REAL kyant glass. It only exists
+            //    on the Search tab and gets out of the way of the player.
+            SearchStyleOverlay(
+                state = searchStyleOverlay,
+                backdrop = glassBackdrop,
+                visible = activeTab == LuteaTab.Search &&
+                    !playerVisible &&
+                    !showLyrics,
+            )
 
             // ★ Full player — overlays the entire screen when expanded.
             //    Slide-up from bottom. Swipe down or tap close to collapse.

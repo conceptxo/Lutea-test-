@@ -137,6 +137,8 @@ import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
+import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
+import com.rajatxo.lutea.ui.foundation.SearchSurfaceStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -383,6 +385,7 @@ fun SearchScreen() {
     val scope = rememberCoroutineScope()
     var historyRevision by remember { mutableStateOf(0) }
     val historyOverlay = LocalSearchHistoryOverlay.current
+    val searchStyle = LocalSearchStyleOverlay.current.style
 
     // The real library, scanned once off the main thread. Results are just the
     // songs whose title, artist or album matches what is typed above the machine.
@@ -488,11 +491,18 @@ fun SearchScreen() {
             SearchResults(
                 query = query,
                 songs = results,
+                library = library,
                 loaded = libraryReady,
+                style = searchStyle,
                 nowPlayingId = nowPlaying?.id,
                 onPlay = { song ->
                     submitSearch(query, song)
-                    PlaybackConnection.playSong(song, results)
+                    // Card style can play straight from the library while no
+                    // query is typed; in that case results is empty.
+                    PlaybackConnection.playSong(
+                        song,
+                        if (query.isBlank()) library else results,
+                    )
                     keyboard?.hide()
                 },
                 modifier = Modifier
@@ -604,83 +614,157 @@ private fun searchLibrary(songs: List<Song>, rawQuery: String): List<Song> {
 private fun SearchResults(
     query: String,
     songs: List<Song>,
+    library: List<Song>,
     loaded: Boolean,
+    style: SearchSurfaceStyle,
     nowPlayingId: Long?,
     onPlay: (Song) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
-        JellyfishBackdrop(
-            searching = query.isNotBlank(),
-            modifier = Modifier
-                .fillMaxSize()
-                .clipToBounds(),
-        )
+        when (style) {
+            SearchSurfaceStyle.JELLY -> {
+                JellyfishBackdrop(
+                    searching = query.isNotBlank(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds(),
+                )
 
-        if (query.isNotBlank()) {
-            val listState = rememberLazyListState()
-            LaunchedEffect(query) {
-                if (songs.isNotEmpty()) listState.scrollToItem(0)
+                if (query.isNotBlank()) {
+                    JellySongList(
+                        query = query,
+                        songs = songs,
+                        loaded = loaded,
+                        nowPlayingId = nowPlayingId,
+                        onPlay = onPlay,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding(),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "SONGS",
-                        color = Color.White.copy(alpha = 0.36f),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.8.sp,
+            SearchSurfaceStyle.CARDS -> {
+                // While idle the cards are the library; while searching they
+                // are the filtered results. Either way they use the same
+                // swipeable stack as the supplied SongCardCarousel.
+                val cardSongs = if (query.isBlank()) library else songs
+                if (cardSongs.isNotEmpty()) {
+                    SongCardCarousel(
+                        songs = cardSongs,
+                        nowPlayingId = nowPlayingId,
+                        onPlay = onPlay,
+                        modifier = Modifier.fillMaxSize(),
                     )
-                    Spacer(Modifier.weight(1f))
-                    if (songs.isNotEmpty()) {
-                        Text(
-                            text = songs.size.toString(),
-                            color = Color.White.copy(alpha = 0.28f),
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
-                        )
-                    }
-                }
-
-                if (songs.isEmpty()) {
-                    if (loaded) {
-                        Text(
-                            text = "No songs found",
-                            color = Color.White.copy(alpha = 0.38f),
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(start = 20.dp, top = 18.dp),
-                        )
-                    }
                 } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 10.dp),
-                    ) {
-                        items(songs, key = { it.id }) { song ->
-                            SearchResultRow(
-                                song = song,
-                                playing = song.id == nowPlayingId,
-                                onClick = { onPlay(song) },
-                            )
-                        }
-                    }
+                    CardStyleEmpty(loaded = loaded, searching = query.isNotBlank())
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun JellySongList(
+    query: String,
+    songs: List<Song>,
+    loaded: Boolean,
+    nowPlayingId: Long?,
+    onPlay: (Song) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(query) {
+        if (songs.isNotEmpty()) listState.scrollToItem(0)
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .statusBarsPadding(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                // End inset keeps the count clear of the glass style button.
+                .padding(start = 18.dp, end = 72.dp, top = 6.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "SONGS",
+                color = Color.White.copy(alpha = 0.36f),
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.8.sp,
+            )
+            Spacer(Modifier.weight(1f))
+            if (songs.isNotEmpty()) {
+                Text(
+                    text = songs.size.toString(),
+                    color = Color.White.copy(alpha = 0.28f),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+        }
+
+        if (songs.isEmpty()) {
+            if (loaded) {
+                Text(
+                    text = "No songs found",
+                    color = Color.White.copy(alpha = 0.38f),
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(start = 20.dp, top = 18.dp),
+                )
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(
+                    start = 8.dp,
+                    // The glass style button floats over the top-right corner.
+                    top = 34.dp,
+                    end = 8.dp,
+                    bottom = 10.dp,
+                ),
+            ) {
+                items(songs, key = { it.id }) { song ->
+                    SearchResultRow(
+                        song = song,
+                        playing = song.id == nowPlayingId,
+                        onClick = { onPlay(song) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardStyleEmpty(
+    loaded: Boolean,
+    searching: Boolean,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(start = 22.dp, top = 58.dp, end = 72.dp),
+    ) {
+        Text(
+            text = when {
+                !loaded -> "Reading library…"
+                searching -> "No songs found"
+                else -> "Your library is empty"
+            },
+            color = Color.White.copy(alpha = 0.38f),
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 0.8.sp,
+        )
     }
 }
 
