@@ -176,6 +176,11 @@ private fun StyleCard(
                 ),
             )
             .border(1.dp, Color.White.copy(alpha = 0.17f), shape)
+            // Keep taps on the card's header from falling through to the scrim.
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { }
             .padding(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
