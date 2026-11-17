@@ -103,6 +103,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
@@ -1437,6 +1438,7 @@ private data class SearchHistoryEntry(
 
 private val HistoryPaperHeight = 64.dp
 private val HistoryStubWidth = 74.dp
+private val HistoryBadgeSize = 34.dp
 private val HistoryNotchRadius = 7.dp
 
 /**
@@ -1446,7 +1448,6 @@ private val HistoryNotchRadius = 7.dp
 private val HistoryPillHeight = 36.dp
 private val HistoryStackGap = 8.dp
 private val HistoryListGap = 12.dp
-private const val StackVisibleBehind = 5
 
 /** Float lerp (the imported `lerp` is the Color one). */
 private fun mixF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
@@ -1837,7 +1838,7 @@ private fun SearchHistoryDeck(
         derivedStateOf {
             val a = scroll.floatValue.roundToInt().coerceIn(0, maxIndex)
             var lo = (a - 2).coerceAtLeast(0)
-            var hi = (a + StackVisibleBehind).coerceAtMost(maxIndex)
+            var hi = (a + 2).coerceAtMost(maxIndex)
             val t = expandT.floatValue
             if (expanded || t > 0.001f) {
                 val step = cardHeightPx + listGapPx
@@ -1997,12 +1998,8 @@ private fun SearchHistoryDeck(
 
     fun alphaOf(i: Int): Float {
         val rel = relOf(i)
-        val stackA = when {
-            rel < -1f -> ((rel + 2f).coerceIn(0f, 1f)) * 0.6f
-            rel < 0f -> 0.6f + 0.4f * (1f + rel)
-            rel < 1f -> 1f - rel * 0.08f
-            else -> (0.92f - (rel - 1f) * 0.23f).coerceIn(0f, 1f)
-        }
+        // Exactly three papers show in the stack: a pill above, the big one, a pill below.
+        val stackA = (2f - abs(rel)).coerceIn(0f, 1f)
         val fade = if (i == closingIndex) 1f - closeP.value else 1f
         return (mixF(stackA, 1f, expandT.floatValue) * fade).coerceIn(0f, 1f)
     }
@@ -2019,20 +2016,29 @@ private fun SearchHistoryDeck(
             .pointerInput(entries.size) {
                 if (entries.size < 2) return@pointerInput
                 awaitEachGesture {
-                    // The active stub consumes its own down, so pulling the stub
-                    // never also starts a deck scroll.
-                    val down = awaitFirstDown(requireUnconsumed = true)
+                    // Watched on the Initial pass: the papers' own tap handlers would
+                    // otherwise swallow the touch before the deck ever saw it.
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    // A finger that lands on a tearable stub belongs to the stub.
+                    if (down.position.x >= size.width - HistoryStubWidth.toPx()) {
+                        for (i in range) {
+                            if (!(expanded || i == activeIndex)) continue
+                            val top = yOf(i)
+                            if (eOf(i) > 0.9f && down.position.y >= top &&
+                                down.position.y <= top + hOf(i)
+                            ) {
+                                return@awaitEachGesture
+                            }
+                        }
+                    }
                     val tracker = VelocityTracker()
                     tracker.addPosition(down.uptimeMillis, down.position)
                     var previousY = down.position.y
                     var travel = 0f
                     var dragging = false
-                    var listMode = expanded
-                    var primed = false
-                    // How far a swipe must travel before the pills have fully grown.
-                    val openDistance = cardHeightPx * 1.5f
+                    val listMode = expanded
                     while (true) {
-                        val event = awaitPointerEvent()
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         tracker.addPosition(change.uptimeMillis, change.position)
                         if (!change.pressed) break
@@ -2044,23 +2050,13 @@ private fun SearchHistoryDeck(
                         }
                         if (dragging) {
                             snapJob?.cancel()
-                            expandJob?.cancel()
                             if (listMode) {
                                 listScroll.floatValue =
                                     (listScroll.floatValue - dy).coerceIn(0f, maxListScroll())
                             } else {
-                                // Swiping up or down on the stack: the pills grow with the finger.
-                                if (!primed) {
-                                    listScroll.floatValue = (activeIndex * (cardHeightPx + listGapPx))
-                                        .coerceIn(0f, maxListScroll())
-                                    primed = true
-                                }
-                                val pull = (abs(travel) / openDistance).coerceIn(0f, 1f)
-                                expandT.floatValue = pull
-                                if (pull >= 1f) {
-                                    expanded = true     // fully open: keep swiping to scroll the list
-                                    listMode = true
-                                }
+                                // Swipe up/down: the next paper grows while this one shrinks.
+                                scroll.floatValue = (scroll.floatValue - dy / cardHeightPx)
+                                    .coerceIn(0f, maxIndex.toFloat())
                             }
                             change.consume()
                         }
@@ -2081,8 +2077,18 @@ private fun SearchHistoryDeck(
                                 }
                             }
                         } else {
-                            // Let go part-way: a decent pull or a flick opens it, a small one springs shut.
-                            settleExpand(expandT.floatValue > 0.3f || abs(vy) > 900f)
+                            val fling = if (abs(vy) > 650f) -sign(vy) else 0f
+                            val target = (scroll.floatValue.roundToInt() + fling)
+                                .coerceIn(0f, maxIndex.toFloat())
+                            snapJob = scope.launch {
+                                animate(
+                                    initialValue = scroll.floatValue,
+                                    targetValue = target,
+                                    animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
+                                ) { value, _ ->
+                                    scroll.floatValue = value
+                                }
+                            }
                         }
                     }
                 }
@@ -2094,14 +2100,9 @@ private fun SearchHistoryDeck(
             key(entry.query) {
                 Box(
                     modifier = Modifier
-                        .zIndex(
-                            when {
-                                expanded -> 1000f - i
-                                i == active -> 1000f
-                                i > active -> 900f - (i - active)
-                                else -> 800f - (active - i)
-                            },
-                        )
+                        // Fixed order (newer on top): it never flips while papers swap
+                        // sizes, so shadows cannot pop over a neighbour mid-animation.
+                        .zIndex(1000f - i)
                         // Outer layer: where the paper sits and how visible it is.
                         .graphicsLayer {
                             translationY = yOf(i)
@@ -2114,7 +2115,8 @@ private fun SearchHistoryDeck(
                                 corner = 18.dp.toPx(),
                                 color = Color.Black,
                                 spread = 12.dp.toPx(),
-                                alpha = mixF(0.38f, 0.80f, eOf(i).coerceIn(0f, 1f)),
+                                alpha = mixF(0.30f, 0.70f, eOf(i).coerceIn(0f, 1f)),
+                                steps = 8,
                             )
                         }
                         // Inner layer: trims a collapsed paper to its pill. A full-size
@@ -2331,7 +2333,13 @@ private fun SearchHistoryPaper(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        // The badge shrinks with the paper: ~60% size as a pill.
+                        .layout { measurable, _ ->
+                            val e = expansion().coerceIn(0f, 1f)
+                            val side = (HistoryBadgeSize.toPx() * mixF(0.60f, 1f, e)).roundToInt()
+                            val placeable = measurable.measure(Constraints.fixed(side, side))
+                            layout(side, side) { placeable.place(0, 0) }
+                        }
                         .clip(CircleShape)
                         .background(ink.copy(alpha = 0.10f)),
                     contentAlignment = Alignment.Center,
@@ -2345,7 +2353,7 @@ private fun SearchHistoryPaper(
                             imageVector = if (isOpen) CollapseGlyph else ExpandGlyph,
                             contentDescription = if (isOpen) "Collapse history" else "Expand history",
                             tint = ink.copy(alpha = 0.75f),
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.fillMaxSize(0.47f),
                         )
                     }
                 }
