@@ -248,6 +248,12 @@ fun LuteaScaffold(
             // the mini-player's bottom edge, darkens gradually, and reaches pure
             // black at the very bottom of the screen. This keeps the nav readable
             // without putting a hard edge under the glass capsule.
+            //
+            // The top edge MUST blend into the page behind it (especially the
+            // Effect page's warm-black gradient), so the first third of the band
+            // is held transparent and the second third eases in very gently.
+            // The previous ramp (0.08 → 0.06) hit black too quickly and showed
+            // a hard line where the fade began.
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -257,14 +263,15 @@ fun LuteaScaffold(
                         brush = Brush.verticalGradient(
                             colorStops = arrayOf(
                                 0.00f to Color.Transparent,
-                                0.08f to Color.Black.copy(alpha = 0.06f),
-                                0.18f to Color.Black.copy(alpha = 0.18f),
-                                0.30f to Color.Black.copy(alpha = 0.42f),
-                                0.42f to Color.Black.copy(alpha = 0.64f),
-                                0.54f to Color.Black.copy(alpha = 0.80f),
-                                0.66f to Color.Black.copy(alpha = 0.91f),
-                                0.78f to Color.Black.copy(alpha = 0.97f),
-                                0.90f to Color.Black.copy(alpha = 0.995f),
+                                0.18f to Color.Transparent,
+                                0.30f to Color.Black.copy(alpha = 0.03f),
+                                0.42f to Color.Black.copy(alpha = 0.10f),
+                                0.54f to Color.Black.copy(alpha = 0.24f),
+                                0.64f to Color.Black.copy(alpha = 0.42f),
+                                0.74f to Color.Black.copy(alpha = 0.62f),
+                                0.83f to Color.Black.copy(alpha = 0.80f),
+                                0.91f to Color.Black.copy(alpha = 0.93f),
+                                0.97f to Color.Black.copy(alpha = 0.985f),
                                 1.00f to Color.Black,
                             )
                         )
