@@ -11,7 +11,6 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -396,21 +395,6 @@ fun SearchScreen() {
         libraryReady = true
     }
     val nowPlaying by PlaybackConnection.currentSong.collectAsState()
-
-    // The style of the empty page is a user preference, not a one-paper thing.
-    // Jelly Drift is the default; Reef Current lives in the same search prefs.
-    val searchPrefs = remember(context) {
-        context.getSharedPreferences(HistoryPrefs, Context.MODE_PRIVATE)
-    }
-    var idleStyle by remember {
-        mutableStateOf(
-            SearchIdleStyle.entries.firstOrNull {
-                it.name == searchPrefs.getString(IdleStyleKey, null)
-            } ?: SearchIdleStyle.JELLY,
-        )
-    }
-    var styleMenuOpen by remember { mutableStateOf(false) }
-    BackHandler(enabled = styleMenuOpen) { styleMenuOpen = false }
     val results = remember(query, library) { searchLibrary(library, query) }
 
     // Searches live between launches. A fresh install is seeded with a few papers
@@ -505,10 +489,7 @@ fun SearchScreen() {
                 query = query,
                 songs = results,
                 loaded = libraryReady,
-                idleStyle = idleStyle,
-                library = library,
                 nowPlayingId = nowPlaying?.id,
-                onPickQuery = { query = it },
                 onPlay = { song ->
                     submitSearch(query, song)
                     PlaybackConnection.playSong(song, results)
@@ -593,34 +574,6 @@ fun SearchScreen() {
             )
         }
 
-        // The style picker floats above the page. The first layer only catches
-        // outside taps; the menu itself is drawn last so it stays interactive.
-        if (styleMenuOpen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .zIndex(20f)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { styleMenuOpen = false },
-            )
-        }
-        SearchStyleMenu(
-            selected = idleStyle,
-            expanded = styleMenuOpen,
-            onExpandedChange = { styleMenuOpen = it },
-            onSelect = { style ->
-                idleStyle = style
-                searchPrefs.edit().putString(IdleStyleKey, style.name).apply()
-                styleMenuOpen = false
-            },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = 8.dp, end = 16.dp)
-                .zIndex(30f),
-        )
     }
 }
 
@@ -652,32 +605,17 @@ private fun SearchResults(
     query: String,
     songs: List<Song>,
     loaded: Boolean,
-    idleStyle: SearchIdleStyle,
-    library: List<Song>,
     nowPlayingId: Long?,
-    onPickQuery: (String) -> Unit,
     onPlay: (Song) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
-        when (idleStyle) {
-            SearchIdleStyle.JELLY -> JellyfishBackdrop(
-                searching = query.isNotBlank(),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clipToBounds(),
-            )
-
-            SearchIdleStyle.REEF -> ReefIdleSheet(
-                searching = query.isNotBlank(),
-                library = library,
-                loaded = loaded,
-                onPickQuery = onPickQuery,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clipToBounds(),
-            )
-        }
+        JellyfishBackdrop(
+            searching = query.isNotBlank(),
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds(),
+        )
 
         if (query.isNotBlank()) {
             val listState = rememberLazyListState()
@@ -693,8 +631,7 @@ private fun SearchResults(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        // The glass style button sits above this row's right end.
-                        .padding(start = 18.dp, end = 72.dp, top = 6.dp, bottom = 4.dp),
+                        .padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -731,12 +668,7 @@ private fun SearchResults(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentPadding = PaddingValues(
-                            start = 8.dp,
-                            end = 8.dp,
-                            top = 34.dp,
-                            bottom = 10.dp,
-                        ),
+                        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 10.dp),
                     ) {
                         items(songs, key = { it.id }) { song ->
                             SearchResultRow(
@@ -1573,7 +1505,6 @@ private val PaperInkLight = Color(0xFFFFFBF0)
 
 private const val HistoryPrefs = "lutea_search"
 private const val HistoryKey = "history"
-private const val IdleStyleKey = "idle_style"
 
 /**
  * A procedural sheet of paper: fine warm grain, darker flecks and short fibres

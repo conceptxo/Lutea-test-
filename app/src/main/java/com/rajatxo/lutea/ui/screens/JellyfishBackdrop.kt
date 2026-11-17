@@ -78,10 +78,8 @@ fun JellyfishBackdrop(
     modifier: Modifier = Modifier,
 ) {
     val clock = remember { mutableFloatStateOf(0f) }
-    // Freeze the swim while results are open: the blur is the effect, and
-    // redrawing a full top-half blur behind the list every frame is wasted work.
-    LaunchedEffect(searching) {
-        if (searching) return@LaunchedEffect
+    // Keep the swim running under the results list; the blur is only a layer.
+    LaunchedEffect(Unit) {
         var last = 0L
         while (true) {
             val now = withFrameNanos { it }
@@ -94,7 +92,7 @@ fun JellyfishBackdrop(
 
     // typing → jellyfish melt into a soft blur, the songs list takes over
     val blurRadius by animateFloatAsState(
-        targetValue = if (searching) 24f else 0f,
+        targetValue = if (searching) 6f else 0f,
         animationSpec = tween(500),
         label = "jellyBlur",
     )
