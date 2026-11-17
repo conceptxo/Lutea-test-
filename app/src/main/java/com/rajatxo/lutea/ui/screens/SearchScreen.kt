@@ -2334,7 +2334,7 @@ private fun SearchHistoryPaper(
             .fillMaxWidth()
             .height(HistoryPaperHeight),
     ) {
-        // ── the body: chip, query, hint; its right edge tears away ──
+        // ── the body: chip and query; its right edge tears away ──
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -2420,22 +2420,6 @@ private fun SearchHistoryPaper(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .fillMaxWidth(),
-                    )
-                    Text(
-                        text = "Wanna play again?",
-                        color = ink.copy(alpha = 0.58f),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .padding(bottom = 7.dp)
-                            .graphicsLayer {
-                                alpha = expansion().coerceIn(0f, 1f)
-                            },
                     )
                 }
             }

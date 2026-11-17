@@ -84,8 +84,8 @@ import kotlin.math.roundToInt
  *      system font scale is capped at 1.15x for the label.
  *
  *  NOT IN THIS FILE
- *   The tab shown at app start. Keep the initial activeTab in LuteaScaffold /
- *   MainActivity as LuteaTab.Home so Home is the first page.
+ *   The tab shown at app start. Keep the initial activeTab in QuickPicksScreen
+ *   as LuteaTab.Search so Search is the first page.
  *
  *  EASY TUNING: change the constants just below, nothing else.
  * =============================================================================

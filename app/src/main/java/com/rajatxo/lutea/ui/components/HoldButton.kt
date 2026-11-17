@@ -11,7 +11,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,15 +35,15 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -66,7 +65,7 @@ private val HoldButtonHeight = 38.dp
  *
  * Hold to fill the capsule from left to right. Releasing early shakes and
  * aborts; reaching 100% fires [onConfirm] and shows the success label for
- * [resetAfter] milliseconds.
+ * [resetAfter] milliseconds (0 keeps it up until the button is removed).
  *
  * The button is deliberately small and self-contained. When [backdrop] is
  * available it is a sibling of the layerBackdrop producer, so it can safely
@@ -193,7 +192,11 @@ fun HoldButton(
         HoldState.Holding -> holdingLabel
         HoldState.Success -> successLabel
     }
-    val isSuccess = state == HoldState.Success
+    val currentIcon = when (state) {
+        HoldState.Idle -> IdleFaceGlyph
+        HoldState.Holding -> HoldingFaceGlyph
+        HoldState.Success -> SuccessFaceGlyph
+    }
 
     Box(
         modifier = modifier
@@ -245,13 +248,7 @@ fun HoldButton(
             },
     ) {
         // Base label: stays perfectly still underneath the reveal.
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HoldContent(text = currentText, success = isSuccess, color = contentColor)
-        }
+        HoldContent(text = currentText, icon = currentIcon, color = contentColor)
 
         // Red fill + white label in one full-size layer. Both are clipped to the
         // same left-to-right reveal, so the text itself never moves.
@@ -268,17 +265,7 @@ fun HoldButton(
                     }
                 },
         ) {
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                HoldContent(
-                    text = currentText,
-                    success = isSuccess,
-                    color = contentColor,
-                )
-            }
+            HoldContent(text = currentText, icon = currentIcon, color = contentColor)
         }
     }
 }
@@ -286,50 +273,73 @@ fun HoldButton(
 @Composable
 private fun HoldContent(
     text: String,
-    success: Boolean,
+    icon: ImageVector,
     color: Color,
 ) {
-    Row(
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
     ) {
-        if (success) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Fixed footprint: the face changes expression without shuffling
+            // sideways or resizing when the label gets longer or shorter.
             Icon(
-                imageVector = CheckGlyph,
+                imageVector = icon,
                 contentDescription = null,
                 tint = color,
-                modifier = Modifier.size(12.dp),
+                modifier = Modifier.size(HoldFaceSize),
             )
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(HoldFaceGap))
+            Box(
+                modifier = Modifier.width(HoldLabelWidth),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = text,
+                    color = color,
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.6.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
-        Text(
-            text = text,
-            color = color,
-            fontSize = 13.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 0.6.sp,
-            maxLines = 1,
-        )
     }
 }
 
-private val CheckGlyph: ImageVector = ImageVector.Builder(
-    name = "Check",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        fill = null,
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2.25f,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-    ) {
-        moveTo(20f, 6f)
-        lineTo(9f, 17f)
-        lineTo(4f, 12f)
-    }
-}.build()
+private val HoldFaceSize = 14.dp
+private val HoldFaceGap = 6.dp
+private val HoldLabelWidth = 122.dp
+
+private val IdleFaceGlyph: ImageVector = faceGlyph(
+    name = "IdleFace",
+    pathData = "M10 2a8 8 0 1 0 0 16a8 8 0 0 0 0-16M8.5 8.5a1 1 0 1 1-2 0a1 1 0 0 1 2 0m4-1a1 1 0 1 1 0 2a1 1 0 0 1 0-2m.303 4.5h.797a.5.5 0 0 1 0 1h-.797c-1.077 0-2.13.319-3.026.916a.5.5 0 1 1-.554-.832A6.45 6.45 0 0 1 12.803 12",
+)
+
+private val HoldingFaceGlyph: ImageVector = faceGlyph(
+    name = "HoldingFace",
+    pathData = "M2 10a8 8 0 1 1 16 0a8 8 0 0 1-16 0m6.5-1.5a.5.5 0 0 0 .26-.929l-2.503-1.5a.5.5 0 0 0-.514.858l1.217.73A1 1 0 1 0 8.5 8.5m5 0a1 1 0 0 0-.459-.841l1.216-.73a.5.5 0 0 0-.514-.858l-2.499 1.5a.5.5 0 0 0 .256.929a1 1 0 1 0 2 0m.062 4.89c.34-.308.067-.716.055-.73l-.048-.054a3 3 0 0 0-.174-.171a4 4 0 0 0-.672-.49c-.6-.354-1.5-.695-2.721-.695s-2.121.34-2.722.694c-.3.176-.522.353-.674.49a3 3 0 0 0-.223.225c-.183.219-.178.545.054.73a.5.5 0 0 0 .7-.073l.003-.003l.023-.026a2 2 0 0 1 .115-.112a3 3 0 0 1 .508-.369c.463-.272 1.19-.556 2.216-.556s1.752.284 2.213.556c.233.137.4.272.507.369a2 2 0 0 1 .137.137l.003.003c.173.213.497.26.7.075",
+)
+
+private val SuccessFaceGlyph: ImageVector = faceGlyph(
+    name = "SuccessFace",
+    pathData = "M2 10a8 8 0 1 1 16 0a8 8 0 0 1-16 0m5.5-.5a1 1 0 1 0 0-2a1 1 0 0 0 0 2m6-1a1 1 0 1 0-2 0a1 1 0 0 0 2 0m.062 4.89c.376-.35.067-.716.055-.73l-.048-.054a3 3 0 0 0-.174-.171a4 4 0 0 0-.672-.49c-.6-.354-1.5-.695-2.721-.695s-2.121.34-2.722.694c-.3.175-.522.353-.674.49a3 3 0 0 0-.223.225l-.014.018l-.005.006l-.002.002l-.001.001l.389.314l-.39-.313a.5.5 0 0 0 .777.629l.003-.003l.023-.026a2 2 0 0 1 .115-.112a3 3 0 0 1 .508-.369c.463-.272 1.19-.556 2.216-.556s1.752.284 2.213.556c.233.137.4.272.507.369a2 2 0 0 1 .137.137l.003.003a.5.5 0 0 0 .7.075",
+)
+
+private fun faceGlyph(name: String, pathData: String): ImageVector =
+    ImageVector.Builder(
+        name = name,
+        defaultWidth = 20.dp,
+        defaultHeight = 20.dp,
+        viewportWidth = 20f,
+        viewportHeight = 20f,
+    ).apply {
+        addPath(
+            pathData = PathParser().parsePathString(pathData).toNodes(),
+            fill = SolidColor(Color.White),
+        )
+    }.build()

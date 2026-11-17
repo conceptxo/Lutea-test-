@@ -82,7 +82,7 @@ import kotlinx.coroutines.withContext
 fun QuickPicksScreen(
     modifier: Modifier = Modifier,
 ) {
-    var activeTab by remember { mutableStateOf(LuteaTab.Library) }
+    var activeTab by remember { mutableStateOf(LuteaTab.Search) }
     var selectedPlaylist by remember { mutableStateOf<com.rajatxo.lutea.data.model.Playlist?>(null) }
     var selectedAlbum by remember { mutableStateOf<Pair<String, List<Song>>?>(null) }
     var selectedArtist by remember { mutableStateOf<Pair<String, List<Song>>?>(null) }
