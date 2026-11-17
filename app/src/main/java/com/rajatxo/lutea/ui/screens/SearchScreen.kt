@@ -11,9 +11,11 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
@@ -72,16 +74,19 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -100,6 +105,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
@@ -113,7 +119,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -134,6 +142,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -233,12 +242,9 @@ private val SearchGlyph: ImageVector = ImageVector.Builder(
     }
 }.build()
 
-/**
- * Lucide "history" glyph (MIT) — simplified clock face, inlined so the
- * tickets own their icon.
- */
-private val HistoryGlyph: ImageVector = ImageVector.Builder(
-    name = "History",
+/** Lucide "chevrons-up-down" (MIT): the expand icon printed on every paper. */
+private val ExpandGlyph: ImageVector = ImageVector.Builder(
+    name = "Expand",
     defaultWidth = 24.dp,
     defaultHeight = 24.dp,
     viewportWidth = 24f,
@@ -252,12 +258,37 @@ private val HistoryGlyph: ImageVector = ImageVector.Builder(
         strokeLineJoin = StrokeJoin.Round,
         strokeLineMiter = 4f,
     ) {
-        moveTo(21f, 12f)
-        arcTo(9f, 9f, 0f, true, true, 3f, 12f)
-        arcTo(9f, 9f, 0f, true, true, 21f, 12f)
-        moveTo(12f, 7f)
-        lineTo(12f, 12f)
-        lineTo(15.5f, 14f)
+        moveTo(7f, 15f)
+        lineTo(12f, 20f)
+        lineTo(17f, 15f)
+        moveTo(7f, 9f)
+        lineTo(12f, 4f)
+        lineTo(17f, 9f)
+    }
+}.build()
+
+/** Lucide "chevrons-down-up" (MIT): shown instead while the list is open. */
+private val CollapseGlyph: ImageVector = ImageVector.Builder(
+    name = "Collapse",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = 2f,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+        strokeLineMiter = 4f,
+    ) {
+        moveTo(7f, 20f)
+        lineTo(12f, 15f)
+        lineTo(17f, 20f)
+        moveTo(7f, 4f)
+        lineTo(12f, 9f)
+        lineTo(17f, 4f)
     }
 }.build()
 
@@ -1389,9 +1420,29 @@ private val HistoryStubWidth = 74.dp
 private val HistoryNotchRadius = 7.dp
 private val HistoryFadeHeight = 44.dp
 
-/** How far each older paper peeks from under the one in front of it. */
-private val StackPeek = 11.dp
-private const val StackVisibleBehind = 4
+/**
+ * Card-switcher layout: the front paper is full size, every other paper is a
+ * slim pill above or below it. Gaps are in dp; pills get narrower with depth.
+ */
+private val HistoryPillHeight = 36.dp
+private val HistoryStackGap = 8.dp
+private val HistoryListGap = 12.dp
+private const val StackVisibleBehind = 5
+
+/** Float lerp (the imported `lerp` is the Color one). */
+private fun mixF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+/** Clips a paper to a pill: corner radius follows the height, capped at the paper's own 18dp. */
+private val PillClipShape: Shape = object : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline {
+        val r = minOf(size.height / 2f, 18f * density.density)
+        return Outline.Rounded(RoundRect(0f, 0f, size.width, size.height, CornerRadius(r, r)))
+    }
+}
 
 /** Ink is picked from the paper's real luminance, never from a fixed theme. */
 private val PaperInkDark = Color(0xFF201A12)
@@ -1718,9 +1769,12 @@ private fun defaultVibrator(context: Context): Vibrator? =
     }
 
 /**
- * The history as a physical stack of tickets. The newest sits on top with the
- * older ones peeking out below it; dragging up lifts the front paper away and
- * brings the next one forward. Only the front paper can be torn.
+ * The history as a card-switcher. Collapsed: the front paper is full size and
+ * the others are slim pills peeking below (and above, once you have moved on).
+ * Dragging or tapping a pill springs it forward while the old front paper
+ * shrinks into a pill. Tapping the front paper (or its expand icon) opens every
+ * search as a full ticket in a scrollable list; tapping again folds it back.
+ * Only a full-size paper can be torn; the rest of the list closes the gap.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -1732,13 +1786,21 @@ private fun SearchHistoryDeck(
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    // A plain float state, not an Animatable: the drag loop runs inside
-    // Compose's restricted pointer scope, where arbitrary suspend calls are
-    // forbidden. The spring on release is driven from `scope` instead.
-    val scroll = remember { mutableFloatStateOf(0f) }
+    // Plain float states, not Animatables: the drag loop runs inside Compose's
+    // restricted pointer scope. Springs on release are driven from `scope`.
+    val scroll = remember { mutableFloatStateOf(0f) }       // stack position, in cards
+    val listScroll = remember { mutableFloatStateOf(0f) }   // list position, in px
+    val viewportPx = remember { mutableFloatStateOf(0f) }
+    val expandT = remember { Animatable(0f) }               // 0 = stack, 1 = list
+    val closeP = remember { Animatable(0f) }                // 0..1 while a torn paper closes up
+    var expanded by remember { mutableStateOf(false) }
+    var closingIndex by remember { mutableStateOf(-1) }
     var snapJob by remember { mutableStateOf<Job?>(null) }
+
     val cardHeightPx = with(density) { HistoryPaperHeight.toPx() }
-    val peekPx = with(density) { StackPeek.toPx() }
+    val pillPx = with(density) { HistoryPillHeight.toPx() }
+    val gapPx = with(density) { HistoryStackGap.toPx() }
+    val listGapPx = with(density) { HistoryListGap.toPx() }
     val maxIndex = entries.lastIndex.coerceAtLeast(0)
 
     val activeIndex by remember {
@@ -1748,10 +1810,39 @@ private fun SearchHistoryDeck(
         }
     }
 
+    // Which papers are worth composing right now (stack neighbours, list window, or both mid-morph).
+    val range by remember(maxIndex) {
+        derivedStateOf {
+            val a = scroll.floatValue.roundToInt().coerceIn(0, maxIndex)
+            var lo = (a - 2).coerceAtLeast(0)
+            var hi = (a + StackVisibleBehind).coerceAtMost(maxIndex)
+            val t = expandT.value
+            if (expanded || t > 0.001f) {
+                val step = cardHeightPx + listGapPx
+                val l0 = (floor(listScroll.floatValue / step).toInt() - 1).coerceIn(0, maxIndex)
+                val l1 = (ceil((listScroll.floatValue + viewportPx.floatValue) / step).toInt() + 1)
+                    .coerceIn(0, maxIndex)
+                if (t > 0.985f) {
+                    lo = l0
+                    hi = l1
+                } else {
+                    lo = minOf(lo, l0)
+                    hi = maxOf(hi, l1)
+                }
+            }
+            lo..hi
+        }
+    }
+
+    fun maxListScroll(): Float =
+        (entries.size * (cardHeightPx + listGapPx) - listGapPx - viewportPx.floatValue)
+            .coerceAtLeast(0f)
+
     // Every new search puts its paper on top of the deck.
     LaunchedEffect(resetKey) {
         snapJob?.cancel()
         scroll.floatValue = 0f
+        listScroll.floatValue = 0f
     }
 
     // A torn paper shortens the stack; never leave the deck pointing past it.
@@ -1761,6 +1852,126 @@ private fun SearchHistoryDeck(
             snapJob?.cancel()
             scroll.floatValue = max
         }
+        val maxList = maxListScroll()
+        if (listScroll.floatValue > maxList) listScroll.floatValue = maxList
+        if (entries.isEmpty()) expanded = false
+    }
+
+    // Stack <-> list morph: one soft spring with a tiny overshoot, like the reference.
+    LaunchedEffect(expanded) {
+        expandT.animateTo(
+            targetValue = if (expanded) 1f else 0f,
+            animationSpec = spring(dampingRatio = 0.86f, stiffness = 320f),
+        )
+    }
+
+    fun focusIndex(target: Int) {
+        snapJob?.cancel()
+        snapJob = scope.launch {
+            animate(
+                initialValue = scroll.floatValue,
+                targetValue = target.coerceIn(0, maxIndex).toFloat(),
+                animationSpec = spring(dampingRatio = 0.82f, stiffness = 300f),
+            ) { value, _ ->
+                scroll.floatValue = value
+            }
+        }
+    }
+
+    fun expandDeck() {
+        snapJob?.cancel()
+        val step = cardHeightPx + listGapPx
+        listScroll.floatValue = (activeIndex * step).coerceIn(0f, maxListScroll())
+        expanded = true
+    }
+
+    fun collapseDeck(to: Int) {
+        snapJob?.cancel()
+        scroll.floatValue = to.coerceIn(0, maxIndex).toFloat()
+        expanded = false
+    }
+
+    /** A torn paper folds shut while everything after it slides up, then it is really removed. */
+    fun startClose(entry: SearchHistoryEntry) {
+        if (closingIndex >= 0) return
+        val idx = entries.indexOfFirst { it.query == entry.query }
+        if (idx < 0) return
+        closingIndex = idx
+        scope.launch {
+            val newMaxIndex = (entries.size - 2).coerceAtLeast(0).toFloat()
+            if (scroll.floatValue > newMaxIndex) {
+                launch {
+                    animate(
+                        initialValue = scroll.floatValue,
+                        targetValue = newMaxIndex,
+                        animationSpec = spring(dampingRatio = 0.9f, stiffness = 300f),
+                    ) { value, _ -> scroll.floatValue = value }
+                }
+            }
+            val newMaxList = ((entries.size - 1) * (cardHeightPx + listGapPx) - listGapPx -
+                viewportPx.floatValue).coerceAtLeast(0f)
+            if (listScroll.floatValue > newMaxList) {
+                launch {
+                    animate(
+                        initialValue = listScroll.floatValue,
+                        targetValue = newMaxList,
+                        animationSpec = spring(dampingRatio = 0.9f, stiffness = 300f),
+                    ) { value, _ -> listScroll.floatValue = value }
+                }
+            }
+            closeP.snapTo(0f)
+            closeP.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
+            onClear(entry)
+            closingIndex = -1
+            closeP.snapTo(0f)
+        }
+    }
+
+    // ── geometry: one paper's place in the stack, the list, or anywhere between ──
+    fun relOf(i: Int): Float {
+        val c = closingIndex
+        val shift = if (c in 0 until i) closeP.value else 0f
+        return (i - scroll.floatValue) - shift
+    }
+
+    fun eOf(i: Int): Float {
+        val stackE = (1f - abs(relOf(i))).coerceIn(0f, 1f)
+        return mixF(stackE, 1f, expandT.value)
+    }
+
+    fun hOf(i: Int): Float = mixF(pillPx, cardHeightPx, eOf(i))
+
+    fun wFractionOf(i: Int): Float {
+        val stackW = 1f - 0.07f * abs(relOf(i)).coerceAtMost(3f)
+        return mixF(stackW, 1f, eOf(i)).coerceAtMost(1f)
+    }
+
+    fun yOf(i: Int): Float {
+        val rel = relOf(i)
+        // Once you have moved past the first paper, the one you left sits above as a pill.
+        val base = (pillPx + gapPx) * scroll.floatValue.coerceIn(0f, 1f)
+        val raw = when {
+            rel >= 1f -> (cardHeightPx + gapPx) + (rel - 1f) * (pillPx + gapPx)
+            rel >= 0f -> rel * (cardHeightPx + gapPx)
+            else -> rel * (pillPx + gapPx)
+        }
+        val c = closingIndex
+        val shift = if (c in 0 until i) closeP.value else 0f
+        val listY = i * (cardHeightPx + listGapPx) - listScroll.floatValue -
+            shift * (cardHeightPx + listGapPx)
+        return mixF(base + raw, listY, expandT.value)
+    }
+
+    fun alphaOf(i: Int): Float {
+        val rel = relOf(i)
+        val stackA = when {
+            rel < -1f -> ((rel + 2f).coerceIn(0f, 1f)) * 0.6f
+            rel < 0f -> 0.6f + 0.4f * (1f + rel)
+            rel < 1f -> 1f - rel * 0.08f
+            else -> (0.92f - (rel - 1f) * 0.23f).coerceIn(0f, 1f)
+        }
+        val fade = if (i == closingIndex) 1f - closeP.value else 1f
+        return (mixF(stackA, 1f, expandT.value) * fade).coerceIn(0f, 1f)
     }
 
     if (entries.isEmpty()) {
@@ -1769,108 +1980,137 @@ private fun SearchHistoryDeck(
     }
 
     Box(
-        modifier = modifier.pointerInput(entries.size) {
-            if (entries.size < 2) return@pointerInput
-            awaitEachGesture {
-                // The active stub consumes its own down, so pulling the stub
-                // never also starts a deck scroll.
-                val down = awaitFirstDown(requireUnconsumed = true)
-                val tracker = VelocityTracker()
-                tracker.addPosition(down.uptimeMillis, down.position)
-                var previousY = down.position.y
-                var travel = 0f
-                var dragging = false
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    tracker.addPosition(change.uptimeMillis, change.position)
-                    if (!change.pressed) break
-                    val dy = change.position.y - previousY
-                    previousY = change.position.y
-                    travel += dy
-                    if (!dragging && abs(travel) > viewConfiguration.touchSlop) {
-                        dragging = true
+        contentAlignment = Alignment.TopCenter,
+        modifier = modifier
+            .onSizeChanged { viewportPx.floatValue = it.height.toFloat() }
+            .pointerInput(entries.size) {
+                if (entries.size < 2) return@pointerInput
+                awaitEachGesture {
+                    // The active stub consumes its own down, so pulling the stub
+                    // never also starts a deck scroll.
+                    val down = awaitFirstDown(requireUnconsumed = true)
+                    val tracker = VelocityTracker()
+                    tracker.addPosition(down.uptimeMillis, down.position)
+                    var previousY = down.position.y
+                    var travel = 0f
+                    var dragging = false
+                    val listMode = expanded
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        tracker.addPosition(change.uptimeMillis, change.position)
+                        if (!change.pressed) break
+                        val dy = change.position.y - previousY
+                        previousY = change.position.y
+                        travel += dy
+                        if (!dragging && abs(travel) > viewConfiguration.touchSlop) {
+                            dragging = true
+                        }
+                        if (dragging) {
+                            snapJob?.cancel()
+                            if (listMode) {
+                                listScroll.floatValue =
+                                    (listScroll.floatValue - dy).coerceIn(0f, maxListScroll())
+                            } else {
+                                scroll.floatValue = (scroll.floatValue - dy / cardHeightPx)
+                                    .coerceIn(0f, maxIndex.toFloat())
+                            }
+                            change.consume()
+                        }
                     }
                     if (dragging) {
+                        val vy = tracker.calculateVelocity().y
                         snapJob?.cancel()
-                        val next = (scroll.floatValue - dy / cardHeightPx)
-                            .coerceIn(0f, maxIndex.toFloat())
-                        scroll.floatValue = next
-                        change.consume()
-                    }
-                }
-                if (dragging) {
-                    val vy = tracker.calculateVelocity().y
-                    val fling = if (abs(vy) > 650f) -sign(vy) else 0f
-                    val target = (scroll.floatValue.roundToInt() + fling)
-                        .coerceIn(0f, maxIndex.toFloat())
-                    snapJob?.cancel()
-                    snapJob = scope.launch {
-                        animate(
-                            initialValue = scroll.floatValue,
-                            targetValue = target,
-                            animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
-                        ) { value, _ ->
-                            scroll.floatValue = value
+                        if (listMode) {
+                            val target = (listScroll.floatValue - vy * 0.22f)
+                                .coerceIn(0f, maxListScroll())
+                            snapJob = scope.launch {
+                                animate(
+                                    initialValue = listScroll.floatValue,
+                                    targetValue = target,
+                                    animationSpec = tween(520, easing = LinearOutSlowInEasing),
+                                ) { value, _ ->
+                                    listScroll.floatValue = value
+                                }
+                            }
+                        } else {
+                            val fling = if (abs(vy) > 650f) -sign(vy) else 0f
+                            val target = (scroll.floatValue.roundToInt() + fling)
+                                .coerceIn(0f, maxIndex.toFloat())
+                            snapJob = scope.launch {
+                                animate(
+                                    initialValue = scroll.floatValue,
+                                    targetValue = target,
+                                    animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
+                                ) { value, _ ->
+                                    scroll.floatValue = value
+                                }
+                            }
                         }
                     }
                 }
-            }
-        },
+            },
     ) {
         val active = activeIndex
-        val first = (active - 1).coerceAtLeast(0)
-        val last = (active + StackVisibleBehind).coerceAtMost(entries.lastIndex)
-        for (i in first..last) {
+        for (i in range) {
             val entry = entries.getOrNull(i) ?: continue
             key(entry.query) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(HistoryPaperHeight)
                         .zIndex(
                             when {
+                                expanded -> 1000f - i
                                 i == active -> 1000f
                                 i > active -> 900f - (i - active)
                                 else -> 800f - (active - i)
                             },
                         )
+                        // Outer layer: where the paper sits and how visible it is.
                         .graphicsLayer {
-                            val rel = i - scroll.floatValue
-                            translationY =
-                                if (rel >= 0f) rel * peekPx else rel * cardHeightPx
-                            val s = if (rel >= 0f) {
-                                (1f - rel * 0.018f).coerceAtLeast(0.90f)
-                            } else {
-                                (1f + rel * 0.035f).coerceAtLeast(0.86f)
-                            }
-                            scaleX = s
-                            scaleY = s
-                            alpha = if (rel >= 0f) {
-                                (1f - rel * 0.06f).coerceAtLeast(0.62f)
-                            } else {
-                                (1f + rel * 0.9f).coerceIn(0f, 1f)
-                            }
-                            transformOrigin = TransformOrigin(0.5f, 0f)
+                            translationY = yOf(i)
+                            alpha = alphaOf(i)
                         }
                         .drawBehind {
                             softShadow(
                                 topLeft = Offset(3.dp.toPx(), 7.dp.toPx()),
-                                size = Size(
-                                    size.width - 6.dp.toPx(),
-                                    size.height,
-                                ),
+                                size = Size(size.width - 6.dp.toPx(), size.height),
                                 corner = 18.dp.toPx(),
                                 color = Color.Black,
                                 spread = 12.dp.toPx(),
-                                alpha = if (i == active) 0.80f else 0.45f,
+                                alpha = mixF(0.38f, 0.80f, eOf(i).coerceIn(0f, 1f)),
                             )
+                        }
+                        // Inner layer: trims a collapsed paper to its pill. A full-size
+                        // paper is never clipped so the torn stub can swing and fall freely.
+                        .graphicsLayer {
+                            clip = eOf(i) < 0.995f
+                            shape = PillClipShape
+                        }
+                        // The paper itself is always laid out full size; the card just
+                        // shows a slice of it (its middle line), so the query text stays
+                        // readable as a pill and nothing is ever squashed.
+                        .layout { measurable, constraints ->
+                            val fullW = constraints.maxWidth
+                            val fullH = cardHeightPx.roundToInt()
+                            val w = (fullW * wFractionOf(i)).roundToInt().coerceIn(0, fullW)
+                            val h = hOf(i).roundToInt().coerceAtLeast(0)
+                            val placeable = measurable.measure(Constraints.fixed(fullW, fullH))
+                            layout(w, h) {
+                                placeable.place((w - fullW) / 2, (h - fullH) / 2)
+                            }
                         },
                 ) {
                     SearchHistoryPaper(
                         entry = entry,
-                        interactive = i == active,
-                        onClear = { onClear(entry) },
+                        interactive = expanded || i == active,
+                        expanded = expanded,
+                        expansion = { eOf(i) },
+                        onToggle = {
+                            if (expanded) collapseDeck(i)
+                            else if (i == active) expandDeck()
+                            else focusIndex(i)
+                        },
+                        onClear = { startClose(entry) },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -1884,6 +2124,9 @@ private fun SearchHistoryDeck(
 private fun SearchHistoryPaper(
     entry: SearchHistoryEntry,
     interactive: Boolean,
+    expanded: Boolean,
+    expansion: () -> Float,
+    onToggle: () -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1891,6 +2134,10 @@ private fun SearchHistoryPaper(
     val context = LocalContext.current
     val view = LocalView.current
     val currentOnClear by rememberUpdatedState(onClear)
+    val currentOnToggle by rememberUpdatedState(onToggle)
+    val bodyTapSource = remember { MutableInteractionSource() }
+    val stubTapSource = remember { MutableInteractionSource() }
+    val hintShiftPx = with(density) { 7.dp.toPx() }
     val sim = remember { TearSim() }
     var wakeToken by remember { mutableStateOf(0) }
 
@@ -2014,6 +2261,10 @@ private fun SearchHistoryPaper(
                 .fillMaxSize()
                 .padding(end = HistoryStubWidth)
                 .clip(bodyShape)
+                .clickable(
+                    interactionSource = bodyTapSource,
+                    indication = null,
+                ) { currentOnToggle() }
                 .drawWithContent {
                     val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
                     if (tip > 0.5f) {
@@ -2048,12 +2299,18 @@ private fun SearchHistoryPaper(
                         .background(ink.copy(alpha = 0.10f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        imageVector = HistoryGlyph,
-                        contentDescription = null,
-                        tint = ink.copy(alpha = 0.75f),
-                        modifier = Modifier.size(16.dp),
-                    )
+                    Crossfade(
+                        targetState = expanded,
+                        animationSpec = tween(220),
+                        label = "expandGlyph",
+                    ) { isOpen ->
+                        Icon(
+                            imageVector = if (isOpen) CollapseGlyph else ExpandGlyph,
+                            contentDescription = if (isOpen) "Collapse history" else "Expand history",
+                            tint = ink.copy(alpha = 0.75f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -2066,15 +2323,22 @@ private fun SearchHistoryPaper(
                         letterSpacing = 0.2.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        // As a pill the query slides to the middle line.
+                        modifier = Modifier.graphicsLayer {
+                            translationY = (1f - expansion().coerceIn(0f, 1f)) * hintShiftPx
+                        },
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "Pull the stub to clear",
+                        text = if (expanded) "Tap to collapse" else "Tap to expand",
                         color = ink.copy(alpha = 0.58f),
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.graphicsLayer {
+                            alpha = expansion().coerceIn(0f, 1f)
+                        },
                     )
                 }
             }
@@ -2116,7 +2380,13 @@ private fun SearchHistoryPaper(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.graphicsLayer {
+                    val e = expansion().coerceIn(0f, 1f)
+                    alpha = e * e
+                },
+            ) {
                 Icon(
                     imageVector = TearGlyph,
                     contentDescription = null,
@@ -2138,6 +2408,19 @@ private fun SearchHistoryPaper(
         // lived on the rotating stub, Compose would feed the pointer back through
         // the rotation and the angle would chase its own tail. Only the front
         // paper owns this surface; the papers behind it are a pure visual stack.
+        if (!interactive) {
+            // A paper waiting behind the front one: tapping anywhere on it brings it forward.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(HistoryStubWidth)
+                    .clickable(
+                        interactionSource = stubTapSource,
+                        indication = null,
+                    ) { currentOnToggle() },
+            )
+        }
         if (interactive) {
             Box(
                 modifier = Modifier
