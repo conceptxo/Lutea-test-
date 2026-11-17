@@ -121,6 +121,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -539,6 +540,7 @@ fun SearchScreen() {
                 resetKey = historyRevision,
                 bottomInset = deckBottomInset,
                 onExpandedChange = { historyOverlay.expanded = it },
+                onPick = { entry -> query = entry.query },
                 onClear = { entry ->
                     history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
                     saveSearchHistory(context, history)
@@ -910,12 +912,13 @@ private fun SearchMachine(
                 modifier = Modifier
                     .weight(1f)
                     .onSizeChanged { viewportPx = it.width.toFloat() },
+                contentAlignment = Alignment.CenterStart,
             ) {
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
                         color = Color.White.copy(alpha = 0.62f),
-                        fontSize = 14.sp,
+                        fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.2.sp,
                         maxLines = 1,
@@ -946,7 +949,7 @@ private fun SearchMachine(
                     keyboardActions = KeyboardActions(onSearch = { onSearch() }),
                     textStyle = TextStyle(
                         color = Color.White,
-                        fontSize = 15.sp,
+                        fontSize = 16.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.3.sp,
                         shadow = Shadow(
@@ -1815,9 +1818,10 @@ private fun defaultVibrator(context: Context): Vibrator? =
  * The history as a card-switcher. Collapsed: the front paper is full size and
  * the others are slim pills peeking below (and above, once you have moved on).
  * Dragging or tapping a pill springs it forward while the old front paper
- * shrinks into a pill. Tapping the front paper (or its expand icon) opens every
- * search as a full ticket in a scrollable list; tapping again folds it back.
- * Only a full-size paper can be torn; the rest of the list closes the gap.
+ * shrinks into a pill. Tapping a paper reuses its query; tapping its expand
+ * icon opens every search as a full ticket in a scrollable list, and tapping
+ * the icon again folds it back. Only a full-size paper can be torn; the rest
+ * of the list closes the gap.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -1826,12 +1830,14 @@ private fun SearchHistoryDeck(
     resetKey: Int,
     bottomInset: Dp,
     onExpandedChange: (Boolean) -> Unit,
+    onPick: (SearchHistoryEntry) -> Unit,
     onClear: (SearchHistoryEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val currentOnExpandedChange by rememberUpdatedState(onExpandedChange)
+    val currentOnPick by rememberUpdatedState(onPick)
     // Plain float states, not Animatables: the drag loop runs inside Compose's
     // restricted pointer scope. Springs on release are driven from `scope`.
     val scroll = remember { mutableFloatStateOf(0f) }       // stack position, in cards
@@ -1939,10 +1945,12 @@ private fun SearchHistoryDeck(
         }
     }
 
-    fun expandDeck() {
+    fun expandDeckAt(index: Int) {
         snapJob?.cancel()
+        val target = index.coerceIn(0, maxIndex)
+        scroll.floatValue = target.toFloat()
         val step = cardHeightPx + listGapPx
-        listScroll.floatValue = (activeIndex * step).coerceIn(0f, maxListScroll())
+        listScroll.floatValue = (target * step).coerceIn(0f, maxListScroll())
         settleExpand(true)
     }
 
@@ -2171,10 +2179,13 @@ private fun SearchHistoryDeck(
                         interactive = expanded || i == active,
                         expanded = expanded,
                         expansion = { eOf(i) },
+                        onPick = {
+                            if (!expanded && i != active) focusIndex(i)
+                            currentOnPick(entry)
+                        },
                         onToggle = {
                             if (expanded) collapseDeck(i)
-                            else if (i == active) expandDeck()
-                            else focusIndex(i)
+                            else expandDeckAt(i)
                         },
                         onClear = { startClose(entry) },
                         modifier = Modifier.fillMaxSize(),
@@ -2192,6 +2203,7 @@ private fun SearchHistoryPaper(
     interactive: Boolean,
     expanded: Boolean,
     expansion: () -> Float,
+    onPick: () -> Unit,
     onToggle: () -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
@@ -2200,10 +2212,11 @@ private fun SearchHistoryPaper(
     val context = LocalContext.current
     val view = LocalView.current
     val currentOnClear by rememberUpdatedState(onClear)
+    val currentOnPick by rememberUpdatedState(onPick)
     val currentOnToggle by rememberUpdatedState(onToggle)
     val bodyTapSource = remember { MutableInteractionSource() }
+    val expandTapSource = remember { MutableInteractionSource() }
     val stubTapSource = remember { MutableInteractionSource() }
-    val hintShiftPx = with(density) { 7.dp.toPx() }
     val sim = remember { TearSim() }
     var wakeToken by remember { mutableStateOf(0) }
 
@@ -2330,7 +2343,7 @@ private fun SearchHistoryPaper(
                 .clickable(
                     interactionSource = bodyTapSource,
                     indication = null,
-                ) { currentOnToggle() }
+                ) { currentOnPick() }
                 .drawWithContent {
                     val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
                     if (tip > 0.5f) {
@@ -2368,7 +2381,11 @@ private fun SearchHistoryPaper(
                             layout(side, side) { placeable.place(0, 0) }
                         }
                         .clip(CircleShape)
-                        .background(ink.copy(alpha = 0.10f)),
+                        .background(ink.copy(alpha = 0.10f))
+                        .clickable(
+                            interactionSource = expandTapSource,
+                            indication = null,
+                        ) { currentOnToggle() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Crossfade(
@@ -2385,32 +2402,40 @@ private fun SearchHistoryPaper(
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                ) {
                     Text(
                         text = entry.query,
                         color = ink,
-                        fontSize = 14.sp,
+                        fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.2.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        // As a pill the query slides to the middle line.
-                        modifier = Modifier.graphicsLayer {
-                            translationY = (1f - expansion().coerceIn(0f, 1f)) * hintShiftPx
-                        },
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .fillMaxWidth(),
                     )
-                    Spacer(Modifier.height(2.dp))
                     Text(
-                        text = if (expanded) "Tap to collapse" else "Tap to expand",
+                        text = "Wanna play again?",
                         color = ink.copy(alpha = 0.58f),
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.graphicsLayer {
-                            alpha = expansion().coerceIn(0f, 1f)
-                        },
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(bottom = 7.dp)
+                            .graphicsLayer {
+                                alpha = expansion().coerceIn(0f, 1f)
+                            },
                     )
                 }
             }

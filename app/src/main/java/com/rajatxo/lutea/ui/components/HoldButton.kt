@@ -182,12 +182,11 @@ fun HoldButton(
         )
     }
 
-    val contentColor = Color(0xFFF5F5F5)
-    val fillContentColor = Color(0xFF170303)
+    val contentColor = Color.White
     val fillBrush = Brush.verticalGradient(
-        0f to Color(0xFFFF8A80),
-        0.45f to Color(0xFFFF5252),
-        1f to Color(0xFFE53935),
+        0f to Color(0xFFFF6B6B),
+        0.48f to Color(0xFFE53935),
+        1f to Color(0xFFB71C1C),
     )
     val currentText = when (state) {
         HoldState.Idle -> label
@@ -254,8 +253,8 @@ fun HoldButton(
             HoldContent(text = currentText, success = isSuccess, color = contentColor)
         }
 
-        // Red fill + knockout label in one full-size layer. Both are clipped to
-        // the same left-to-right reveal, so the text itself never moves.
+        // Red fill + white label in one full-size layer. Both are clipped to the
+        // same left-to-right reveal, so the text itself never moves.
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -277,7 +276,7 @@ fun HoldButton(
                 HoldContent(
                     text = currentText,
                     success = isSuccess,
-                    color = fillContentColor,
+                    color = contentColor,
                 )
             }
         }
@@ -306,7 +305,7 @@ private fun HoldContent(
         Text(
             text = text,
             color = color,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             letterSpacing = 0.6.sp,
