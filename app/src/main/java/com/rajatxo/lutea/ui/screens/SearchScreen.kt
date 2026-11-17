@@ -610,6 +610,13 @@ private fun SearchResults(
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
+        JellyfishBackdrop(
+            searching = query.isNotBlank(),
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds(),
+        )
+
         if (query.isNotBlank()) {
             val listState = rememberLazyListState()
             LaunchedEffect(query) {
