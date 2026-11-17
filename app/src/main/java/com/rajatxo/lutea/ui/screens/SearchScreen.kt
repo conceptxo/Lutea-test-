@@ -16,9 +16,15 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -57,6 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -393,7 +400,7 @@ fun SearchScreen() {
     val searchStyle = searchStyleState.style
     val typingSoundEnabled = searchStyleState.typingSoundEnabled
     val statusFadeHeight = with(LocalDensity.current) {
-        WindowInsets.statusBars.getTop(this).toDp() + 4.dp
+        WindowInsets.statusBars.getTop(this).toDp() + 30.dp
     }
 
     // The real library, scanned once off the main thread. Results are just the
@@ -598,17 +605,26 @@ fun SearchScreen() {
             )
         }
 
-        // Short black fade under the system status bar. It sits above the
-        // page, but only inside the status-bar band, so content below is clear.
+        // Eased black fade under the system status bar. It extends a little
+        // below the bar so the jelly and scrolling songs pass under it without
+        // a hard horizontal edge.
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .height(statusFadeHeight)
                 .background(
+                    // Long, eased falloff: the status-bar edge blends into
+                    // the jelly instead of forming a visible horizontal band.
                     Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.94f),
-                        0.62f to Color.Black.copy(alpha = 0.58f),
+                        0f to Color.Black.copy(alpha = 0.96f),
+                        0.16f to Color.Black.copy(alpha = 0.93f),
+                        0.32f to Color.Black.copy(alpha = 0.82f),
+                        0.46f to Color.Black.copy(alpha = 0.64f),
+                        0.60f to Color.Black.copy(alpha = 0.44f),
+                        0.72f to Color.Black.copy(alpha = 0.27f),
+                        0.82f to Color.Black.copy(alpha = 0.14f),
+                        0.91f to Color.Black.copy(alpha = 0.05f),
                         1f to Color.Transparent,
                     ),
                 ),
@@ -711,35 +727,7 @@ private fun JellySongList(
         if (songs.isNotEmpty()) listState.scrollToItem(0)
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .statusBarsPadding(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "SONGS",
-                color = Color.White.copy(alpha = 0.36f),
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 1.8.sp,
-            )
-            Spacer(Modifier.weight(1f))
-            if (songs.isNotEmpty()) {
-                Text(
-                    text = songs.size.toString(),
-                    color = Color.White.copy(alpha = 0.28f),
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                )
-            }
-        }
-
+    Box(modifier = modifier.fillMaxSize()) {
         if (songs.isEmpty()) {
             if (loaded) {
                 Text(
@@ -747,15 +735,54 @@ private fun JellySongList(
                     color = Color.White.copy(alpha = 0.38f),
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(start = 20.dp, top = 18.dp),
+                    modifier = Modifier
+                        .statusBarsPadding()
+                        .padding(start = 20.dp, top = 18.dp),
                 )
             }
         } else {
+            // One clock drives every divider glint. Reading it inside the
+            // Canvas keeps the shimmer in the draw phase, not recomposition.
+            val shimmer = rememberInfiniteTransition(label = "jellyDividerShimmer")
+                .animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = keyframes {
+                            durationMillis = 3600
+                            0f at 0
+                            0f at 1800
+                            1f at 3200 using LinearEasing
+                            1f at 3600
+                        },
+                        repeatMode = RepeatMode.Restart,
+                    ),
+                    label = "jellyDividerShimmerPhase",
+                )
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
+                    .fillMaxSize()
+                    // The list reaches the very top of the results area, so
+                    // songs slide under the status-bar fade instead of starting
+                    // below a permanent "SONGS" header. The bottom mask uses
+                    // the same 0.78 → 1.00 cadence as JellyfishBackdrop, so both
+                    // the jelly and the songs dissolve at the same line.
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to Color.Black,
+                                0.78f to Color.Black,
+                                1f to Color.Transparent,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    },
                 contentPadding = PaddingValues(
                     start = 8.dp,
                     end = 8.dp,
@@ -769,17 +796,46 @@ private fun JellySongList(
                         onClick = { onPlay(song) },
                     )
                     if (index != songs.lastIndex) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 70.dp, end = 10.dp)
-                                .height(0.5.dp)
-                                .background(Color.White.copy(alpha = 0.20f)),
-                        )
+                        GlassDivider(shimmer)
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun GlassDivider(shimmer: State<Float>) {
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 70.dp, end = 10.dp)
+            .height(1.dp),
+    ) {
+        // A bright top edge with a soft lower reflection reads as glass.
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.42f),
+                0.35f to Color.White.copy(alpha = 0.16f),
+                0.70f to Color.White.copy(alpha = 0.07f),
+                1f to Color.White.copy(alpha = 0.20f),
+            ),
+        )
+
+        // Slow diagonal-style glint, matching the nav text's travelling light.
+        val band = size.width * 0.30f
+        val head = -band + (size.width + band * 2f) * shimmer.value
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0f to Color.Transparent,
+                0.28f to Color.White.copy(alpha = 0.06f),
+                0.50f to Color.White.copy(alpha = 0.58f),
+                0.72f to Color.White.copy(alpha = 0.06f),
+                1f to Color.Transparent,
+                startX = head,
+                endX = head + band,
+            ),
+        )
     }
 }
 
