@@ -11,26 +11,18 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.HapticFeedbackConstants
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -60,6 +52,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -141,7 +134,7 @@ import coil3.compose.AsyncImage
 import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
-import com.rajatxo.lutea.ui.util.consistentNavBottomPadding
+import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -304,28 +297,6 @@ private val CollapseGlyph: ImageVector = ImageVector.Builder(
     }
 }.build()
 
-/** Small cross inside the Clear All capsule. */
-private val CrossGlyph: ImageVector = ImageVector.Builder(
-    name = "Cross",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        fill = null,
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2.2f,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-    ) {
-        moveTo(18f, 6f)
-        lineTo(6f, 18f)
-        moveTo(6f, 6f)
-        lineTo(18f, 18f)
-    }
-}.build()
-
 /** The little curved arrow printed on the stub: "pull me off". */
 private val TearGlyph: ImageVector = ImageVector.Builder(
     name = "Tear",
@@ -409,7 +380,7 @@ fun SearchScreen() {
     val history = remember { mutableStateListOf<SearchHistoryEntry>() }
     val scope = rememberCoroutineScope()
     var historyRevision by remember { mutableStateOf(0) }
-    var historyExpanded by remember { mutableStateOf(false) }
+    val historyOverlay = LocalSearchHistoryOverlay.current
 
     // The real library, scanned once off the main thread. Results are just the
     // songs whose title, artist or album matches what is typed above the machine.
@@ -423,16 +394,6 @@ fun SearchScreen() {
     }
     val nowPlaying by PlaybackConnection.currentSong.collectAsState()
     val results = remember(query, library) { searchLibrary(library, query) }
-
-    // The Clear All capsule sits above the nav, and lifts with the mini player
-    // the same way the nav does. MiniPlayer is 56dp tall and sits 56dp above
-    // the nav inset; the 8dp gap matches the gap between nav and mini player.
-    val navBottom = consistentNavBottomPadding()
-    val clearAllBottom by animateDpAsState(
-        targetValue = navBottom + if (nowPlaying != null) 120.dp else 56.dp,
-        animationSpec = tween(320, easing = FastOutSlowInEasing),
-        label = "clearAllBottom",
-    )
 
     // Searches live between launches. A fresh install is seeded with a few papers
     // so the tear-off stack has something to show before real results are wired.
@@ -485,8 +446,18 @@ fun SearchScreen() {
     fun clearAllHistory() {
         history.clear()
         saveSearchHistory(context, history)
-        historyExpanded = false
+        historyOverlay.expanded = false
         historyRevision++
+    }
+
+    // The glass button itself lives in LuteaScaffold, on the other side of the
+    // layerBackdrop boundary. SearchScreen publishes the real action here.
+    DisposableEffect(historyOverlay) {
+        historyOverlay.onClearAll = { clearAllHistory() }
+        onDispose {
+            historyOverlay.onClearAll = null
+            historyOverlay.expanded = false
+        }
     }
 
     Box(
@@ -567,7 +538,7 @@ fun SearchScreen() {
                 entries = history,
                 resetKey = historyRevision,
                 bottomInset = deckBottomInset,
-                onExpandedChange = { historyExpanded = it },
+                onExpandedChange = { historyOverlay.expanded = it },
                 onClear = { entry ->
                     history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
                     saveSearchHistory(context, history)
@@ -600,97 +571,6 @@ fun SearchScreen() {
             )
         }
 
-        AnimatedVisibility(
-            visible = historyExpanded && history.isNotEmpty(),
-            enter = fadeIn(animationSpec = tween(180)) +
-                scaleIn(initialScale = 0.92f, animationSpec = tween(220)) +
-                slideInVertically(
-                    initialOffsetY = { it / 3 },
-                    animationSpec = tween(260),
-                ),
-            exit = fadeOut(animationSpec = tween(140)) +
-                scaleOut(targetScale = 0.94f, animationSpec = tween(160)),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = clearAllBottom),
-        ) {
-            ClearAllCapsule(onClick = { clearAllHistory() })
-        }
-    }
-}
-
-/** Small frosted capsule shown while the history list is expanded. */
-@Composable
-private fun ClearAllCapsule(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(percent = 50)
-    val interaction = remember { MutableInteractionSource() }
-
-    Row(
-        modifier = modifier
-            .height(38.dp)
-            .drawBehind {
-                softShadow(
-                    topLeft = Offset(0f, 3.dp.toPx()),
-                    size = Size(size.width, size.height),
-                    corner = size.height / 2f,
-                    color = Color.Black,
-                    spread = 14.dp.toPx(),
-                    alpha = 0.62f,
-                    steps = 10,
-                )
-            }
-            .clip(shape)
-            .background(
-                brush = Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.22f),
-                    0.42f to Color.White.copy(alpha = 0.11f),
-                    1f to Color(0xFF0F0F0F).copy(alpha = 0.34f),
-                ),
-                shape = shape,
-            )
-            .border(
-                width = 1.dp,
-                brush = Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.55f),
-                    0.55f to Color.White.copy(alpha = 0.16f),
-                    1f to Color.White.copy(alpha = 0.08f),
-                ),
-                shape = shape,
-            )
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick,
-            )
-            .padding(start = 16.dp, end = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "Clear All",
-            color = Color.White.copy(alpha = 0.94f),
-            fontSize = 12.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 0.7.sp,
-        )
-        Spacer(Modifier.width(9.dp))
-        Box(
-            modifier = Modifier
-                .size(18.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = CrossGlyph,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.90f),
-                modifier = Modifier.size(9.dp),
-            )
-        }
     }
 }
 

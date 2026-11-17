@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -38,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,6 +82,7 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.R
+import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.icons.LuteaIcons
 import com.rajatxo.lutea.ui.util.LuteaTab
@@ -156,6 +159,16 @@ fun LuteaScaffold(
     val searchOpenState = remember { mutableStateOf(false) }
     var playerVisible by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    val searchHistoryOverlay = remember { SearchHistoryOverlayState() }
+    val currentSong by PlaybackConnection.currentSong.collectAsState()
+
+    // Clear All sits above the nav (48dp + 8dp gap). When the mini player is
+    // visible it lifts another 64dp to stay 8dp above the mini player.
+    val clearAllBottom by animateDpAsState(
+        targetValue = effBottomDp + if (currentSong != null && !imeOpen) 120.dp else 56.dp,
+        animationSpec = tween(320, easing = FastOutSlowInEasing),
+        label = "searchClearAllBottom",
+    )
 
     CompositionLocalProvider(
         LocalLuteaWindowInsets provides insets,
@@ -164,7 +177,8 @@ fun LuteaScaffold(
             searchOpenState.value = true
             menuOpen = false
         },
-        LocalSearchOpen provides searchOpenState
+        LocalSearchOpen provides searchOpenState,
+        LocalSearchHistoryOverlay provides searchHistoryOverlay,
     ) {
         // ★ Law 7: BoxWithConstraints at root (NEVER screenHeightDp).
         //    Works in multi-window, split-screen, floating windows, foldables.
@@ -597,6 +611,22 @@ fun LuteaScaffold(
                     activeTab = activeTab,
                     onTabSelected = onTabSelected,
                     backdrop = glassBackdrop,
+                )
+            }
+
+            // ★ Hold-to-clear history — a sibling of the layerBackdrop, never a
+            //    child. SearchScreen publishes its expanded state + real clear
+            //    action through LocalSearchHistoryOverlay.
+            if (activeTab == LuteaTab.Search) {
+                SearchClearAllOverlay(
+                    visible = searchHistoryOverlay.expanded &&
+                        !playerVisible &&
+                        !showLyrics,
+                    backdrop = glassBackdrop,
+                    onClearAll = { searchHistoryOverlay.clearAll() },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = clearAllBottom),
                 )
             }
 
