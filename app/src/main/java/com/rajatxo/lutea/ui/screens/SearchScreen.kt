@@ -552,9 +552,6 @@ fun SearchScreen() {
             )
 
             // Same black the page gradient already has here → no colour seam.
-            // The top edge is a soft ramp: the black starts transparent at the
-            // machine's edge, grows through the first few dp, then holds solid
-            // behind the top paper before fading out toward the bottom.
             // Drawn after the deck, so papers always slide in behind it.
             Box(
                 modifier = Modifier
@@ -563,20 +560,15 @@ fun SearchScreen() {
                     .height(fadeHeight)
                     .background(
                         Brush.verticalGradient(
-                            0.00f to Color.Transparent,
-                            0.08f to Color.Black.copy(alpha = 0.08f),
-                            0.16f to Color.Black.copy(alpha = 0.28f),
-                            0.24f to Color.Black.copy(alpha = 0.58f),
-                            0.32f to Color.Black.copy(alpha = 0.84f),
-                            0.40f to Color.Black.copy(alpha = 0.97f),
-                            0.46f to Color.Black,
-                            0.54f to Color.Black.copy(alpha = 0.72f),
-                            0.62f to Color.Black.copy(alpha = 0.54f),
-                            0.70f to Color.Black.copy(alpha = 0.36f),
-                            0.78f to Color.Black.copy(alpha = 0.22f),
-                            0.86f to Color.Black.copy(alpha = 0.09f),
-                            0.94f to Color.Black.copy(alpha = 0.02f),
-                            1.00f to Color.Transparent,
+                            0f to Color.Black,
+                            0.18f to Color.Black,
+                            0.30f to Color.Black.copy(alpha = 0.88f),
+                            0.42f to Color.Black.copy(alpha = 0.72f),
+                            0.54f to Color.Black.copy(alpha = 0.54f),
+                            0.66f to Color.Black.copy(alpha = 0.36f),
+                            0.77f to Color.Black.copy(alpha = 0.20f),
+                            0.88f to Color.Black.copy(alpha = 0.07f),
+                            1f to Color.Transparent,
                         ),
                     ),
             )
