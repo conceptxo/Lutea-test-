@@ -599,6 +599,47 @@ fun LuteaScaffold(
             // ★ Mini player — above the nav bar. Only visible when a song is playing.
             //    Slide-up animation when a song starts, slide-down when stopped.
             //    Tapping the mini player expands to the full player.
+            //    Width matches the nav bar (4 tabs + gaps) so the two align exactly.
+            val navMetrics = fluidNavMetrics(
+                maxWidth = maxWidth,
+                maxHeight = maxHeight,
+                tabCount = LuteaTab.entries.size,
+                fontScale = density.fontScale,
+            )
+            val navMatchedWidth = navMetrics.navBarWidthFor(LuteaTab.entries.size)
+
+            // ★ Black fade at the very bottom edge — pure black at the screen's
+            //    bottom edge, fading UP to transparent, stopping just before the
+            //    miniplayer's bottom edge. The nav bar sits in this region (drawn
+            //    on top of the fade) so the nav glyphs stay readable. Restored
+            //    from a previous build that another session removed. Hidden while
+            //    the keyboard is open (the miniplayer is hidden then anyway).
+            //    This is SEPARATE from the nav's own scrim: that one darkens the
+            //    nav area for legibility; this one is a softer ambient fade that
+            //    grounds the bottom of the screen. Drawn BEFORE the miniplayer so
+            //    the miniplayer's glass paints on top of it.
+            val bottomFadeHeightDp = effBottomDp + 56.dp
+            if (!imeOpen) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(bottomFadeHeightDp)
+                        .background(
+                            brush = Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0.00f to Color.Transparent,
+                                    0.45f to Color.Transparent,
+                                    0.65f to Color.Black.copy(alpha = 0.15f),
+                                    0.80f to Color.Black.copy(alpha = 0.45f),
+                                    0.92f to Color.Black.copy(alpha = 0.80f),
+                                    1.00f to Color.Black,
+                                )
+                            )
+                        )
+                )
+            }
+
             com.rajatxo.lutea.ui.player.MiniPlayer(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -606,6 +647,7 @@ fun LuteaScaffold(
                 onExpand = { playerVisible = true },
                 hidden = imeOpen,
                 backdrop = glassBackdrop,
+                navMatchedWidth = navMatchedWidth,
             )
 
             // Bottom: nav capsule (fluid 3-circle expanding nav). Centered at

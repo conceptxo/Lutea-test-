@@ -244,7 +244,7 @@ fun LuteaTabCapsule(
 
 /** Every size the bar needs, derived once from the space the caller gives us. */
 @Immutable
-private class FluidNavMetrics(
+class FluidNavMetrics(
     val diameter: Dp,
     val itemGap: Dp,
     val iconSize: Dp,
@@ -254,7 +254,34 @@ private class FluidNavMetrics(
     val labelSize: TextUnit,
 )
 
-private fun fluidNavMetrics(
+/** Total outer width of the nav bar (all tabs + gaps, including the active pill). */
+val FluidNavMetrics.totalNavWidth: Dp
+    get() {
+        // active pill: startPadding + iconSize + iconLabelGap + maxLabelWidth + endPadding
+        val startPad = (diameter - iconSize) / 2f
+        val activePillWidth = startPad + iconSize + iconLabelGap + maxLabelWidth + endPadding
+        // The other tabs (circles) each take `diameter`, and there's a gap between every pair.
+        // For tabCount tabs: total = activePillWidth + (tabCount-1) * diameter + (tabCount-1) * itemGap
+        // but activePillWidth already accounts for one tab, so for tabCount=4:
+        //   width = activePillWidth + 3 * diameter + 3 * itemGap
+        // We can't know tabCount here, so callers add the circle widths themselves.
+        // This property returns the active-pill contribution; see [navBarWidthFor].
+        return activePillWidth
+    }
+
+/**
+ * Total width of the nav bar for [tabCount] tabs, given these metrics.
+ * Includes the active pill (wider) plus (tabCount-1) circles and gaps.
+ */
+fun FluidNavMetrics.navBarWidthFor(tabCount: Int): Dp {
+    val startPad = (diameter - iconSize) / 2f
+    val activePillWidth = startPad + iconSize + iconLabelGap + maxLabelWidth + endPadding
+    val circles = (tabCount - 1).coerceAtLeast(0) * diameter
+    val gaps = (tabCount - 1).coerceAtLeast(0) * itemGap
+    return activePillWidth + circles + gaps
+}
+
+fun fluidNavMetrics(
     maxWidth: Dp,
     maxHeight: Dp,
     tabCount: Int,

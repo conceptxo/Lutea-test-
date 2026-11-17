@@ -22,6 +22,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -49,11 +50,18 @@ fun MiniPlayer(
     onExpand: () -> Unit = {},
     hidden: Boolean = false,
     backdrop: LayerBackdrop? = null,
+    // Total width to match the nav bar (4 tabs + gaps). When null, falls back
+    // to fillMaxWidth with 16dp side padding (the old behaviour).
+    navMatchedWidth: Dp? = null,
 ) {
     val currentSong by PlaybackConnection.currentSong.collectAsState()
     val isPlaying by PlaybackConnection.isPlaying.collectAsState()
 
     val capsuleShape = RoundedCornerShape(percent = 50)
+    // Glass tuned to match the nav bar's frosted look but with a bit more
+    // white so the blur reads (the nav bar is barely visible because it has
+    // too much white; here we add a measured amount — a 0.16 white tint +
+    // a soft top sheen — so the blur is still legible without going chalky).
     val glassSurface = if (backdrop != null) {
         Modifier.drawBackdrop(
             backdrop = backdrop,
@@ -61,18 +69,21 @@ fun MiniPlayer(
             effects = {
                 vibrancy()
                 colorControls(
-                    brightness = 0.03f,
+                    brightness = 0.05f,
                     contrast = 1f,
                     saturation = 1.35f,
                 )
-                blur(16.dp.toPx())
+                blur(18.dp.toPx())
             },
             onDrawSurface = {
-                drawRect(Color.Black.copy(alpha = 0.42f))
+                // Slightly darker base than the nav so the album art pops,
+                // plus a touch more white so the glass is visible.
+                drawRect(Color.Black.copy(alpha = 0.36f))
+                drawRect(Color.White.copy(alpha = 0.16f))
                 drawRect(
                     brush = Brush.verticalGradient(
-                        0f to Color.White.copy(alpha = 0.13f),
-                        0.45f to Color.White.copy(alpha = 0.025f),
+                        0f to Color.White.copy(alpha = 0.22f),
+                        0.45f to Color.White.copy(alpha = 0.06f),
                         1f to Color.Transparent,
                     )
                 )
@@ -96,9 +107,20 @@ fun MiniPlayer(
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .height(56.dp)
+                // Match the nav bar's full outer width (4 tabs + gaps) when
+                // provided; otherwise fall back to fillMaxWidth + 16dp pad.
+                .then(
+                    if (navMatchedWidth != null) {
+                        Modifier
+                            .width(navMatchedWidth)
+                            .height(56.dp)
+                    } else {
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .height(56.dp)
+                    }
+                )
                 .shadow(elevation = 8.dp, shape = capsuleShape, clip = true)
                 .clip(capsuleShape)
                 .then(glassSurface)
