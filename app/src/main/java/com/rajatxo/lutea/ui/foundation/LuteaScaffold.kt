@@ -244,19 +244,28 @@ fun LuteaScaffold(
                 )
             }
 
-            // Black fade gradient at the very bottom — ALWAYS visible (permanent).
-            // Layer order: content → this gradient → menu/nav (on top of everything).
-            // Fades from transparent (above the nav bar) to black (very bottom).
+            // Black scrim behind the nav. It starts completely transparent at
+            // the mini-player's bottom edge, darkens gradually, and reaches pure
+            // black at the very bottom of the screen. This keeps the nav readable
+            // without putting a hard edge under the glass capsule.
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(effBottomDp)
+                    .height(effBottomDp + 56.dp)
                     .background(
                         brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black,
+                            colorStops = arrayOf(
+                                0.00f to Color.Transparent,
+                                0.08f to Color.Black.copy(alpha = 0.06f),
+                                0.18f to Color.Black.copy(alpha = 0.18f),
+                                0.30f to Color.Black.copy(alpha = 0.42f),
+                                0.42f to Color.Black.copy(alpha = 0.64f),
+                                0.54f to Color.Black.copy(alpha = 0.80f),
+                                0.66f to Color.Black.copy(alpha = 0.91f),
+                                0.78f to Color.Black.copy(alpha = 0.97f),
+                                0.90f to Color.Black.copy(alpha = 0.995f),
+                                1.00f to Color.Black,
                             )
                         )
                     )
@@ -589,6 +598,7 @@ fun LuteaScaffold(
                     .padding(bottom = effBottomDp + 56.dp),
                 onExpand = { playerVisible = true },
                 hidden = imeOpen,
+                backdrop = glassBackdrop,
             )
 
             // Bottom: nav capsule (fluid 3-circle expanding nav). Centered at
