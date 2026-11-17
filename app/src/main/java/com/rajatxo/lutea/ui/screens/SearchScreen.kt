@@ -15,6 +15,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -122,6 +123,7 @@ import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1730,25 +1732,35 @@ private fun SearchHistoryDeck(
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val scroll = remember { Animatable(0f) }
+    // A plain float state, not an Animatable: the drag loop runs inside
+    // Compose's restricted pointer scope, where arbitrary suspend calls are
+    // forbidden. The spring on release is driven from `scope` instead.
+    val scroll = remember { mutableFloatStateOf(0f) }
+    var snapJob by remember { mutableStateOf<Job?>(null) }
     val cardHeightPx = with(density) { HistoryPaperHeight.toPx() }
     val peekPx = with(density) { StackPeek.toPx() }
     val maxIndex = entries.lastIndex.coerceAtLeast(0)
 
     val activeIndex by remember {
         derivedStateOf {
-            scroll.value.roundToInt()
+            scroll.floatValue.roundToInt()
                 .coerceIn(0, entries.lastIndex.coerceAtLeast(0))
         }
     }
 
     // Every new search puts its paper on top of the deck.
-    LaunchedEffect(resetKey) { scroll.snapTo(0f) }
+    LaunchedEffect(resetKey) {
+        snapJob?.cancel()
+        scroll.floatValue = 0f
+    }
 
     // A torn paper shortens the stack; never leave the deck pointing past it.
     LaunchedEffect(entries.size) {
         val max = entries.lastIndex.coerceAtLeast(0).toFloat()
-        if (scroll.value > max) scroll.snapTo(max)
+        if (scroll.floatValue > max) {
+            snapJob?.cancel()
+            scroll.floatValue = max
+        }
     }
 
     if (entries.isEmpty()) {
@@ -1780,22 +1792,27 @@ private fun SearchHistoryDeck(
                         dragging = true
                     }
                     if (dragging) {
-                        val next = (scroll.value - dy / cardHeightPx)
+                        snapJob?.cancel()
+                        val next = (scroll.floatValue - dy / cardHeightPx)
                             .coerceIn(0f, maxIndex.toFloat())
-                        if (next != scroll.value) scroll.snapTo(next)
+                        scroll.floatValue = next
                         change.consume()
                     }
                 }
                 if (dragging) {
                     val vy = tracker.calculateVelocity().y
-                    val fling = if (abs(vy) > 650f) -sign(vy) else 0
-                    val target = (scroll.value.roundToInt() + fling)
+                    val fling = if (abs(vy) > 650f) -sign(vy) else 0f
+                    val target = (scroll.floatValue.roundToInt() + fling)
                         .coerceIn(0f, maxIndex.toFloat())
-                    scope.launch {
-                        scroll.animateTo(
-                            target,
-                            spring(dampingRatio = 0.84f, stiffness = 420f),
-                        )
+                    snapJob?.cancel()
+                    snapJob = scope.launch {
+                        animate(
+                            initialValue = scroll.floatValue,
+                            targetValue = target,
+                            animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
+                        ) { value, _ ->
+                            scroll.floatValue = value
+                        }
                     }
                 }
             }
@@ -1819,7 +1836,7 @@ private fun SearchHistoryDeck(
                             },
                         )
                         .graphicsLayer {
-                            val rel = i - scroll.value
+                            val rel = i - scroll.floatValue
                             translationY =
                                 if (rel >= 0f) rel * peekPx else rel * cardHeightPx
                             val s = if (rel >= 0f) {
