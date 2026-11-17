@@ -1,7 +1,11 @@
 package com.rajatxo.lutea.ui.screens
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color as AndroidColor
 import android.graphics.RuntimeShader
+import android.net.Uri
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -20,7 +24,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -48,11 +51,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -70,6 +76,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.ShaderBrush
@@ -77,8 +84,10 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -88,6 +97,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -106,6 +116,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.palette.graphics.Palette
 import coil3.compose.AsyncImage
 import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
@@ -115,12 +126,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.sign
 import kotlin.math.sin
+import kotlin.random.Random
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SEARCH PAGE — a bare search line and the typewriter under it.
@@ -323,8 +339,8 @@ fun SearchScreen() {
     var query by remember { mutableStateOf("") }
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val history = remember { mutableStateListOf<String>() }
-    val historyList = rememberLazyListState()
+    val history = remember { mutableStateListOf<SearchHistoryEntry>() }
+    val scope = rememberCoroutineScope()
     var historyRevision by remember { mutableStateOf(0) }
 
     // The real library, scanned once off the main thread. Results are just the
@@ -342,31 +358,49 @@ fun SearchScreen() {
 
     // Searches live between launches. A fresh install is seeded with a few papers
     // so the tear-off stack has something to show before real results are wired.
+    // Older string-only entries are given a stable colour and rewritten as objects.
     LaunchedEffect(Unit) {
         val saved = loadSearchHistory(context)
         if (saved == null) {
-            history.addAll(DemoSearchHistory)
-            saveSearchHistory(context, history)
+            history.addAll(
+                DemoSearchHistory.map { SearchHistoryEntry(it, stablePaperColor(it)) },
+            )
         } else {
             history.addAll(saved)
         }
+        saveSearchHistory(context, history)
     }
 
-    // A search inserts at index 0. With keyed items a lazy list keeps the old
-    // first row anchored, which parks the new paper above the viewport (behind
-    // the fade). Pin the list to the newest row after every search.
-    LaunchedEffect(historyRevision) {
-        if (historyRevision > 0 && history.isNotEmpty()) historyList.scrollToItem(0)
-    }
-
-    fun addToHistory(raw: String) {
-        val entry = raw.trim()
-        if (entry.isEmpty()) return
-        history.removeAll { it.equals(entry, ignoreCase = true) }
-        history.add(0, entry)
+    fun addToHistory(entry: String, color: Int) {
+        history.removeAll { it.query.equals(entry, ignoreCase = true) }
+        history.add(0, SearchHistoryEntry(entry, color))
         while (history.size > 30) history.removeAt(history.lastIndex)
         saveSearchHistory(context, history)
         historyRevision++
+    }
+
+    /**
+     * Work out the paper's colour before it is placed on the stack. A tapped
+     * song always carries its album colour; a submitted query takes the colour
+     * of its best match (a direct title, artist or album search all match), and
+     * a query with no match gets a random paper colour.
+     */
+    fun submitSearch(raw: String, song: Song? = null) {
+        val entry = raw.trim()
+        if (entry.isEmpty()) return
+        val previousColor = history.firstOrNull {
+            it.query.equals(entry, ignoreCase = true)
+        }?.color
+        scope.launch {
+            val source = song ?: results.firstOrNull()
+            val albumRgb = withContext(Dispatchers.IO) {
+                source?.albumArtUri?.let { uri -> dominantArtColor(context, uri) }
+            }
+            val color = albumRgb?.let { rgb -> paperColorFromSwatch(rgb) }
+                ?: previousColor
+                ?: randomPaperColor()
+            addToHistory(entry, color)
+        }
     }
 
     Box(
@@ -398,7 +432,7 @@ fun SearchScreen() {
                 loaded = libraryReady,
                 nowPlayingId = nowPlaying?.id,
                 onPlay = { song ->
-                    addToHistory(query)
+                    submitSearch(query, song)
                     PlaybackConnection.playSong(song, results)
                     keyboard?.hide()
                 },
@@ -410,41 +444,31 @@ fun SearchScreen() {
             SearchMachine(
                 query = query,
                 onQueryChange = { query = it },
-                onSearch = { addToHistory(query) },
+                onSearch = { submitSearch(query) },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
 
-        // Search history: one tear-off paper per past search, below the machine.
-        // It scrolls independently; papers dissolve into black before they reach
-        // the rail, so nothing ever looks cut off or coloured differently.
+        // Search history: a stack of tear-off papers below the machine. The
+        // newest paper is on top; dragging up lifts it away and brings the next
+        // one forward. Papers dissolve into black before they reach the rail.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.5f)
                 .align(Alignment.BottomCenter),
         ) {
-            LazyColumn(
-                state = historyList,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 14.dp,
-                    end = 14.dp,
-                    top = 52.dp,
-                    bottom = 96.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(history, key = { it }) { entry ->
-                    SearchHistoryPaper(
-                        query = entry,
-                        onClear = {
-                            history.remove(entry)
-                            saveSearchHistory(context, history)
-                        },
-                    )
-                }
-            }
+            SearchHistoryDeck(
+                entries = history,
+                resetKey = historyRevision,
+                onClear = { entry ->
+                    history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
+                    saveSearchHistory(context, history)
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 14.dp, end = 14.dp, top = 52.dp),
+            )
 
             // Same black the page gradient already has here → no colour seam.
             // Eased in several stops so the hand-off from black to paper is soft
@@ -1352,16 +1376,167 @@ private val DemoSearchHistory = listOf(
     "Evergreen",
 )
 
+/** One past search and the paper colour it earned. */
+private data class SearchHistoryEntry(
+    val query: String,
+    val color: Int,
+)
+
 private val HistoryPaperHeight = 64.dp
 private val HistoryStubWidth = 74.dp
 private val HistoryNotchRadius = 7.dp
 private val HistoryFadeHeight = 44.dp
-private val HistoryPaperTop = Color(0xFFF7EEDA)
-private val HistoryPaperBottom = Color(0xFFE3D6B3)
-private val HistoryInk = Color(0xFF2B2416)
+
+/** How far each older paper peeks from under the one in front of it. */
+private val StackPeek = 11.dp
+private const val StackVisibleBehind = 4
+
+/** Ink is picked from the paper's real luminance, never from a fixed theme. */
+private val PaperInkDark = Color(0xFF201A12)
+private val PaperInkLight = Color(0xFFFFFBF0)
 
 private const val HistoryPrefs = "lutea_search"
 private const val HistoryKey = "history"
+
+/**
+ * A procedural sheet of paper: fine warm grain, darker flecks and short fibres
+ * baked into one small repeating shader. It tints the paper underneath, so the
+ * same texture reads on every album colour without washing the colour out.
+ */
+private val PaperTexture: Brush by lazy {
+    val side = 224
+    val rnd = Random(0x5EEDBEEF)
+    val pixels = IntArray(side * side)
+    for (i in pixels.indices) {
+        val alpha = rnd.nextInt(0, 22)
+        val rgb = if (rnd.nextBoolean()) 0xFFFFFF else 0x000000
+        pixels[i] = (alpha shl 24) or rgb
+    }
+    // A handful of darker/brighter fibres; one pixel wide, like real pulp.
+    repeat(260) {
+        val x0 = rnd.nextInt(side)
+        val y0 = rnd.nextInt(side)
+        val length = 3 + rnd.nextInt(15)
+        val horizontal = rnd.nextBoolean()
+        val dark = rnd.nextBoolean()
+        val alpha = 10 + rnd.nextInt(15)
+        val rgb = if (dark) 0x1A1510 else 0xFFF8E8
+        for (k in 0 until length) {
+            val x = if (horizontal) (x0 + k) % side else x0
+            val y = if (horizontal) y0 else (y0 + k) % side
+            pixels[y * side + x] = (alpha shl 24) or rgb
+        }
+    }
+    val bitmap = Bitmap.createBitmap(pixels, side, side, Bitmap.Config.ARGB_8888)
+    ShaderBrush(ImageShader(bitmap.asImageBitmap(), TileMode.Repeated, TileMode.Repeated))
+}
+
+private fun relativeLuminance(color: Int): Float {
+    fun channel(c: Int): Float {
+        val s = (c and 0xFF) / 255f
+        return if (s <= 0.04045f) s / 12.92f else ((s + 0.055f) / 1.055f).pow(2.4f)
+    }
+    return 0.2126f * channel(color shr 16) +
+        0.7152f * channel(color shr 8) +
+        0.0722f * channel(color)
+}
+
+/** Pure black or warm white, chosen so the paper's own colour stays readable. */
+private fun inkForPaper(color: Int): Color =
+    if (relativeLuminance(color) > 0.30f) PaperInkDark else PaperInkLight
+
+private fun blendPaperColor(from: Int, to: Int, fraction: Float): Int {
+    val t = fraction.coerceIn(0f, 1f)
+    fun mix(shift: Int): Int {
+        val a = (from shr shift) and 0xFF
+        val b = (to shr shift) and 0xFF
+        return (a + (b - a) * t).toInt().coerceIn(0, 255)
+    }
+    return (0xFF shl 24) or (mix(16) shl 16) or (mix(8) shl 8) or mix(0)
+}
+
+/**
+ * Turn any hue into a real paper tone. Light papers always receive the dark
+ * ink, deep ones the warm-white ink; the builder deliberately avoids the muddy
+ * middle where neither ink has enough contrast.
+ */
+private fun buildPaperColor(hue: Float, saturation: Float, dark: Boolean): Int {
+    val safeHue = ((hue % 360f) + 360f) % 360f
+    val sat = saturation.coerceIn(0.22f, 0.62f)
+    val hsv = floatArrayOf(safeHue, sat, if (dark) 0.36f else 0.90f)
+    var color = AndroidColor.HSVToColor(hsv)
+    if (dark) {
+        var guard = 0
+        while (relativeLuminance(color) > 0.16f && guard < 10) {
+            hsv[2] = (hsv[2] * 0.86f).coerceAtLeast(0.18f)
+            color = AndroidColor.HSVToColor(hsv)
+            guard++
+        }
+    } else {
+        var mix = 0.10f
+        while (relativeLuminance(color) < 0.46f && mix <= 0.80f) {
+            color = blendPaperColor(color, 0xFFFFFBF2.toInt(), mix)
+            mix += 0.12f
+        }
+    }
+    return color or (0xFF shl 24)
+}
+
+private fun randomPaperColor(): Int = buildPaperColor(
+    hue = Random.nextFloat() * 360f,
+    saturation = 0.30f + Random.nextFloat() * 0.30f,
+    dark = Random.nextFloat() < 0.30f,
+)
+
+private fun stablePaperColor(query: String): Int {
+    val h = query.hashCode()
+    return buildPaperColor(
+        hue = (((h ushr 3) and 0xFF) / 255f) * 360f,
+        saturation = 0.30f + (((h ushr 11) and 0xFF) / 255f) * 0.30f,
+        dark = ((h ushr 19) and 1) == 1,
+    )
+}
+
+/** Keep the cover's hue, but move it into a paper-friendly light or deep tone. */
+private fun paperColorFromSwatch(rgb: Int): Int {
+    val hsv = FloatArray(3)
+    AndroidColor.colorToHSV(rgb, hsv)
+    return buildPaperColor(
+        hue = hsv[0],
+        saturation = hsv[1],
+        dark = relativeLuminance(rgb) < 0.18f,
+    )
+}
+
+/** Decode a small copy of the cover and pull its overall dominant colour. */
+private fun dominantArtColor(context: Context, uri: Uri): Int? {
+    return runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+        var sample = 1
+        while (bounds.outWidth / sample > 96 || bounds.outHeight / sample > 96) {
+            sample *= 2
+        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bitmap = context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, options)
+        } ?: return@runCatching null
+        try {
+            val palette = Palette.from(bitmap).maximumColorCount(24).generate()
+            val swatch = palette.dominantSwatch
+                ?: palette.mutedSwatch
+                ?: palette.vibrantSwatch
+                ?: palette.lightVibrantSwatch
+                ?: palette.darkVibrantSwatch
+            swatch?.rgb
+        } finally {
+            bitmap.recycle()
+        }
+    }.getOrNull()
+}
 
 /** Tear geometry, same numbers as the original component. */
 private const val TearAngle = 34f
@@ -1381,24 +1556,49 @@ private val TearFibres = floatArrayOf(
     3.1f, 0.6f, 5.0f, 2.0f, 4.0f, 1.2f, 5.4f, 2.7f, 1.5f, 4.5f,
 )
 
-/** History is stored as a JSON array; `null` means "never seeded", `[]` means "cleared". */
-private fun loadSearchHistory(context: Context): List<String>? {
+/**
+ * History is a JSON array of `{ "q": ..., "c": ... }` objects. Old versions
+ * stored bare strings; those are given a stable colour and upgraded in place
+ * the next time the screen saves the list.
+ */
+private fun loadSearchHistory(context: Context): List<SearchHistoryEntry>? {
     val raw = context.getSharedPreferences(HistoryPrefs, Context.MODE_PRIVATE)
         .getString(HistoryKey, null) ?: return null
     return runCatching {
         val arr = JSONArray(raw)
         buildList {
             for (i in 0 until arr.length()) {
-                val entry = arr.optString(i)
-                if (entry.isNotBlank()) add(entry)
+                when (val item = arr.opt(i)) {
+                    is String -> if (item.isNotBlank()) {
+                        add(SearchHistoryEntry(item, stablePaperColor(item)))
+                    }
+                    is JSONObject -> {
+                        val query = item.optString("q").ifBlank { item.optString("query") }
+                        if (query.isNotBlank()) {
+                            val savedColor = item.optInt("c", 0)
+                            add(
+                                SearchHistoryEntry(
+                                    query,
+                                    if (savedColor == 0) stablePaperColor(query) else savedColor,
+                                ),
+                            )
+                        }
+                    }
+                }
             }
         }
     }.getOrNull()
 }
 
-private fun saveSearchHistory(context: Context, entries: List<String>) {
+private fun saveSearchHistory(context: Context, entries: List<SearchHistoryEntry>) {
     val arr = JSONArray()
-    entries.forEach { arr.put(it) }
+    entries.forEach { entry ->
+        arr.put(
+            JSONObject()
+                .put("q", entry.query)
+                .put("c", entry.color),
+        )
+    }
     context.getSharedPreferences(HistoryPrefs, Context.MODE_PRIVATE)
         .edit()
         .putString(HistoryKey, arr.toString())
@@ -1446,16 +1646,33 @@ private fun buildTearPath(
     path.close()
 }
 
+/** Paper fill, grain and a soft top-light/underside for a card face. */
+private fun DrawScope.drawPaperFace(paper: Brush, texture: Brush) {
+    drawRect(brush = paper, size = size)
+    drawRect(brush = texture, size = size, alpha = 0.88f)
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to Color.White.copy(alpha = 0.13f),
+            0.14f to Color.Transparent,
+            0.86f to Color.Transparent,
+            1f to Color.Black.copy(alpha = 0.09f),
+        ),
+        size = size,
+    )
+}
+
 /** Paper face of the stub: fill, printed contents, then the dotted perforation. */
 private fun DrawScope.drawStubFace(
     paper: Brush,
+    texture: Brush,
+    ink: Color,
     notch: Float,
     content: DrawScope.() -> Unit,
 ) {
-    drawRect(brush = paper, size = size)
+    drawPaperFace(paper, texture)
     content()
     drawLine(
-        color = HistoryInk.copy(alpha = 0.30f),
+        color = ink.copy(alpha = 0.30f),
         start = Offset(1.dp.toPx(), notch + 1.dp.toPx()),
         end = Offset(1.dp.toPx(), size.height - notch - 1.dp.toPx()),
         strokeWidth = 1.8.dp.toPx(),
@@ -1498,10 +1715,158 @@ private fun defaultVibrator(context: Context): Vibrator? =
         context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
     }
 
+/**
+ * The history as a physical stack of tickets. The newest sits on top with the
+ * older ones peeking out below it; dragging up lifts the front paper away and
+ * brings the next one forward. Only the front paper can be torn.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun SearchHistoryDeck(
+    entries: List<SearchHistoryEntry>,
+    resetKey: Int,
+    onClear: (SearchHistoryEntry) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val scroll = remember { Animatable(0f) }
+    val cardHeightPx = with(density) { HistoryPaperHeight.toPx() }
+    val peekPx = with(density) { StackPeek.toPx() }
+    val maxIndex = entries.lastIndex.coerceAtLeast(0)
+
+    val activeIndex by remember {
+        derivedStateOf {
+            scroll.value.roundToInt()
+                .coerceIn(0, entries.lastIndex.coerceAtLeast(0))
+        }
+    }
+
+    // Every new search puts its paper on top of the deck.
+    LaunchedEffect(resetKey) { scroll.snapTo(0f) }
+
+    // A torn paper shortens the stack; never leave the deck pointing past it.
+    LaunchedEffect(entries.size) {
+        val max = entries.lastIndex.coerceAtLeast(0).toFloat()
+        if (scroll.value > max) scroll.snapTo(max)
+    }
+
+    if (entries.isEmpty()) {
+        Box(modifier)
+        return
+    }
+
+    Box(
+        modifier = modifier.pointerInput(entries.size) {
+            if (entries.size < 2) return@pointerInput
+            awaitEachGesture {
+                // The active stub consumes its own down, so pulling the stub
+                // never also starts a deck scroll.
+                val down = awaitFirstDown(requireUnconsumed = true)
+                val tracker = VelocityTracker()
+                tracker.addPosition(down.uptimeMillis, down.position)
+                var previousY = down.position.y
+                var travel = 0f
+                var dragging = false
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    tracker.addPosition(change.uptimeMillis, change.position)
+                    if (!change.pressed) break
+                    val dy = change.position.y - previousY
+                    previousY = change.position.y
+                    travel += dy
+                    if (!dragging && abs(travel) > viewConfiguration.touchSlop) {
+                        dragging = true
+                    }
+                    if (dragging) {
+                        val next = (scroll.value - dy / cardHeightPx)
+                            .coerceIn(0f, maxIndex.toFloat())
+                        if (next != scroll.value) scroll.snapTo(next)
+                        change.consume()
+                    }
+                }
+                if (dragging) {
+                    val vy = tracker.calculateVelocity().y
+                    val fling = if (abs(vy) > 650f) -sign(vy) else 0
+                    val target = (scroll.value.roundToInt() + fling)
+                        .coerceIn(0f, maxIndex.toFloat())
+                    scope.launch {
+                        scroll.animateTo(
+                            target,
+                            spring(dampingRatio = 0.84f, stiffness = 420f),
+                        )
+                    }
+                }
+            }
+        },
+    ) {
+        val active = activeIndex
+        val first = (active - 1).coerceAtLeast(0)
+        val last = (active + StackVisibleBehind).coerceAtMost(entries.lastIndex)
+        for (i in first..last) {
+            val entry = entries.getOrNull(i) ?: continue
+            key(entry.query) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(HistoryPaperHeight)
+                        .zIndex(
+                            when {
+                                i == active -> 1000f
+                                i > active -> 900f - (i - active)
+                                else -> 800f - (active - i)
+                            },
+                        )
+                        .graphicsLayer {
+                            val rel = i - scroll.value
+                            translationY =
+                                if (rel >= 0f) rel * peekPx else rel * cardHeightPx
+                            val s = if (rel >= 0f) {
+                                (1f - rel * 0.018f).coerceAtLeast(0.90f)
+                            } else {
+                                (1f + rel * 0.035f).coerceAtLeast(0.86f)
+                            }
+                            scaleX = s
+                            scaleY = s
+                            alpha = if (rel >= 0f) {
+                                (1f - rel * 0.06f).coerceAtLeast(0.62f)
+                            } else {
+                                (1f + rel * 0.9f).coerceIn(0f, 1f)
+                            }
+                            transformOrigin = TransformOrigin(0.5f, 0f)
+                        }
+                        .drawBehind {
+                            softShadow(
+                                topLeft = Offset(3.dp.toPx(), 7.dp.toPx()),
+                                size = Size(
+                                    size.width - 6.dp.toPx(),
+                                    size.height,
+                                ),
+                                corner = 18.dp.toPx(),
+                                color = Color.Black,
+                                spread = 12.dp.toPx(),
+                                alpha = if (i == active) 0.80f else 0.45f,
+                            )
+                        },
+                ) {
+                    SearchHistoryPaper(
+                        entry = entry,
+                        interactive = i == active,
+                        onClear = { onClear(entry) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun SearchHistoryPaper(
-    query: String,
+    entry: SearchHistoryEntry,
+    interactive: Boolean,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1531,9 +1896,21 @@ private fun SearchHistoryPaper(
     val stubShape = remember {
         RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp, topStart = 1.dp, bottomStart = 1.dp)
     }
-    val paperBrush = remember {
-        Brush.verticalGradient(0f to HistoryPaperTop, 1f to HistoryPaperBottom)
+
+    // Every paper carries its own colour. The cover colour is softened into a
+    // paper tint; the ink is computed from that final colour, not guessed.
+    val base = Color(entry.color)
+    val paperTop = remember(entry.color) { lerp(base, Color.White, 0.10f) }
+    val paperBottom = remember(entry.color) { lerp(base, Color.Black, 0.09f) }
+    val paperBrush = remember(entry.color) {
+        Brush.verticalGradient(
+            0f to paperTop,
+            0.48f to base,
+            1f to paperBottom,
+        )
     }
+    val ink = remember(entry.color) { inkForPaper(entry.color) }
+    val texture = PaperTexture
 
     fun buzz(ms: Long, amplitude: Int) {
         val v = vibrator
@@ -1548,7 +1925,7 @@ private fun SearchHistoryPaper(
 
     // While the paper is held, springing back, or flying, this advances the sim
     // once a frame. Reads happen inside graphicsLayer / drawWithContent, so the
-    // ticket animates without recomposing the list on every frame.
+    // ticket animates without recomposing the stack on every frame.
     LaunchedEffect(wakeToken) {
         val d = density.density
         var last = 0L
@@ -1611,7 +1988,6 @@ private fun SearchHistoryPaper(
 
     Box(
         modifier = modifier
-            .zIndex(if (sim.flying) 1f else 0f)
             .fillMaxWidth()
             .height(HistoryPaperHeight),
     ) {
@@ -1625,15 +2001,15 @@ private fun SearchHistoryPaper(
                     val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
                     if (tip > 0.5f) {
                         buildTearPath(bodyTear, size.width, size.height, tip, 1, fibrePx)
-                        // The paper itself lives inside the ragged clip. Drawing
-                        // it as a background would leave a clean rectangle behind
-                        // and the tear would only clip the text.
+                        // The paper itself lives inside the ragged clip so the
+                        // grain vanishes with the torn edge instead of leaving
+                        // a clean, coloured rectangle behind.
                         clipPath(bodyTear) {
-                            drawRect(brush = paperBrush, size = size)
+                            drawPaperFace(paperBrush, texture)
                             this@drawWithContent.drawContent()
                         }
                     } else {
-                        drawRect(brush = paperBrush, size = size)
+                        drawPaperFace(paperBrush, texture)
                         this@drawWithContent.drawContent()
                     }
                     // Ticket notches: the black behind the paper shows through
@@ -1652,21 +2028,21 @@ private fun SearchHistoryPaper(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(CircleShape)
-                        .background(HistoryInk.copy(alpha = 0.09f)),
+                        .background(ink.copy(alpha = 0.10f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = HistoryGlyph,
                         contentDescription = null,
-                        tint = HistoryInk.copy(alpha = 0.72f),
+                        tint = ink.copy(alpha = 0.75f),
                         modifier = Modifier.size(16.dp),
                     )
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = query,
-                        color = HistoryInk,
+                        text = entry.query,
+                        color = ink,
                         fontSize = 14.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
@@ -1677,7 +2053,7 @@ private fun SearchHistoryPaper(
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = "Pull the stub to clear",
-                        color = HistoryInk.copy(alpha = 0.52f),
+                        color = ink.copy(alpha = 0.58f),
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         maxLines = 1,
@@ -1709,12 +2085,12 @@ private fun SearchHistoryPaper(
                     if (tip > 0.5f) {
                         buildTearPath(stubTear, size.width, size.height, tip, -1, fibrePx)
                         clipPath(stubTear) {
-                            drawStubFace(paperBrush, notchPx) {
+                            drawStubFace(paperBrush, texture, ink, notchPx) {
                                 this@drawWithContent.drawContent()
                             }
                         }
                     } else {
-                        drawStubFace(paperBrush, notchPx) {
+                        drawStubFace(paperBrush, texture, ink, notchPx) {
                             this@drawWithContent.drawContent()
                         }
                     }
@@ -1727,13 +2103,13 @@ private fun SearchHistoryPaper(
                 Icon(
                     imageVector = TearGlyph,
                     contentDescription = null,
-                    tint = HistoryInk.copy(alpha = 0.62f),
+                    tint = ink.copy(alpha = 0.68f),
                     modifier = Modifier.size(15.dp),
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = "Clear",
-                    color = HistoryInk.copy(alpha = 0.62f),
+                    color = ink.copy(alpha = 0.68f),
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Medium,
@@ -1743,73 +2119,76 @@ private fun SearchHistoryPaper(
 
         // Gesture surface: a still sibling over the resting stub. If the gesture
         // lived on the rotating stub, Compose would feed the pointer back through
-        // the rotation and the angle would chase its own tail.
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .width(HistoryStubWidth)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        if (sim.flying) return@awaitEachGesture
-                        down.consume()
-                        val h = size.height.toFloat()
-                        sim.held = true
-                        sim.auto = false
-                        sim.grabAngle =
-                            atan2(down.position.y - h, down.position.x) * 180f / PI.toFloat() -
-                            sim.angle
-                        sim.px = down.position.x
-                        sim.py = down.position.y
-                        sim.pt = down.uptimeMillis
-                        sim.pvx = 0f
-                        sim.pvy = 0f
-                        sim.hole = ((sim.angle / TearAngle).coerceIn(0f, 1f) * TearHoles).toInt()
-                        wakeToken++
+        // the rotation and the angle would chase its own tail. Only the front
+        // paper owns this surface; the papers behind it are a pure visual stack.
+        if (interactive) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(HistoryStubWidth)
+                    .pointerInput(entry.query) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            if (sim.flying) return@awaitEachGesture
+                            down.consume()
+                            val h = size.height.toFloat()
+                            sim.held = true
+                            sim.auto = false
+                            sim.grabAngle =
+                                atan2(down.position.y - h, down.position.x) * 180f / PI.toFloat() -
+                                sim.angle
+                            sim.px = down.position.x
+                            sim.py = down.position.y
+                            sim.pt = down.uptimeMillis
+                            sim.pvx = 0f
+                            sim.pvy = 0f
+                            sim.hole = ((sim.angle / TearAngle).coerceIn(0f, 1f) * TearHoles).toInt()
+                            wakeToken++
 
-                        var dragged = false
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.pressed) {
-                                val pos = change.position
-                                val dt = (change.uptimeMillis - sim.pt).coerceAtLeast(1L)
-                                sim.pvx = sim.pvx * 0.5f + ((pos.x - sim.px) / dt) * 500f
-                                sim.pvy = sim.pvy * 0.5f + ((pos.y - sim.py) / dt) * 500f
-                                sim.px = pos.x
-                                sim.py = pos.y
-                                sim.pt = change.uptimeMillis
-                                if ((pos - down.position).getDistance() > 8.dp.toPx()) {
-                                    dragged = true
-                                }
-                                val raw =
-                                    atan2(pos.y - h, pos.x) * 180f / PI.toFloat() - sim.grabAngle
-                                // Pushing the stub back into the body only gives a little.
-                                val pull = if (raw < 0f) raw * 0.15f else raw
-                                sim.target = if (pull >= TearAngle) {
-                                    TearAngle * 1.05f
-                                } else {
-                                    stickSlip(pull.coerceAtLeast(0f) / TearAngle) * TearAngle +
-                                        minOf(pull, 0f)
-                                }
-                                change.consume()
-                            } else {
-                                sim.held = false
-                                if (!sim.flying) {
-                                    if (!dragged &&
-                                        change.uptimeMillis - down.uptimeMillis < 320L
-                                    ) {
-                                        sim.auto = true   // a tap tears it hole by hole
+                            var dragged = false
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (change.pressed) {
+                                    val pos = change.position
+                                    val dt = (change.uptimeMillis - sim.pt).coerceAtLeast(1L)
+                                    sim.pvx = sim.pvx * 0.5f + ((pos.x - sim.px) / dt) * 500f
+                                    sim.pvy = sim.pvy * 0.5f + ((pos.y - sim.py) / dt) * 500f
+                                    sim.px = pos.x
+                                    sim.py = pos.y
+                                    sim.pt = change.uptimeMillis
+                                    if ((pos - down.position).getDistance() > 8.dp.toPx()) {
+                                        dragged = true
                                     }
-                                    sim.target = 0f
+                                    val raw =
+                                        atan2(pos.y - h, pos.x) * 180f / PI.toFloat() - sim.grabAngle
+                                    // Pushing the stub back into the body only gives a little.
+                                    val pull = if (raw < 0f) raw * 0.15f else raw
+                                    sim.target = if (pull >= TearAngle) {
+                                        TearAngle * 1.05f
+                                    } else {
+                                        stickSlip(pull.coerceAtLeast(0f) / TearAngle) * TearAngle +
+                                            minOf(pull, 0f)
+                                    }
+                                    change.consume()
+                                } else {
+                                    sim.held = false
+                                    if (!sim.flying) {
+                                        if (!dragged &&
+                                            change.uptimeMillis - down.uptimeMillis < 320L
+                                        ) {
+                                            sim.auto = true   // a tap tears it hole by hole
+                                        }
+                                        sim.target = 0f
+                                    }
+                                    change.consume()
+                                    break
                                 }
-                                change.consume()
-                                break
                             }
                         }
-                    }
-                },
-        )
+                    },
+            )
+        }
     }
 }
