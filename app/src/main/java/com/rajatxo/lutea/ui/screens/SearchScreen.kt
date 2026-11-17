@@ -132,6 +132,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.palette.graphics.Palette
 import coil3.compose.AsyncImage
+import com.rajatxo.lutea.audio.TypewriterSound
 import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
@@ -941,6 +942,7 @@ private fun SearchMachine(
                             clearTick++
                         } else if (next.length > query.length) {
                             mode = TypeState.TYPING        // a new letter → green
+                            TypewriterSound.playKey()
                         }
                         onQueryChange(next)
                     },

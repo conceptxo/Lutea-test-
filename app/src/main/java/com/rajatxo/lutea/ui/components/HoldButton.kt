@@ -295,7 +295,7 @@ private fun HoldContent(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = text,
+                    text = text.uppercase(),
                     color = color,
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,
@@ -311,7 +311,7 @@ private fun HoldContent(
     }
 }
 
-private val HoldFaceSize = 14.dp
+private val HoldFaceSize = 20.dp
 private val HoldFaceGap = 6.dp
 private val HoldLabelWidth = 122.dp
 

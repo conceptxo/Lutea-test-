@@ -81,6 +81,7 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.R
+import com.rajatxo.lutea.audio.TypewriterSound
 import com.rajatxo.lutea.ui.components.BlurRevealText
 import com.rajatxo.lutea.ui.foundation.LuteaBackdrop
 import com.rajatxo.lutea.ui.foundation.LuteaBackground
@@ -499,7 +500,13 @@ private fun NameCardContent(
                     ) {
                         PillTextField(
                             value = name,
-                            onValueChange = { name = it.take(40) },
+                            onValueChange = { next ->
+                                val limited = next.take(40)
+                                if (limited.length > name.length) {
+                                    TypewriterSound.playKey()
+                                }
+                                name = limited
+                            },
                             placeholder = "Your name",
                             focusRequester = focusRequester,
                             imeAction = ImeAction.Done,

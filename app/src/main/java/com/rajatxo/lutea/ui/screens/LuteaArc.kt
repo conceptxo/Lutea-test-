@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rajatxo.lutea.R
+import com.rajatxo.lutea.audio.TypewriterSound
 import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.data.prefs.PlaylistStyle
 import com.rajatxo.lutea.ui.theme.LumenPalette
@@ -346,6 +347,9 @@ fun LuteaArc(
                         // Spaces are always allowed (don't count toward the limit).
                         val filteredLetters = letterCount(filtered)
                         if (filteredLetters <= MAX_LETTERS) {
+                            if (filtered.length > playlistName.length) {
+                                TypewriterSound.playKey()
+                            }
                             playlistName = filtered
                         }
                     },
@@ -1382,7 +1386,12 @@ fun LuteaArc(
                 ) {
                     BasicTextField(
                         value = searchQuery,
-                        onValueChange = { searchQuery = it },
+                        onValueChange = { next ->
+                            if (next.length > searchQuery.length) {
+                                TypewriterSound.playKey()
+                            }
+                            searchQuery = next
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .fillMaxHeight()  // ★ fill capsule height so cursor centers vertically

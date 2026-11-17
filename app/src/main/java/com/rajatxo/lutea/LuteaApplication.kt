@@ -1,6 +1,7 @@
 package com.rajatxo.lutea
 
 import android.app.Application
+import com.rajatxo.lutea.audio.TypewriterSound
 import com.rajatxo.lutea.data.prefs.PlaylistStyleManager
 import com.rajatxo.lutea.data.prefs.UserNameManager
 import com.rajatxo.lutea.data.store.PlaylistStore
@@ -11,5 +12,6 @@ class LuteaApplication : Application() {
         PlaylistStore.init(this)
         PlaylistStyleManager.init(this)
         UserNameManager.init(this)
+        TypewriterSound.init(this)
     }
 }
