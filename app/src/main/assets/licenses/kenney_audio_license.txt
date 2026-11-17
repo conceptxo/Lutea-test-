@@ -1,0 +1,19 @@
+UI SFX Set + Impact Sounds
+by Kenney Vleugels (Kenney.nl)
+
+License (Creative Commons Zero, CC0)
+http://creativecommons.org/publicdomain/zero/1.0/
+
+You may use these assets in personal and commercial projects.
+Credit (Kenney or www.kenney.nl) would be nice but is not mandatory.
+
+Sources:
+- https://kenney.nl/assets/ui-audio
+  click4.ogg, click5.ogg and switch13.ogg
+- https://kenney.nl/assets/impact-sounds
+  impactGeneric_light_000.ogg, impactGeneric_light_001.ogg,
+  impactGeneric_light_002.ogg, impactMetal_medium_002.ogg,
+  impactMetal_medium_004.ogg and impactWood_light_001.ogg
+
+The three typewriter_key_*.ogg files are layered derivatives of these
+Kenney samples, made for Lutea's typewriter text-entry sound.

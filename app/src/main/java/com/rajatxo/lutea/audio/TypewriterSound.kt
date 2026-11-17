@@ -9,9 +9,10 @@ import kotlin.random.Random
 /**
  * The small mechanical key clicks used by Lutea's typewriter-style text fields.
  *
- * The samples are Kenney's UI Audio clicks (CC0). They are loaded once with the
- * app and played on the sonification stream, so typing stays separate from the
- * music stream and follows the phone's UI-sound volume.
+ * The samples are layered mechanical key-strikes built from Kenney's UI Audio
+ * and Impact Sounds packs (CC0). They are loaded once with the app and played on
+ * the sonification stream, so typing stays separate from the music stream and
+ * follows the phone's UI-sound volume.
  */
 object TypewriterSound {
     private const val VOLUME = 0.42f
