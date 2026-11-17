@@ -44,7 +44,7 @@ val LocalSearchHistoryOverlay = staticCompositionLocalOf { SearchHistoryOverlayS
  * The expanded-history clear action, rendered above the nav / mini player.
  *
  * It holds its own success state briefly after the history collapses, so the
- * "Deleted" confirmation remains readable instead of disappearing with the
+ * "Ghee Khatam" confirmation remains readable instead of disappearing with the
  * deck.
  */
 @Composable
@@ -81,7 +81,7 @@ fun SearchClearAllOverlay(
         HoldButton(
             label = "Hold to Clear all",
             holdingLabel = "Keep holding…",
-            successLabel = "Deleted",
+            successLabel = "Ghee Khatam",
             duration = 1500,
             resetAfter = 1400,
             onConfirm = {

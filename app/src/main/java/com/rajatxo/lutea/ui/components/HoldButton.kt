@@ -15,11 +15,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,7 +24,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,18 +32,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -62,6 +57,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private enum class HoldState { Idle, Holding, Success }
+
+private val HoldButtonWidth = 176.dp
+private val HoldButtonHeight = 38.dp
 
 /**
  * Native Compose port of Evil Buttons' HoldButton.
@@ -87,14 +85,12 @@ fun HoldButton(
     backdrop: LayerBackdrop? = null,
 ) {
     val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
     val shape = RoundedCornerShape(percent = 50)
 
     var state by remember { mutableStateOf(HoldState.Idle) }
     val progress = remember { Animatable(0f) }
     val shake = remember { Animatable(0f) }
     var holdJob by remember { mutableStateOf<Job?>(null) }
-    var buttonWidthPx by remember { mutableIntStateOf(0) }
 
     val currentOnConfirm by rememberUpdatedState(onConfirm)
     val currentOnAbort by rememberUpdatedState(onAbort)
@@ -187,10 +183,11 @@ fun HoldButton(
     }
 
     val contentColor = Color(0xFFF5F5F5)
-    val fillContentColor = Color(0xFF171717)
+    val fillContentColor = Color(0xFF170303)
     val fillBrush = Brush.verticalGradient(
-        0f to Color(0xFFFDFDFD),
-        1f to Color(0xFFE5E5E5),
+        0f to Color(0xFFFF8A80),
+        0.45f to Color(0xFFFF5252),
+        1f to Color(0xFFE53935),
     )
     val currentText = when (state) {
         HoldState.Idle -> label
@@ -198,9 +195,6 @@ fun HoldButton(
         HoldState.Success -> successLabel
     }
     val isSuccess = state == HoldState.Success
-    val showBaseLabel = progress.value < 0.999f
-    val fillWidth = progress.value.coerceIn(0f, 1f)
-    val buttonWidthDp = with(density) { buttonWidthPx.toDp() }
 
     Box(
         modifier = modifier
@@ -220,9 +214,8 @@ fun HoldButton(
                     else -> 0.5f * d * (1f - fraction)
                 }
             }
-            .width(190.dp)
-            .height(38.dp)
-            .onSizeChanged { buttonWidthPx = it.width }
+            .width(HoldButtonWidth)
+            .height(HoldButtonHeight)
             .clip(shape)
             .then(glassSurface)
             .border(
@@ -252,33 +245,32 @@ fun HoldButton(
                 }
             },
     ) {
-        // Base label: visible wherever the light fill has not reached yet.
+        // Base label: stays perfectly still underneath the reveal.
         Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = if (showBaseLabel) 1f else 0f },
+            modifier = Modifier.fillMaxSize(),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             HoldContent(text = currentText, success = isSuccess, color = contentColor)
         }
 
-        // Light fill, clipped to its animated width. The dark label is laid out at
-        // the full capsule width so it is revealed in place instead of sliding.
+        // Red fill + knockout label in one full-size layer. Both are clipped to
+        // the same left-to-right reveal, so the text itself never moves.
         Box(
             modifier = Modifier
-                .align(Alignment.CenterStart)
-                .fillMaxHeight()
-                .fillMaxWidth(fillWidth)
-                .clipToBounds()
-                .background(fillBrush),
+                .matchParentSize()
+                .drawWithContent {
+                    val reveal = size.width * progress.value.coerceIn(0f, 1f)
+                    if (reveal > 0f) {
+                        clipRect(right = reveal) {
+                            drawRect(brush = fillBrush)
+                            this@drawWithContent.drawContent()
+                        }
+                    }
+                },
         ) {
             Row(
-                modifier = Modifier
-                    // requiredWidth ignores the narrow fill's constraints; the
-                    // parent's clipToBounds then reveals the label in place.
-                    .requiredWidth(buttonWidthDp)
-                    .fillMaxHeight(),
+                modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
