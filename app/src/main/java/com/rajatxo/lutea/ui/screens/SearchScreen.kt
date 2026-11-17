@@ -32,16 +32,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -136,6 +139,7 @@ import com.rajatxo.lutea.audio.TypewriterSound
 import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
+import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
 import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
 import com.rajatxo.lutea.ui.foundation.SearchSurfaceStyle
@@ -388,6 +392,9 @@ fun SearchScreen() {
     val searchStyleState = LocalSearchStyleOverlay.current
     val searchStyle = searchStyleState.style
     val typingSoundEnabled = searchStyleState.typingSoundEnabled
+    val statusFadeHeight = with(LocalDensity.current) {
+        WindowInsets.statusBars.getTop(this).toDp() + 4.dp
+    }
 
     // The real library, scanned once off the main thread. Results are just the
     // songs whose title, artist or album matches what is typed above the machine.
@@ -591,6 +598,21 @@ fun SearchScreen() {
             )
         }
 
+        // Short black fade under the system status bar. It sits above the
+        // page, but only inside the status-bar band, so content below is clear.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .height(statusFadeHeight)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.94f),
+                        0.62f to Color.Black.copy(alpha = 0.58f),
+                        1f to Color.Transparent,
+                    ),
+                ),
+        )
     }
 }
 
@@ -740,12 +762,21 @@ private fun JellySongList(
                     bottom = 10.dp,
                 ),
             ) {
-                items(songs, key = { it.id }) { song ->
+                itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
                     SearchResultRow(
                         song = song,
                         playing = song.id == nowPlayingId,
                         onClick = { onPlay(song) },
                     )
+                    if (index != songs.lastIndex) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 70.dp, end = 10.dp)
+                                .height(0.5.dp)
+                                .background(Color.White.copy(alpha = 0.20f)),
+                        )
+                    }
                 }
             }
         }
@@ -788,13 +819,13 @@ private fun SearchResultRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(9.dp))
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(Color(0xFF2A2622)),
         ) {
             AsyncImage(
@@ -809,7 +840,8 @@ private fun SearchResultRow(
             Text(
                 text = song.title,
                 color = if (playing) TypeCream else Color.White,
-                fontSize = 14.sp,
+                fontSize = 16.sp,
+                fontFamily = CalSansFamily,
                 fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -817,8 +849,9 @@ private fun SearchResultRow(
             Spacer(Modifier.height(2.dp))
             Text(
                 text = song.artist,
-                color = Color.White.copy(alpha = 0.45f),
-                fontSize = 11.sp,
+                color = Color.White.copy(alpha = 0.48f),
+                fontSize = 12.5.sp,
+                fontFamily = CalSansFamily,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -863,6 +896,7 @@ private fun SearchMachine(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // Everything on the rail is designed for a 360dp-wide phone and scales with the screen width.
@@ -901,18 +935,18 @@ private fun SearchMachine(
     // ── typing state → colour of the carriage slot + LEDs ──
     var focused by remember { mutableStateOf(false) }
 
-    // ── the lamp: tapping the search bar makes the T hammer pop up and release the light ──
+    // ── the lamp: only while the search field is focused and the keyboard is up ──
     val lightLevel = remember { Animatable(0f) }
     val release = remember { Animatable(0f) }
-    LaunchedEffect(focused) {
-        if (focused) {
+    LaunchedEffect(focused, keyboardVisible) {
+        if (focused && keyboardVisible) {
             launch {
                 release.animateTo(1f, tween(120, easing = LinearOutSlowInEasing))
                 release.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 380f))
             }
             lightLevel.animateTo(1f, tween(850, easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)))
         } else {
-            lightLevel.animateTo(0f, tween(450, easing = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)))
+            lightLevel.animateTo(0f, tween(240, easing = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)))
         }
     }
     var mode by remember { mutableStateOf(TypeState.IDLE) }

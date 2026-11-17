@@ -76,6 +76,7 @@ internal enum class SearchSurfaceStyle { JELLY, CARDS }
 private const val StylePrefs = "lutea_search"
 private const val StyleKey = "search_surface_style"
 private const val TypingSoundKey = "typing_sound_enabled"
+private const val JellyDefaultMigrationKey = "jelly_default_v1"
 
 private val StyleCream = Color(0xFFFCF2C7)
 private val StyleJelly = Color(0xFF9188FF)
@@ -99,8 +100,17 @@ internal val LocalSearchStyleOverlay = staticCompositionLocalOf {
 }
 
 internal fun loadSearchSurfaceStyle(context: Context): SearchSurfaceStyle {
-    val saved = context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
-        .getString(StyleKey, null)
+    val prefs = context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+    if (!prefs.getBoolean(JellyDefaultMigrationKey, false)) {
+        // Jelly Drift is the product default. Apply it once on this update;
+        // after that the user's own choice (including Card Stack) is kept.
+        prefs.edit()
+            .putString(StyleKey, SearchSurfaceStyle.JELLY.name)
+            .putBoolean(JellyDefaultMigrationKey, true)
+            .apply()
+        return SearchSurfaceStyle.JELLY
+    }
+    val saved = prefs.getString(StyleKey, null)
     return SearchSurfaceStyle.entries.firstOrNull { it.name == saved }
         ?: SearchSurfaceStyle.JELLY
 }

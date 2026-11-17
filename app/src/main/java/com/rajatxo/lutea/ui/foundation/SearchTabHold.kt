@@ -16,9 +16,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -47,6 +47,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.colorControls
+import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.delay
 
 private val HoldCream = Color(0xFFFCF2C7)
@@ -54,14 +59,15 @@ private val HoldCream = Color(0xFFFCF2C7)
 /**
  * Wraps the Search tab with a hold-to-open gesture.
  *
- * A normal tap still reaches the tab underneath. Holding for four seconds
- * shows a tiny countdown capsule above the tab; when the countdown finishes
- * [onComplete] opens the search-style card. Moving the finger or letting go
+ * A normal tap still reaches the tab underneath. Holding for five seconds
+ * opens the search-style card: the first two seconds are just the hold, then
+ * a glass capsule counts 3-2-1 above the tab. Moving the finger or letting go
  * cancels it, so swiping the nav never opens the card by accident.
  */
 @Composable
 internal fun SearchTabHold(
     onComplete: () -> Unit,
+    backdrop: LayerBackdrop? = null,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -94,7 +100,7 @@ internal fun SearchTabHold(
 
     var holding by remember { mutableStateOf(false) }
     var showCapsule by remember { mutableStateOf(false) }
-    var remaining by remember { mutableIntStateOf(4) }
+    var remaining by remember { mutableIntStateOf(3) }
 
     LaunchedEffect(holding) {
         if (!holding) {
@@ -102,17 +108,16 @@ internal fun SearchTabHold(
             return@LaunchedEffect
         }
 
-        // A quick tap should feel like a normal tab tap, not flash the timer.
-        remaining = 4
-        delay(300)
+        // Hold for two seconds before the countdown starts, then 3-2-1.
+        remaining = 3
+        delay(2_000L)
         if (!holding) return@LaunchedEffect
 
         showCapsule = true
-        for (number in 4 downTo 1) {
+        for (number in 3 downTo 1) {
             remaining = number
             pulse(durationMs = 12L, amplitude = 36)
-            // 300ms reveal + 3 full seconds + 700ms on "1" = 4s total.
-            delay(if (number == 1) 700L else 1_000L)
+            delay(1_000L)
             if (!holding) return@LaunchedEffect
         }
 
@@ -167,6 +172,7 @@ internal fun SearchTabHold(
                     number = remaining,
                     alpha = bubbleAlpha,
                     scale = bubbleScale,
+                    backdrop = backdrop,
                 )
             }
         },
@@ -192,8 +198,43 @@ private fun HoldTimerCapsule(
     number: Int,
     alpha: Float,
     scale: Float,
+    backdrop: LayerBackdrop?,
 ) {
     val shape = RoundedCornerShape(50)
+    val glass = if (backdrop != null) {
+        Modifier.drawBackdrop(
+            backdrop = backdrop,
+            shape = { shape },
+            effects = {
+                vibrancy()
+                colorControls(
+                    brightness = 0.05f,
+                    contrast = 1f,
+                    saturation = 1.35f,
+                )
+                blur(20.dp.toPx())
+            },
+            onDrawSurface = {
+                drawRect(Color.Black.copy(alpha = 0.34f))
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0.13f),
+                        0.48f to Color.White.copy(alpha = 0.035f),
+                        1f to Color.Transparent,
+                    ),
+                )
+            },
+        )
+    } else {
+        Modifier.background(
+            brush = Brush.verticalGradient(
+                0f to Color(0xFF2B2724),
+                1f to Color(0xFF100F0E),
+            ),
+            shape = shape,
+        )
+    }
+
     Row(
         modifier = Modifier
             .graphicsLayer {
@@ -201,33 +242,34 @@ private fun HoldTimerCapsule(
                 scaleX = scale
                 scaleY = scale
             }
-            .shadow(10.dp, shape, clip = false)
+            .width(178.dp)
+            .shadow(18.dp, shape, clip = false)
             .clip(shape)
-            .background(Color(0xF21B1815))
+            .then(glass)
             .border(
                 width = 1.dp,
                 brush = Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = 0.30f),
-                    1f to Color.White.copy(alpha = 0.07f),
+                    0f to Color.White.copy(alpha = 0.52f),
+                    0.50f to Color.White.copy(alpha = 0.16f),
+                    1f to Color.White.copy(alpha = 0.08f),
                 ),
                 shape = shape,
             )
-            .padding(horizontal = 9.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.Center,
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "HOLD",
-            color = HoldCream.copy(alpha = 0.62f),
+            text = "HOLD FOR STYLE",
+            color = HoldCream.copy(alpha = 0.72f),
             fontSize = 8.sp,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 1.2.sp,
+            letterSpacing = 1.25.sp,
         )
-        Spacer(Modifier.size(6.dp))
         Box(
             modifier = Modifier
-                .size(18.dp)
+                .size(22.dp)
                 .clip(CircleShape)
                 .background(HoldCream),
             contentAlignment = Alignment.Center,
@@ -235,7 +277,7 @@ private fun HoldTimerCapsule(
             Text(
                 text = number.toString(),
                 color = Color(0xFF1A1712),
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
             )

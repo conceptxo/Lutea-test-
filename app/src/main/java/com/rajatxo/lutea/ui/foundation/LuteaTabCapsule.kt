@@ -229,7 +229,10 @@ fun LuteaTabCapsule(
             orderedTabs.forEach { tab ->
                 key(tab) {
                     if (tab == LuteaTab.Search && onSearchLongPress != null) {
-                        SearchTabHold(onComplete = onSearchLongPress) {
+                        SearchTabHold(
+                            onComplete = onSearchLongPress,
+                            backdrop = backdrop,
+                        ) {
                             FluidNavItem(
                                 tab = tab,
                                 isActive = tab == activeTab,
