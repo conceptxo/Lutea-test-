@@ -5,17 +5,11 @@ import android.graphics.Shader
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -63,7 +57,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -82,6 +75,7 @@ import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.R
 import com.rajatxo.lutea.ui.components.BlurRevealText
+import com.rajatxo.lutea.ui.components.LightRaysBackground
 import com.rajatxo.lutea.ui.foundation.LuteaBackdrop
 import com.rajatxo.lutea.ui.foundation.LuteaBackground
 import kotlinx.coroutines.delay
@@ -115,7 +109,7 @@ import kotlinx.coroutines.delay
  *   8. User taps back → keyboard closes → ALL elements shift DOWN together.
  *
  * Universe-fitting rule:
- *   Uses LuteaBackground (teal-tinted gradient + radial glow).
+ *   Uses LuteaBackground with the live classic-jelly intro scene.
  *
  * Layout structure:
  *   Root Box (imePadding — moves everything as one unit)
@@ -137,6 +131,49 @@ fun NameCardScreen(
     LuteaBackground(modifier = modifier) {
         NameCardContent(onComplete = onComplete)
     }
+}
+
+/** The intro scene: classic jelly + the shared particles + 60fps rays. */
+@Composable
+private fun IntroJellyBackground() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+    ) {
+        JellyfishBackdrop(
+            searching = false,
+            modifier = Modifier.fillMaxSize(),
+        )
+        LightRaysBackground(
+            modifier = Modifier.fillMaxSize(),
+            color = Color(0xFFA9DFFF),
+            sourceY = -0.22f,
+            reach = 1.15f,
+            brightness = 0.34f,
+            edge = 0.55f,
+            spread = 1.8f,
+            fogMix = 0.30f,
+            shade = false,
+            frameRate = 60,
+        )
+    }
+}
+
+/** Cheap, static approximation for the glass blur. */
+@Composable
+private fun IntroBackdropTint() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to Color(0xFF2A123D),
+                    0.55f to Color(0xFF0E0716),
+                    1f to Color.Black,
+                ),
+            ),
+    )
 }
 
 @Composable
@@ -284,63 +321,12 @@ private fun NameCardContent(
     }
 
     // ── OUTER: LuteaBackdrop wraps the 3-layer kyant structure ──
-    // Layer 1: Flower image (visible background)
-    // Layer 2: Transparent capture layer (NOT clickable, NOT scrollable) — kyant captures here
-    // Layer 3: Foreground content (uses drawBackdrop on individual elements to blur Layer 1)
-    //
-    // Per Coral's SettingsScreen clever approach (avoids the kyant crash):
-    //   layerBackdrop is OUTSIDE the scroll (kyant criteria met).
-    //   Only drawBackdrop is on individual elements (capsule, button).
-    //   Kyant content lives on TOP of everything — it's the last child of LuteaBackdrop.
+    // The live jelly/particles/rays render once as the visible background. Glass
+    // elements sample a cheap static tint, so the animation is not rendered a
+    // second time inside the backdrop capture layer.
     LuteaBackdrop(
-        background = {
-            // Flower image + soft glow — both rendered twice by LuteaBackdrop (visible + captured)
-            Box(modifier = Modifier.fillMaxSize()) {
-                Image(
-                    painter = painterResource(R.drawable.flower_top),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-
-                // Soft glowing pulse on the flower (loops forever) — captured by kyant too
-                val glowTransition = rememberInfiniteTransition(label = "flower_glow")
-                val glowAlpha by glowTransition.animateFloat(
-                    initialValue = 0.25f,
-                    targetValue = 0.6f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(durationMillis = 1800, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse,
-                    ),
-                    label = "glow_alpha",
-                )
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val glowWidthPx = constraints.maxWidth.toFloat()
-                    val glowHeightPx = constraints.maxHeight.toFloat()
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFFFFD89E).copy(alpha = glowAlpha),
-                                        Color(0xFFFFD89E).copy(alpha = glowAlpha * 0.8f),
-                                        Color(0xFFFF9A8B).copy(alpha = glowAlpha * 0.5f),
-                                        Color(0xFFFF9A8B).copy(alpha = glowAlpha * 0.25f),
-                                        Color(0xFFFF9A8B).copy(alpha = glowAlpha * 0.1f),
-                                        Color.Transparent,
-                                    ),
-                                    center = androidx.compose.ui.geometry.Offset(
-                                        x = glowWidthPx * 0.52f,
-                                        y = glowHeightPx * 0.20f,
-                                    ),
-                                    radius = glowWidthPx * 0.45f,
-                                ),
-                            ),
-                    )
-                }
-            }
-        },
+        background = { IntroJellyBackground() },
+        captureBackground = { IntroBackdropTint() },
     ) { backdrop ->
 
         // ── Back button (kyant frosted glass, top-left) — visible only on permission page ──
@@ -536,7 +522,7 @@ private fun NameCardContent(
                 // Each line reveals, then dissolves (reverse=true) when the next shows.
                 //
                 // When permission cards are shown, switch to BOTTOM-aligned layout
-                // so they don't cover the flower.
+                // so they don't cover the animated background.
 
                 if (!showPermissionCards) {
                     // ── Text-only phase: sequential reveal + move-up + vanish ──

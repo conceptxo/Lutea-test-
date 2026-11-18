@@ -150,7 +150,6 @@ import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
-import com.rajatxo.lutea.ui.components.LightRaysBackground
 import com.rajatxo.lutea.ui.foundation.JellyLook
 import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
 import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
@@ -730,40 +729,6 @@ private fun SearchResults(
             }
         }
 
-        // The old status-bar fade is gone. Instead the same soft light rays as
-        // the playlist page wash down from above the screen, over the jelly /
-        // cards and the result rows, then dissolve before the machine. The mask
-        // is on this wrapper only, so it never dims the content underneath.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    compositingStrategy = CompositingStrategy.Offscreen
-                }
-                .drawWithContent {
-                    drawContent()
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to Color.White,
-                            0.58f to Color.White,
-                            1f to Color.Transparent,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
-                },
-        ) {
-            LightRaysBackground(
-                modifier = Modifier.fillMaxSize(),
-                color = Color(0xFFA9DFFF),
-                sourceY = -0.22f,
-                reach = 1.15f,
-                brightness = 0.34f,
-                edge = 0.55f,
-                spread = 1.8f,
-                fogMix = 0.30f,
-                shade = false,
-            )
-        }
     }
 }
 
@@ -798,17 +763,17 @@ private fun JellySongList(
         } else {
             // One clock drives every divider glint. Reading it inside the
             // Canvas keeps the shimmer in the draw phase, not recomposition.
-            val shimmer = rememberDividerShimmer()
+            val shimmer = rememberDividerShimmer(active = listState.isScrollInProgress)
 
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     // The list starts just below the status-bar inset when at
-                    // rest. Once it scrolls, rows pass under the light rays
-                    // overlay and the transparent status bar. The bottom mask
-                    // uses the same 0.78 → 1.00 cadence as JellyfishBackdrop,
-                    // so both the jelly and the songs dissolve at the same line.
+                    // rest. Once it scrolls, rows pass under the transparent
+                    // status bar. The bottom mask uses the same 0.78 → 1.00
+                    // cadence as JellyfishBackdrop, so both the jelly and the
+                    // songs dissolve at the same line.
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
                     }
@@ -845,10 +810,12 @@ private fun JellySongList(
     }
 }
 
-/** Shared slow glint used by the song list and the simple history lines. */
+/** Shared glint used by the song list and the simple history lines. It only
+ *  animates while the list is moving, so an idle page costs no frames. */
 @Composable
-private fun rememberDividerShimmer(): State<Float> =
-    rememberInfiniteTransition(label = "dividerShimmer")
+private fun rememberDividerShimmer(active: Boolean): State<Float> {
+    if (!active) return remember { mutableFloatStateOf(0.36f) }
+    return rememberInfiniteTransition(label = "dividerShimmer")
         .animateFloat(
             initialValue = 0f,
             targetValue = 1f,
@@ -864,6 +831,7 @@ private fun rememberDividerShimmer(): State<Float> =
             ),
             label = "dividerShimmerPhase",
         )
+}
 
 @Composable
 private fun GlassDivider(shimmer: State<Float>) {
@@ -2140,7 +2108,7 @@ private fun SimpleSearchHistory(
         return
     }
 
-    val shimmer = rememberDividerShimmer()
+    val shimmer = rememberDividerShimmer(active = listState.isScrollInProgress)
 
     LazyColumn(
         state = listState,

@@ -2,8 +2,6 @@
 <!--
     Lutea's splash screen background.
     Pure black — matches LuteaBackground so the launch → Compose handoff is seamless.
-    The flower image fades to black at its bottom, so it blends invisibly into this
-    pure-black background.
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>

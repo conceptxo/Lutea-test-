@@ -8,15 +8,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 
 /**
- * Lutea — pure black background.
+ * Lutea — pure black base background.
  *
- * Updated per user request: 'make the background pure black'.
- * The flower image (drawable/flower_top.jpg) is added on top of this background
- * at the TOP of the screen. Its bottom naturally fades to black (#020001 at the
- * very bottom pixel), so it blends seamlessly into this pure-black background.
- *
- * The flower + text animations sit on top of this black canvas. No teal gradient,
- * no radial glow — just pure black so the flower's bottom transition is invisible.
+ * The intro jelly scene and text sit on top of this canvas. Keeping the base
+ * black means any live effect's bottom fade blends out invisibly.
  */
 @Composable
 fun LuteaBackground(

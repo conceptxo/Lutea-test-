@@ -71,6 +71,8 @@ fun LightRaysBackground(
     fogMix: Float = RAYS_FOG_DEFAULT,
     /** Adds the component's dimming curtain. Turn off when drawing rays over content. */
     shade: Boolean = true,
+    /** Preferred redraw rate. Motion is time-based, so 60 is smoother, not faster. */
+    frameRate: Int = 30,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -84,6 +86,7 @@ fun LightRaysBackground(
                 edge = edge,
                 spread = spread,
                 fogMix = fogMix,
+                frameRate = frameRate,
             )
         } else {
             LightRaysCanvasBackground(
@@ -93,6 +96,7 @@ fun LightRaysBackground(
                 sourceY = sourceY,
                 reach = reach,
                 brightness = brightness,
+                frameRate = frameRate,
             )
         }
         // Black fade: knocks the whole backdrop back a stop so the rays read as
@@ -131,14 +135,15 @@ private fun LightRaysShaderBackground(
     edge: Float,
     spread: Float,
     fogMix: Float,
+    frameRate: Int,
 ) {
     val time = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(frameRate) {
         val start = System.nanoTime()
+        val delayMs = (1000 / frameRate.coerceAtLeast(1)).toLong()
         while (true) {
             time.floatValue = (System.nanoTime() - start) / 1_000_000_000f
-            // 30 fps: the shader animates slowly, and this halves the GPU cost.
-            delay(33L)
+            delay(delayMs)
         }
     }
 
@@ -288,14 +293,15 @@ private fun LightRaysCanvasBackground(
     sourceY: Float,
     reach: Float,
     brightness: Float,
+    frameRate: Int,
 ) {
-    // 25 fps is plenty for a slow shimmer and keeps the GPU cheap.
     val time = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(frameRate) {
         val start = System.nanoTime()
+        val delayMs = (1000 / frameRate.coerceAtLeast(1)).toLong()
         while (true) {
             time.floatValue = (System.nanoTime() - start) / 1_000_000_000f
-            delay(40L)
+            delay(delayMs)
         }
     }
 
