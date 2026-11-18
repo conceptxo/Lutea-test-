@@ -147,6 +147,7 @@ import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
+import com.rajatxo.lutea.ui.components.LightRaysBackground
 import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
 import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
 import com.rajatxo.lutea.ui.foundation.SearchHistoryStyle
@@ -405,8 +406,8 @@ fun SearchScreen() {
     val searchStyle = searchStyleState.style
     val historyStyle = searchStyleState.historyStyle
     val typingSoundEnabled = searchStyleState.typingSoundEnabled
-    val statusFadeHeight = with(LocalDensity.current) {
-        WindowInsets.statusBars.getTop(this).toDp() + 30.dp
+    val statusBarInset = with(LocalDensity.current) {
+        WindowInsets.statusBars.getTop(this).toDp()
     }
 
     // The real library, scanned once off the main thread. Results are just the
@@ -517,7 +518,7 @@ fun SearchScreen() {
                 library = library,
                 loaded = libraryReady,
                 style = searchStyle,
-                topInset = statusFadeHeight,
+                topInset = statusBarInset,
                 nowPlayingId = nowPlaying?.id,
                 onPlay = { song ->
                     submitSearch(query, song)
@@ -633,31 +634,6 @@ fun SearchScreen() {
                     ),
             )
         }
-
-        // Eased black fade under the system status bar. It extends a little
-        // below the bar so the jelly and scrolling songs pass under it without
-        // a hard horizontal edge.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(statusFadeHeight)
-                .background(
-                    // Long, eased falloff: the status-bar edge blends into
-                    // the jelly instead of forming a visible horizontal band.
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.96f),
-                        0.16f to Color.Black.copy(alpha = 0.93f),
-                        0.32f to Color.Black.copy(alpha = 0.82f),
-                        0.46f to Color.Black.copy(alpha = 0.64f),
-                        0.60f to Color.Black.copy(alpha = 0.44f),
-                        0.72f to Color.Black.copy(alpha = 0.27f),
-                        0.82f to Color.Black.copy(alpha = 0.14f),
-                        0.91f to Color.Black.copy(alpha = 0.05f),
-                        1f to Color.Transparent,
-                    ),
-                ),
-        )
     }
 }
 
@@ -741,6 +717,41 @@ private fun SearchResults(
                 }
             }
         }
+
+        // The old status-bar fade is gone. Instead the same soft light rays as
+        // the playlist page wash down from above the screen, over the jelly /
+        // cards and the result rows, then dissolve before the machine. The mask
+        // is on this wrapper only, so it never dims the content underneath.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    compositingStrategy = CompositingStrategy.Offscreen
+                }
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.White,
+                            0.58f to Color.White,
+                            1f to Color.Transparent,
+                        ),
+                        blendMode = BlendMode.DstIn,
+                    )
+                },
+        ) {
+            LightRaysBackground(
+                modifier = Modifier.fillMaxSize(),
+                color = Color(0xFFA9DFFF),
+                sourceY = -0.22f,
+                reach = 1.15f,
+                brightness = 0.34f,
+                edge = 0.55f,
+                spread = 1.8f,
+                fogMix = 0.30f,
+                shade = false,
+            )
+        }
     }
 }
 
@@ -796,11 +807,11 @@ private fun JellySongList(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    // The list reaches the very top of the results area, so
-                    // songs slide under the status-bar fade instead of starting
-                    // below a permanent "SONGS" header. The bottom mask uses
-                    // the same 0.78 → 1.00 cadence as JellyfishBackdrop, so both
-                    // the jelly and the songs dissolve at the same line.
+                    // The list starts just below the status-bar inset when at
+                    // rest. Once it scrolls, rows pass under the light rays
+                    // overlay and the transparent status bar. The bottom mask
+                    // uses the same 0.78 → 1.00 cadence as JellyfishBackdrop,
+                    // so both the jelly and the songs dissolve at the same line.
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
                     }

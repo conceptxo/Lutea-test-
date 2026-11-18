@@ -56,6 +56,16 @@ private val JellySpot = Color(0xFF3B0E2B)     // the dark maroon blotches on the
 private val JellyPetalBlue = Color(0xFF6F8CFF)
 private val JellyPetalPink = Color(0xFFFF7ADB)
 
+// The water around the jellies: a soft blue ambient glow plus two layers of
+// tiny bubbles. The back layer gives the empty space depth; the front layer is
+// sparse and very light, so it reads as glints in front of the bell.
+private val OceanGlow = Color(0xFF2E8BFF)
+private val BubbleDeep = Color(0xFF2D8CFF)
+private val BubbleBlue = Color(0xFF74D9FF)
+private val BubbleCore = Color(0xFFE8FBFF)
+private const val BackBubbleCount = 38
+private const val FrontBubbleCount = 11
+
 private class JellySpec(
     val xFrac: Float,    // horizontal position (0..1)
     val scale: Float,    // size relative to the main one
@@ -123,7 +133,14 @@ fun JellyfishBackdrop(
             .blur(blurRadius.dp, BlurredEdgeTreatment.Unbounded),
     ) {
         val t = clock.floatValue          // read in the draw phase: redraws only, no recomposition
-        for (spec in JellyCast) drawJelly(spec, t, size.width, size.height)
+        val w = size.width
+        val h = size.height
+        if (w <= 0f || h <= 0f) return@Canvas
+
+        drawOceanGlow(t, w, h)
+        drawBubbles(t, w, h, front = false)
+        for (spec in JellyCast) drawJelly(spec, t, w, h)
+        drawBubbles(t, w, h, front = true)
     }
 }
 
@@ -135,6 +152,122 @@ private fun jSmooth(x: Float): Float {
 private fun jHash(i: Int, salt: Int): Float {
     val x = sin(i * 127.1f + salt * 311.7f) * 43758.547f
     return x - floor(x)
+}
+
+/**
+ * A very soft blue pool of light behind the jellies. It breathes slowly so the
+ * empty space above the machine feels like deep water rather than flat black.
+ */
+private fun DrawScope.drawOceanGlow(t: Float, w: Float, h: Float) {
+    val breathe = 0.88f + 0.12f * sin(t * 0.22f)
+    val center = Offset(w * 0.5f, h * 0.42f)
+    val radius = w * 0.92f
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to OceanGlow.copy(alpha = 0.075f * breathe),
+            0.55f to OceanGlow.copy(alpha = 0.028f * breathe),
+            1f to Color.Transparent,
+            center = center,
+            radius = radius,
+        ),
+        radius = radius,
+        center = center,
+        blendMode = BlendMode.Plus,
+    )
+}
+
+/**
+ * Tiny ocean particles: cool blue glow dots, some with a thin bubble rim and a
+ * four-point glint. The back pass floats behind the jellies; the front pass is
+ * sparse, larger and faint so a few sparks read in front of the bell.
+ */
+private fun DrawScope.drawBubbles(t: Float, w: Float, h: Float, front: Boolean) {
+    val count = if (front) FrontBubbleCount else BackBubbleCount
+    val salt = if (front) 60 else 20
+    val alphaScale = if (front) 0.55f else 0.95f
+    val sizeScale = if (front) 1.35f else 1f
+
+    for (i in 0 until count) {
+        val depth = if (front) {
+            0.66f + 0.34f * jHash(i, salt)
+        } else {
+            0.15f + 0.80f * jHash(i, salt)
+        }
+        val speed = 0.009f + 0.020f * jHash(i, salt + 1)
+        val life = (t * speed + jHash(i, salt + 2)) % 1f
+        val edge = jSmooth(life / 0.12f) * jSmooth((1f - life) / 0.16f)
+        if (edge < 0.01f) continue
+
+        val twinkle = 0.50f + 0.50f * sin(
+            t * (0.8f + 1.3f * jHash(i, salt + 3)) + jHash(i, salt + 4) * JTau,
+        )
+        val drift = sin(
+            t * (0.08f + 0.16f * jHash(i, salt + 6)) + jHash(i, salt + 7) * JTau,
+        ) * w * (0.004f + 0.018f * depth)
+        val x = w * (0.03f + 0.94f * jHash(i, salt + 5)) + drift
+        val y = h * (1.06f - life * 1.24f)
+        val r = w * (0.0012f + 0.0042f * depth) * sizeScale * (0.75f + 0.45f * twinkle)
+        val a = edge * (0.20f + 0.80f * depth) * alphaScale * (0.55f + 0.45f * twinkle)
+        val c = Offset(x, y)
+
+        // Wide, faint halo → bubble rim → bright centre. Additive blending is
+        // what makes them feel like light in water instead of flat dots.
+        drawCircle(
+            color = BubbleDeep.copy(alpha = 0.055f * a),
+            radius = r * 4.4f,
+            center = c,
+            blendMode = BlendMode.Plus,
+        )
+        drawCircle(
+            color = BubbleBlue.copy(alpha = 0.16f * a),
+            radius = r * 2.2f,
+            center = c,
+            blendMode = BlendMode.Plus,
+        )
+        drawCircle(
+            color = BubbleCore.copy(alpha = 0.72f * a),
+            radius = r * 0.48f,
+            center = c,
+            blendMode = BlendMode.Plus,
+        )
+
+        if (depth > 0.46f) {
+            drawCircle(
+                color = BubbleBlue.copy(alpha = 0.38f * a),
+                radius = r,
+                center = c,
+                style = Stroke(width = maxOf(0.55f, r * 0.12f)),
+                blendMode = BlendMode.Plus,
+            )
+            // The little off-centre catch-light that makes it read as a bubble.
+            drawCircle(
+                color = BubbleCore.copy(alpha = 0.60f * a),
+                radius = maxOf(0.5f, r * 0.13f),
+                center = Offset(x - r * 0.36f, y - r * 0.36f),
+                blendMode = BlendMode.Plus,
+            )
+        }
+
+        if (depth > 0.84f && twinkle > 0.62f) {
+            val arm = r * 2.8f
+            val starA = BubbleCore.copy(alpha = 0.20f * a)
+            val starW = maxOf(0.45f, r * 0.07f)
+            drawLine(
+                color = starA,
+                start = Offset(x - arm, y),
+                end = Offset(x + arm, y),
+                strokeWidth = starW,
+                blendMode = BlendMode.Plus,
+            )
+            drawLine(
+                color = starA,
+                start = Offset(x, y - arm),
+                end = Offset(x, y + arm),
+                strokeWidth = starW,
+                blendMode = BlendMode.Plus,
+            )
+        }
+    }
 }
 
 /** Rotation (yaw, pitch, roll) + perspective, so every point is truly 3D. */

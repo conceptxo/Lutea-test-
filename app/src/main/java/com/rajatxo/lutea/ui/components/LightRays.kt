@@ -69,6 +69,8 @@ fun LightRaysBackground(
     spread: Float = RAYS_SPREAD_DEFAULT,
     /** How much drifting haze is mixed into the rays. */
     fogMix: Float = RAYS_FOG_DEFAULT,
+    /** Adds the component's dimming curtain. Turn off when drawing rays over content. */
+    shade: Boolean = true,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -94,19 +96,22 @@ fun LightRaysBackground(
             )
         }
         // Black fade: knocks the whole backdrop back a stop so the rays read as
-        // dim light instead of a bright wash.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .drawWithCache {
-                    val brush = Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.28f),
-                        0.55f to Color.Black.copy(alpha = 0.16f),
-                        1f to Color.Black.copy(alpha = 0.06f),
-                    )
-                    onDrawBehind { drawRect(brush) }
-                },
-        )
+        // dim light instead of a bright wash. Skipped when the rays are an
+        // overlay and must not darken the content underneath.
+        if (shade) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .drawWithCache {
+                        val brush = Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.28f),
+                            0.55f to Color.Black.copy(alpha = 0.16f),
+                            1f to Color.Black.copy(alpha = 0.06f),
+                        )
+                        onDrawBehind { drawRect(brush) }
+                    },
+            )
+        }
     }
 }
 
