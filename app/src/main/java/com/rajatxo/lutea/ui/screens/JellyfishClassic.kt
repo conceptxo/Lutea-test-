@@ -36,14 +36,14 @@ import kotlin.math.sin
 private const val ClassicTau = 6.2831855f
 private const val ClassicHalfPi = 1.5707964f
 
-private val ClassicRim = Color(0xFF8F86FF)      // violet-blue at the bell edge
-private val ClassicApex = Color(0xFFE56FE3)     // hot pink toward the top
-private val ClassicRibCol = Color(0xFFEBDDFF)
-private val ClassicTentacle = Color(0xFFDDBBFF)
-private val ClassicArm = Color(0xFFF2B6FF)
-private val ClassicSpot = Color(0xFF3B0E2B)     // the dark maroon blotches on the rim
-private val ClassicPetalBlue = Color(0xFF6F8CFF)
-private val ClassicPetalPink = Color(0xFFFF7ADB)
+private val ClassicRim = Color(0xFF7A5CFF)      // electric violet-blue at the bell edge
+private val ClassicApex = Color(0xFFFF3FCB)     // saturated magenta toward the top
+private val ClassicRibCol = Color(0xFFF4DEFF)
+private val ClassicTentacle = Color(0xFFD18AFF) // vivid orchid
+private val ClassicArm = Color(0xFFFF8AF0)      // hot pink
+private val ClassicSpot = Color(0xFF3A0628)     // deep plum blotches on the rim
+private val ClassicPetalBlue = Color(0xFF4D7CFF)
+private val ClassicPetalPink = Color(0xFFFF4FC8)
 
 private class ClassicJellySpec(
     val xFrac: Float,    // horizontal position (0..1)
@@ -162,13 +162,31 @@ private fun DrawScope.drawClassicJelly(spec: ClassicJellySpec, t: Float, w: Floa
     val bellMid = cam.p(0f, -bellH * 0.4f, 0f)
     drawCircle(
         brush = Brush.radialGradient(
-            0f to ClassicApex.copy(alpha = 0.16f * a),
+            0f to ClassicApex.copy(alpha = 0.18f * a),
+            0.45f to ClassicPetalPink.copy(alpha = 0.06f * a),
             1f to Color.Transparent,
             center = bellMid,
             radius = r * 1.7f,
         ),
         radius = r * 1.7f,
         center = bellMid,
+        blendMode = BlendMode.Plus,
+    )
+
+    // ── broad inner bloom, seen through the translucent dome ──
+    val glowPulse = 0.88f + 0.12f * sin(t * 1.55f + spec.seed * 1.3f)
+    val innerGlow = cam.p(0f, -bellH * 0.32f, 0f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to ClassicApex.copy(alpha = 0.20f * a * glowPulse),
+            0.35f to ClassicPetalPink.copy(alpha = 0.10f * a * glowPulse),
+            0.72f to ClassicRim.copy(alpha = 0.04f * a),
+            1f to Color.Transparent,
+            center = innerGlow,
+            radius = r * 1.02f,
+        ),
+        radius = r * 1.02f,
+        center = innerGlow,
         blendMode = BlendMode.Plus,
     )
 
@@ -241,22 +259,38 @@ private fun DrawScope.drawClassicJelly(spec: ClassicJellySpec, t: Float, w: Floa
         val sr = r * (0.018f + 0.026f * classicHash(i, 3))
         drawCircle(ClassicSpot.copy(alpha = 0.92f * a), sr, o)
         drawCircle(
-            Color(0xFFFF9BE8).copy(alpha = 0.35f * a),
+            Color(0xFFFF7FE0).copy(alpha = 0.35f * a),
             sr * 0.45f,
             Offset(o.x - sr * 0.25f, o.y - sr * 0.35f),
         )
     }
 
-    // ── glowing centre under the bell ──
-    val core = cam.p(0f, -bellH * 0.28f, 0f)
+    // ── smooth centre glow: a wide bloom under a bright, soft core ──
+    val core = cam.p(0f, -bellH * 0.30f, 0f)
+    val corePulse = 0.90f + 0.10f * sin(t * 1.8f + spec.seed * 1.1f)
     drawCircle(
         brush = Brush.radialGradient(
-            0f to Color(0xFFFFB6F2).copy(alpha = 0.55f * a),
+            0f to Color(0xFFFFC0F5).copy(alpha = 0.18f * a * corePulse),
+            0.52f to Color(0xFFFF5FD8).copy(alpha = 0.07f * a),
             1f to Color.Transparent,
             center = core,
-            radius = r * 0.42f,
+            radius = r * 0.86f,
         ),
-        radius = r * 0.42f,
+        radius = r * 0.86f,
+        center = core,
+        blendMode = BlendMode.Plus,
+    )
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to Color(0xFFFFF4FF).copy(alpha = 0.62f * a * corePulse),
+            0.18f to Color(0xFFFFA6F5).copy(alpha = 0.48f * a * corePulse),
+            0.48f to Color(0xFFFF4FD4).copy(alpha = 0.22f * a * corePulse),
+            0.78f to Color(0xFF9A5BFF).copy(alpha = 0.07f * a),
+            1f to Color.Transparent,
+            center = core,
+            radius = r * 0.55f,
+        ),
+        radius = r * 0.55f,
         center = core,
         blendMode = BlendMode.Plus,
     )

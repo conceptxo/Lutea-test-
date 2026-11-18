@@ -3,7 +3,6 @@ package com.rajatxo.lutea.playback
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
-import android.os.Bundle
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -152,7 +151,14 @@ object PlaybackConnection {
 
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     val songId = mediaItem?.mediaId?.toLongOrNull()
-                    _currentSong.value = queue.firstOrNull { it.id == songId }
+                    val queued = songId?.let { id -> queue.firstOrNull { it.id == id } }
+                    // After the activity (and sometimes the whole UI process) is
+                    // recreated, the controller can reconnect to a service that
+                    // already has a song loaded without replaying the transition
+                    // event to us. Rebuild the display model from the media item
+                    // so the mini player can restore immediately.
+                    _currentSong.value = queued
+                        ?: mediaItem?.let { mediaItemToSong(it, c.duration) }
                     _positionMs.value = 0L
                     _durationMs.value = 0L
                     if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
@@ -160,6 +166,12 @@ object PlaybackConnection {
                     }
                     // Real-time 8D — no per-song processing needed. The processor
                     // keeps running across song changes because it's in the AudioSink.
+                }
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_READY) {
+                        syncFromController(c)
+                    }
                 }
 
                 override fun onPlayerErrorChanged(error: PlaybackException?) {
@@ -181,9 +193,35 @@ object PlaybackConnection {
                     }
                 }
             })
+
+            // The service may already be playing a song when the activity is
+            // rebuilt after being removed from recents. The initial transition
+            // event is not guaranteed, so seed the UI state from the live
+            // controller before returning.
+            syncFromController(c)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to connect to playback service", e)
         }
+    }
+
+    /**
+     * Pull the current song/position from a connected controller. This is the
+     * restore path for a service that survived while the activity was gone.
+     */
+    private fun syncFromController(c: MediaController) {
+        _isPlaying.value = c.isPlaying
+        _positionMs.value = c.currentPosition.coerceAtLeast(0L)
+        val duration = c.duration.coerceAtLeast(0L)
+        _durationMs.value = duration
+
+        val item = c.currentMediaItem
+        if (item == null) {
+            _currentSong.value = null
+            return
+        }
+        val songId = item.mediaId.toLongOrNull()
+        val queued = songId?.let { id -> queue.firstOrNull { it.id == id } }
+        _currentSong.value = queued ?: mediaItemToSong(item, duration)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -321,6 +359,24 @@ object PlaybackConnection {
         _is8DActive.value = false
     }
 
+    /** Rebuild just enough of a [Song] to render the mini/full player after a restore. */
+    private fun mediaItemToSong(item: MediaItem, fallbackDurationMs: Long = 0L): Song? {
+        val metadata = item.mediaMetadata
+        val title = metadata.title?.toString().orEmpty()
+        if (title.isBlank()) return null
+        val storedDuration = metadata.durationMs ?: 0L
+        return Song(
+            id = item.mediaId.toLongOrNull() ?: 0L,
+            title = title,
+            artist = metadata.artist?.toString().orEmpty(),
+            album = metadata.albumTitle?.toString().orEmpty(),
+            duration = if (storedDuration > 0L) storedDuration else fallbackDurationMs.coerceAtLeast(0L),
+            uri = item.localConfiguration?.uri ?: Uri.EMPTY,
+            albumArtUri = metadata.artworkUri,
+            dateAdded = 0L,
+        )
+    }
+
     private fun buildMediaItem(uri: Uri, song: Song): MediaItem = MediaItem.Builder()
         .setUri(uri)
         .setMediaId(song.id.toString())
@@ -330,6 +386,7 @@ object PlaybackConnection {
                 .setArtist(song.artist)
                 .setAlbumTitle(song.album)
                 .setArtworkUri(song.albumArtUri)
+                .setDurationMs(song.duration.coerceAtLeast(0L))
                 .build()
         )
         .build()

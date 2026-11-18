@@ -29,11 +29,12 @@ import coil3.compose.AsyncImage
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.colorControls
-import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.R
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
+
+/** Same dark ink the nav capsule uses on its white glass. */
+private val MiniInk = Color(0xFF1C1C1E)
 
 /**
  * MiniPlayer — a compact glass capsule above the nav bar showing the current song.
@@ -58,32 +59,29 @@ fun MiniPlayer(
     val isPlaying by PlaybackConnection.isPlaying.collectAsState()
 
     val capsuleShape = RoundedCornerShape(percent = 50)
-    // Glass tuned to match the nav bar's frosted look but with a bit more
-    // white so the blur reads (the nav bar is barely visible because it has
-    // too much white; here we add a measured amount — a 0.16 white tint +
-    // a soft top sheen — so the blur is still legible without going chalky).
+    // The mini player is the nav bar's little sibling: the same 16dp frost,
+    // the same white 0.80 → 0.64 glass tint, and the same soft top sheen.
+    // Its ink is dark like the nav so the white surface stays legible.
     val glassSurface = if (backdrop != null) {
         Modifier.drawBackdrop(
             backdrop = backdrop,
             shape = { capsuleShape },
             effects = {
-                vibrancy()
-                colorControls(
-                    brightness = 0.05f,
-                    contrast = 1f,
-                    saturation = 1.35f,
-                )
-                blur(18.dp.toPx())
+                blur(16.dp.toPx())
             },
             onDrawSurface = {
-                // Slightly darker base than the nav so the album art pops,
-                // plus a touch more white so the glass is visible.
-                drawRect(Color.Black.copy(alpha = 0.36f))
-                drawRect(Color.White.copy(alpha = 0.16f))
                 drawRect(
                     brush = Brush.verticalGradient(
-                        0f to Color.White.copy(alpha = 0.22f),
-                        0.45f to Color.White.copy(alpha = 0.06f),
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.80f),
+                            Color.White.copy(alpha = 0.64f),
+                        )
+                    )
+                )
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0.30f),
+                        0.55f to Color.Transparent,
                         1f to Color.Transparent,
                     )
                 )
@@ -92,8 +90,7 @@ fun MiniPlayer(
     } else {
         Modifier.background(
             brush = Brush.verticalGradient(
-                0f to Color(0xFF303030),
-                1f to Color(0xFF121212),
+                colors = listOf(Color.White, Color(0xFFD8D8DC)),
             ),
             shape = capsuleShape,
         )
@@ -121,15 +118,15 @@ fun MiniPlayer(
                             .height(56.dp)
                     }
                 )
-                .shadow(elevation = 8.dp, shape = capsuleShape, clip = true)
+                .shadow(elevation = 6.dp, shape = capsuleShape, clip = true)
                 .clip(capsuleShape)
                 .then(glassSurface)
                 .border(
-                    width = 1.dp,
+                    width = 0.8.dp,
                     brush = Brush.verticalGradient(
-                        0f to Color.White.copy(alpha = 0.55f),
-                        0.50f to Color.White.copy(alpha = 0.14f),
-                        1f to Color.White.copy(alpha = 0.08f),
+                        0f to Color.White.copy(alpha = 0.95f),
+                        0.50f to Color.White.copy(alpha = 0.18f),
+                        1f to Color.White.copy(alpha = 0.55f),
                     ),
                     shape = capsuleShape,
                 )
@@ -144,8 +141,9 @@ fun MiniPlayer(
             Box(
                 modifier = Modifier
                     .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF2A2A2A)),
+                    .clip(CircleShape)
+                    .background(Color(0xFF2A2A2A))
+                    .border(0.8.dp, MiniInk.copy(alpha = 0.10f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 currentSong?.albumArtUri?.let { artUri ->
@@ -164,7 +162,7 @@ fun MiniPlayer(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = currentSong?.title ?: "",
-                    color = Color.White,
+                    color = MiniInk,
                     fontSize = 14.sp,
                     fontFamily = CalSansFamily,
                     fontWeight = FontWeight.Medium,
@@ -173,7 +171,7 @@ fun MiniPlayer(
                 )
                 Text(
                     text = currentSong?.artist ?: "",
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = MiniInk.copy(alpha = 0.60f),
                     fontSize = 12.sp,
                     fontFamily = CalSansFamily,
                     maxLines = 1,
@@ -188,8 +186,8 @@ fun MiniPlayer(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.10f))
-                    .border(0.6.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                    .background(MiniInk.copy(alpha = 0.06f))
+                    .border(0.6.dp, MiniInk.copy(alpha = 0.10f), CircleShape)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -201,7 +199,7 @@ fun MiniPlayer(
                         if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
                     ),
                     contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = Color.White,
+                    tint = MiniInk,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -213,8 +211,8 @@ fun MiniPlayer(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.10f))
-                    .border(0.6.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                    .background(MiniInk.copy(alpha = 0.06f))
+                    .border(0.6.dp, MiniInk.copy(alpha = 0.10f), CircleShape)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -224,7 +222,7 @@ fun MiniPlayer(
                 Icon(
                     painter = painterResource(R.drawable.ic_next),
                     contentDescription = "Next",
-                    tint = Color.White,
+                    tint = MiniInk,
                     modifier = Modifier.size(20.dp),
                 )
             }
