@@ -171,7 +171,7 @@ fun MiniPlayer(
                 )
                 Text(
                     text = currentSong?.artist ?: "",
-                    color = MiniInk.copy(alpha = 0.60f),
+                    color = MiniInk.copy(alpha = 0.68f),
                     fontSize = 12.sp,
                     fontFamily = CalSansFamily,
                     maxLines = 1,
