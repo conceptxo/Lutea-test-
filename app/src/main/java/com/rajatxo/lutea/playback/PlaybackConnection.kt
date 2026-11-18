@@ -117,7 +117,10 @@ object PlaybackConnection {
     // ─────────────────────────────────────────────────────────────────────────
 
     suspend fun connect(context: Context) {
-        if (controller != null) return
+        controller?.let { existing ->
+            syncFromController(existing)
+            return
+        }
         try {
             val app = context.applicationContext
             appContext = app
