@@ -2060,7 +2060,7 @@ private fun SimpleSearchHistory(
             bottom = bottomInset + 10.dp,
         ),
     ) {
-        itemsIndexed(entries, key = { _, entry -> entry.query }) { index, entry ->
+        itemsIndexed(entries) { index, entry ->
             Text(
                 text = entry.query,
                 color = Color.White.copy(alpha = if (index == 0) 0.92f else 0.68f),
