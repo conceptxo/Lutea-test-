@@ -1,5 +1,7 @@
 package com.rajatxo.lutea.ui.screens
 
+import android.graphics.RuntimeShader
+import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -20,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -27,60 +30,67 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
+import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.random.Random
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  JELLYFISH BACKDROP
+//  JELLYFISH BACKDROP  v2  —  "deep water"
 //
-//  Fills the empty area above the typewriter while nothing is typed.
-//  Pure Canvas, no images, no extra libraries. Each jellyfish is a small 3D
-//  model (dome rings, ribs, petals, rim spots, oral arms, tentacles) that is
-//  rotated, pulsed and perspective-projected every frame.
+//  • Real physics. Every jellyfish is a little simulation:
+//      - the bell is driven by a pulse cycle and follows it through a spring,
+//        so it overshoots and settles like real tissue
+//      - each pulse is a thrust; water drag + a slow sink turn that into the
+//        surge-and-glide you see in real jellyfish
+//      - it leans (tilts) with its own motion and turns slowly in 3D
+//      - every tentacle and oral arm is a Verlet rope pinned to the bell, so
+//        they trail behind, bunch up when the bell squeezes, and sway in the
+//        water instead of following a fixed sine
+//  • Colour. Each animal has its own iridescent palette (rim → body → apex),
+//    far ones fade toward deep blue for depth.
+//  • Glow. Everything is added onto the page (BlendMode.Plus), so light
+//    accumulates like real bioluminescence.
+//  • Marine snow. Glowing particles are drawn by an AGSL shader (Android 13+),
+//    layered for parallax, drifting and twinkling, with a soft bokeh layer in
+//    front. Older phones get a lighter Canvas fallback.
 //
-//  searching = true  → everything blurs + dims, the result list shows on top.
+//  Same call as before:  JellyfishBackdrop(searching = ..., modifier = ...)
 // ═══════════════════════════════════════════════════════════════════════════
 
 private const val JTau = 6.2831855f
+private const val JPi = 3.1415927f
 private const val JHalfPi = 1.5707964f
 
-private val JellyRim = Color(0xFF8F86FF)      // violet-blue at the bell edge
-private val JellyApex = Color(0xFFE56FE3)     // hot pink toward the top
-private val JellyRibCol = Color(0xFFEBDDFF)
-private val JellyTentacle = Color(0xFFDDBBFF)
-private val JellyArm = Color(0xFFF2B6FF)
-private val JellySpot = Color(0xFF3B0E2B)     // the dark maroon blotches on the rim
-private val JellyPetalBlue = Color(0xFF6F8CFF)
-private val JellyPetalPink = Color(0xFFFF7ADB)
-
-// The water around the jellies: a soft blue ambient glow plus two layers of
-// tiny bubbles. The back layer gives the empty space depth; the front layer is
-// sparse and very light, so it reads as glints in front of the bell.
-private val OceanGlow = Color(0xFF2E8BFF)
-private val BubbleDeep = Color(0xFF2D8CFF)
-private val BubbleBlue = Color(0xFF74D9FF)
-private val BubbleCore = Color(0xFFE8FBFF)
-private const val BackBubbleCount = 38
-private const val FrontBubbleCount = 11
+private val JellyDeepBlue = Color(0xFF2A5FA8)
 
 private class JellySpec(
-    val xFrac: Float,    // horizontal position (0..1)
-    val scale: Float,    // size relative to the main one
-    val rise: Float,     // screens per second it floats up
-    val offset: Float,   // starting point on its journey
-    val alpha: Float,    // depth: far ones are fainter
+    val scale: Float,      // size relative to the hero
+    val depth: Float,      // 1 = near / bright, small = far / faint
+    val xFrac: Float,      // where it likes to float horizontally
+    val y0Frac: Float,     // where it starts on the very first frame
+    val rimHue: Float,     // palette: bell edge
+    val bodyHue: Float,    //          bell body
+    val apexHue: Float,    //          top of the dome
+    val speed: Float,      // how fast it swims up
     val seed: Float,
 )
 
-// Drawn back to front: the small, faint ones first, the big hero last.
+// far → near, so the hero is drawn last
 private val JellyCast = listOf(
-    JellySpec(0.84f, 0.42f, 1f / 26f, 0.15f, 0.45f, 4.7f),
-    JellySpec(0.16f, 0.52f, 1f / 30f, 0.90f, 0.55f, 2.1f),
-    JellySpec(0.50f, 1.00f, 1f / 38f, 0.38f, 1.00f, 0f),
+    JellySpec(0.30f, 0.45f, 0.70f, 0.82f, 195f, 225f, 270f, 0.80f, 3.3f),
+    JellySpec(0.38f, 0.55f, 0.13f, 0.34f, 12f, 335f, 290f, 0.90f, 1.4f),   // warm coral one
+    JellySpec(0.52f, 0.70f, 0.20f, 0.64f, 330f, 290f, 245f, 1.00f, 5.1f),  // pink → violet
+    JellySpec(0.48f, 0.65f, 0.87f, 0.30f, 150f, 190f, 235f, 1.10f, 2.2f),  // aqua → blue
+    JellySpec(1.00f, 1.00f, 0.60f, 0.52f, 190f, 225f, 285f, 1.00f, 0.0f),  // hero: cyan → violet
 )
+
+// ───────────────────────────── composable ─────────────────────────────
 
 @Composable
 fun JellyfishBackdrop(
@@ -88,7 +98,6 @@ fun JellyfishBackdrop(
     modifier: Modifier = Modifier,
 ) {
     val clock = remember { mutableFloatStateOf(0f) }
-    // Keep the swim running under the results list; the blur is only a layer.
     LaunchedEffect(Unit) {
         var last = 0L
         while (true) {
@@ -100,9 +109,9 @@ fun JellyfishBackdrop(
         }
     }
 
-    // typing → jellyfish melt into a soft blur, the songs list takes over
+    // typing → everything melts into a soft blur, the song list takes over
     val blurRadius by animateFloatAsState(
-        targetValue = if (searching) 6f else 0f,
+        targetValue = if (searching) 24f else 0f,
         animationSpec = tween(500),
         label = "jellyBlur",
     )
@@ -112,13 +121,23 @@ fun JellyfishBackdrop(
         label = "jellyDim",
     )
 
+    val sim = remember { JellySim() }
+    val snowShader = remember {
+        if (Build.VERSION.SDK_INT >= 33) {
+            runCatching { RuntimeShader(SnowAgsl) }.getOrNull()
+        } else {
+            null
+        }
+    }
+    val snowBrush = remember(snowShader) { snowShader?.let { ShaderBrush(it) } }
+
     Canvas(
         modifier = modifier
             .graphicsLayer {
                 alpha = dim
                 compositingStrategy = CompositingStrategy.Offscreen
             }
-            // soft fade at the bottom so nothing is cut off right above the search line
+            // soft fade at the bottom so nothing is cut off right above the machine
             .drawWithContent {
                 drawContent()
                 drawRect(
@@ -133,16 +152,124 @@ fun JellyfishBackdrop(
             .blur(blurRadius.dp, BlurredEdgeTreatment.Unbounded),
     ) {
         val t = clock.floatValue          // read in the draw phase: redraws only, no recomposition
-        val w = size.width
-        val h = size.height
-        if (w <= 0f || h <= 0f) return@Canvas
+        sim.advance(t, size.width, size.height)
 
-        drawOceanGlow(t, w, h)
-        drawBubbles(t, w, h, front = false)
-        for (spec in JellyCast) drawJelly(spec, t, w, h)
-        drawBubbles(t, w, h, front = true)
+        drawSnow(snowShader, snowBrush, pass = 0f, t = t)          // far marine snow
+        for (b in sim.bodies) drawBody(b, t)
+        drawSnow(snowShader, snowBrush, pass = 1f, t = t)          // near, soft bokeh
     }
 }
+
+// ───────────────────────────── glowing particles (AGSL) ─────────────────────────────
+
+/**
+ * Procedural marine snow. Each layer is a jittered grid; one particle lives in each cell,
+ * so there is no per-particle data to upload and no hard edges: a particle is a gaussian
+ * core plus a wide soft halo, twinkling at its own rate and drifting down / sideways.
+ *   pass 0 → three layers of fine snow (far → near)
+ *   pass 1 → one layer of big soft bokeh discs, drawn over the jellyfish
+ */
+private const val SnowAgsl = """
+uniform float2 uSize;
+uniform float uTime;
+uniform float uPass;
+uniform float uStrength;
+
+float h11(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
+
+half4 main(float2 fragCoord) {
+    float2 uv = fragCoord / uSize.y;
+    float vy = fragCoord.y / uSize.y;
+    float3 col = float3(0.0);
+
+    for (int i = 0; i < 4; i++) {
+        if (uPass < 0.5 && i == 3) { continue; }
+        if (uPass > 0.5 && i != 3) { continue; }
+
+        float fl = float(i);
+        float scale = 8.0;
+        float thr = 0.55;
+        float bright = 0.95;
+        float fall = 0.07;
+        float jit = 0.40;
+        if (i == 1) { scale = 13.0; thr = 0.60; bright = 0.80; fall = 0.045; }
+        if (i == 2) { scale = 21.0; thr = 0.66; bright = 0.65; fall = 0.030; }
+        if (i == 3) { scale = 3.6;  thr = 0.78; bright = 0.32; fall = 0.100; jit = 0.18; }
+
+        float2 p = uv * scale + float2(uTime * 0.012 * (fl + 1.0), -uTime * fall);
+        float2 id = floor(p);
+        float2 f = fract(p) - 0.5;
+
+        float n = id.x * 7.13 + id.y * 131.7 + fl * 53.0;
+        float r1 = h11(n);
+        float r2 = h11(n + 3.1);
+        float r3 = h11(n + 7.7);
+        if (r3 < thr) { continue; }
+
+        float2 pos = (float2(r1, r2) - 0.5) * jit
+            + 0.05 * float2(sin(uTime * 0.5 + r1 * 6.28), cos(uTime * 0.43 + r2 * 6.28));
+        float d = length(f - pos);
+        float tw = 0.55 + 0.45 * sin(uTime * (0.7 + r2 * 1.6) + r3 * 50.0);
+        float edge = 1.0 - smoothstep(0.28, 0.5, max(abs(f.x), abs(f.y)));
+
+        float v;
+        if (i == 3) {
+            float size = 0.16 + 0.12 * r1;
+            float body = exp(-d * d / (size * size));
+            float q = (d - size * 0.85) / (size * 0.22);
+            float ring = exp(-q * q);
+            v = (body * 0.35 + ring * 0.50) * tw * edge;
+        } else {
+            float size = mix(0.022, 0.07, r1 * r1);
+            float core = exp(-d * d / (size * size));
+            float halo = exp(-d * d / (size * size * 6.0));
+            v = (core + 0.22 * halo) * tw * edge;
+        }
+
+        // mostly cool white-cyan, now and then a violet-pink spark
+        float3 c = mix(float3(0.62, 0.88, 1.0), float3(0.95, 0.72, 1.0), step(0.9, r2));
+        col += c * v * bright;
+    }
+
+    // a little brighter toward the surface light
+    col *= mix(1.25, 0.65, clamp(vy, 0.0, 1.0));
+    return half4(half3(col * uStrength), 1.0);
+}
+"""
+
+private fun DrawScope.drawSnow(
+    shader: RuntimeShader?,
+    brush: ShaderBrush?,
+    pass: Float,
+    t: Float,
+) {
+    if (shader != null && brush != null) {
+        shader.setFloatUniform("uSize", size.width, size.height)
+        shader.setFloatUniform("uTime", t)
+        shader.setFloatUniform("uPass", pass)
+        shader.setFloatUniform("uStrength", 1f)
+        drawRect(brush = brush, blendMode = BlendMode.Plus)
+        return
+    }
+    if (pass > 0.5f) return
+
+    // fallback for Android 12 and older: soft dots on a plain canvas
+    val w = size.width
+    val h = size.height
+    for (i in 0 until 90) {
+        val hx = jHash(i, 1)
+        val hy = jHash(i, 2)
+        val hs = jHash(i, 3)
+        val x = (hx * w + sin(t * 0.3f + hs * 9f) * 12f + w) % w
+        val y = (hy * h + t * (5f + hs * 9f)) % h
+        val tw = 0.55f + 0.45f * sin(t * (0.8f + hs * 1.5f) + i)
+        val rad = (0.9f + hs * 1.8f) * density
+        drawCircle(Color(0xFFBFE6FF).copy(alpha = 0.07f * tw), rad * 4f, Offset(x, y), blendMode = BlendMode.Plus)
+        drawCircle(Color(0xFFDDF3FF).copy(alpha = 0.60f * tw), rad, Offset(x, y), blendMode = BlendMode.Plus)
+    }
+}
+
+// ───────────────────────────── physics ─────────────────────────────
 
 private fun jSmooth(x: Float): Float {
     val v = x.coerceIn(0f, 1f)
@@ -154,366 +281,504 @@ private fun jHash(i: Int, salt: Int): Float {
     return x - floor(x)
 }
 
-/**
- * A very soft blue pool of light behind the jellies. It breathes slowly so the
- * empty space above the machine feels like deep water rather than flat black.
- */
-private fun DrawScope.drawOceanGlow(t: Float, w: Float, h: Float) {
-    val breathe = 0.88f + 0.12f * sin(t * 0.22f)
-    val center = Offset(w * 0.5f, h * 0.42f)
-    val radius = w * 0.92f
-    drawCircle(
-        brush = Brush.radialGradient(
-            0f to OceanGlow.copy(alpha = 0.075f * breathe),
-            0.55f to OceanGlow.copy(alpha = 0.028f * breathe),
-            1f to Color.Transparent,
-            center = center,
-            radius = radius,
-        ),
-        radius = radius,
-        center = center,
-        blendMode = BlendMode.Plus,
-    )
-}
+/** Rotation (yaw, pitch, roll) of the animal; the result of apply() is left in ox/oy/oz. */
+private class JRot {
+    private var cYaw = 1f
+    private var sYaw = 0f
+    private var cPit = 1f
+    private var sPit = 0f
+    private var cRol = 1f
+    private var sRol = 0f
+    var ox = 0f
+    var oy = 0f
+    var oz = 0f
 
-/**
- * Tiny ocean particles: cool blue glow dots, some with a thin bubble rim and a
- * four-point glint. The back pass floats behind the jellies; the front pass is
- * sparse, larger and faint so a few sparks read in front of the bell.
- */
-private fun DrawScope.drawBubbles(t: Float, w: Float, h: Float, front: Boolean) {
-    val count = if (front) FrontBubbleCount else BackBubbleCount
-    val salt = if (front) 60 else 20
-    val alphaScale = if (front) 0.55f else 0.95f
-    val sizeScale = if (front) 1.35f else 1f
-
-    for (i in 0 until count) {
-        val depth = if (front) {
-            0.66f + 0.34f * jHash(i, salt)
-        } else {
-            0.15f + 0.80f * jHash(i, salt)
-        }
-        val speed = 0.009f + 0.020f * jHash(i, salt + 1)
-        val life = (t * speed + jHash(i, salt + 2)) % 1f
-        val edge = jSmooth(life / 0.12f) * jSmooth((1f - life) / 0.16f)
-        if (edge < 0.01f) continue
-
-        val twinkle = 0.50f + 0.50f * sin(
-            t * (0.8f + 1.3f * jHash(i, salt + 3)) + jHash(i, salt + 4) * JTau,
-        )
-        val drift = sin(
-            t * (0.08f + 0.16f * jHash(i, salt + 6)) + jHash(i, salt + 7) * JTau,
-        ) * w * (0.004f + 0.018f * depth)
-        val x = w * (0.03f + 0.94f * jHash(i, salt + 5)) + drift
-        val y = h * (1.06f - life * 1.24f)
-        val r = w * (0.0012f + 0.0042f * depth) * sizeScale * (0.75f + 0.45f * twinkle)
-        val a = edge * (0.20f + 0.80f * depth) * alphaScale * (0.55f + 0.45f * twinkle)
-        val c = Offset(x, y)
-
-        // Wide, faint halo → bubble rim → bright centre. Additive blending is
-        // what makes them feel like light in water instead of flat dots.
-        drawCircle(
-            color = BubbleDeep.copy(alpha = 0.055f * a),
-            radius = r * 4.4f,
-            center = c,
-            blendMode = BlendMode.Plus,
-        )
-        drawCircle(
-            color = BubbleBlue.copy(alpha = 0.16f * a),
-            radius = r * 2.2f,
-            center = c,
-            blendMode = BlendMode.Plus,
-        )
-        drawCircle(
-            color = BubbleCore.copy(alpha = 0.72f * a),
-            radius = r * 0.48f,
-            center = c,
-            blendMode = BlendMode.Plus,
-        )
-
-        if (depth > 0.46f) {
-            drawCircle(
-                color = BubbleBlue.copy(alpha = 0.38f * a),
-                radius = r,
-                center = c,
-                style = Stroke(width = maxOf(0.55f, r * 0.12f)),
-                blendMode = BlendMode.Plus,
-            )
-            // The little off-centre catch-light that makes it read as a bubble.
-            drawCircle(
-                color = BubbleCore.copy(alpha = 0.60f * a),
-                radius = maxOf(0.5f, r * 0.13f),
-                center = Offset(x - r * 0.36f, y - r * 0.36f),
-                blendMode = BlendMode.Plus,
-            )
-        }
-
-        if (depth > 0.84f && twinkle > 0.62f) {
-            val arm = r * 2.8f
-            val starA = BubbleCore.copy(alpha = 0.20f * a)
-            val starW = maxOf(0.45f, r * 0.07f)
-            drawLine(
-                color = starA,
-                start = Offset(x - arm, y),
-                end = Offset(x + arm, y),
-                strokeWidth = starW,
-                blendMode = BlendMode.Plus,
-            )
-            drawLine(
-                color = starA,
-                start = Offset(x, y - arm),
-                end = Offset(x, y + arm),
-                strokeWidth = starW,
-                blendMode = BlendMode.Plus,
-            )
-        }
+    fun set(yaw: Float, pitch: Float, roll: Float) {
+        cYaw = cos(yaw); sYaw = sin(yaw)
+        cPit = cos(pitch); sPit = sin(pitch)
+        cRol = cos(roll); sRol = sin(roll)
     }
-}
-
-/** Rotation (yaw, pitch, roll) + perspective, so every point is truly 3D. */
-private class JellyCam(
-    private val cx: Float,
-    private val cy: Float,
-    yaw: Float,
-    pitch: Float,
-    roll: Float,
-    private val focal: Float,
-) {
-    private val cYaw = cos(yaw)
-    private val sYaw = sin(yaw)
-    private val cPit = cos(pitch)
-    private val sPit = sin(pitch)
-    private val cRol = cos(roll)
-    private val sRol = sin(roll)
 
     // model space: x right, y DOWN, z away from the viewer
-    fun p(x: Float, y: Float, z: Float): Offset {
+    fun apply(x: Float, y: Float, z: Float) {
         val x1 = x * cYaw + z * sYaw
         val z1 = -x * sYaw + z * cYaw
         val y2 = y * cPit - z1 * sPit
         val z2 = y * sPit + z1 * cPit
-        val x3 = x1 * cRol - y2 * sRol
-        val y3 = x1 * sRol + y2 * cRol
-        val s = focal / (focal + z2)
-        return Offset(cx + x3 * s, cy + y3 * s)
+        ox = x1 * cRol - y2 * sRol
+        oy = x1 * sRol + y2 * cRol
+        oz = z2
     }
 }
 
-private fun DrawScope.drawJelly(spec: JellySpec, t: Float, w: Float, h: Float) {
-    // ── journey: floats up the page, fades in at the bottom, out at the top ──
-    val prog = (t * spec.rise + spec.offset) % 1f
-    val a = spec.alpha * jSmooth(prog / 0.10f) * jSmooth((1f - prog) / 0.12f)
-    if (a < 0.01f) return
+/** One tentacle / oral arm: a Verlet rope. kind 0 = fine, 1 = thick ribbon, 2 = oral arm. */
+private class JChain(
+    val n: Int,
+    val angle: Float,
+    val len: Float,       // in units of the bell radius
+    val kind: Int,
+    val phase: Float,
+) {
+    val px = FloatArray(n)
+    val py = FloatArray(n)
+    val pz = FloatArray(n)
+    val qx = FloatArray(n)   // previous positions
+    val qy = FloatArray(n)
+    val qz = FloatArray(n)
+}
 
-    val r = min(w * 0.30f, h * 0.27f) * spec.scale
+private class JellyBody(val spec: JellySpec) {
+    var x = 0f
+    var y = 0f
+    var vx = 0f
+    var vy = 0f
+    var tilt = 0f
+    var tiltV = 0f
+    var yaw = 0f
+    var yawV = 0f
+    var pitch = -0.6f
+    var phase = 0f
+    var bell = 0f      // 0 relaxed … 1 squeezed (spring-driven, so it overshoots)
+    var bellV = 0f
+    var rim = 0f       // the bell edge lags a little behind the dome
+    var rimV = 0f
+    var age = 0f
+    var r = 100f
+    private var prevDt = 0.016f
 
-    // ── pulse: quick contraction, slow relaxation ──
-    val period = 2.6f + spec.scale * 0.9f
-    val ph = ((t + spec.seed) % period) / period
-    val c = if (ph < 0.28f) {
-        val x = ph / 0.28f
-        1f - (1f - x) * (1f - x)
-    } else {
-        1f - jSmooth((ph - 0.28f) / 0.72f)
+    val rot = JRot()
+    private val rnd = Random((spec.seed * 1000f).toInt() + 17)
+    private val period = 2.5f + spec.scale * 1.0f + rnd.nextFloat() * 0.4f
+    val chains: List<JChain>
+
+    // scratch (anchor + rest direction of the chain being processed)
+    private var ax = 0f
+    private var ay = 0f
+    private var az = 0f
+    private var dx = 0f
+    private var dy = 0f
+    private var dz = 0f
+
+    init {
+        val list = ArrayList<JChain>()
+        val count = (10 + 8 * spec.scale).toInt()
+        val nodes = 13 + (spec.scale * 4f).toInt()
+        for (k in 0 until count) {
+            val thick = k % 4 == 0
+            list.add(
+                JChain(
+                    n = if (thick) nodes + 3 else nodes,
+                    angle = k * JTau / count + (rnd.nextFloat() - 0.5f) * 0.20f,
+                    len = (1.5f + 1.3f * rnd.nextFloat()) * (if (thick) 1.20f else 1f),
+                    kind = if (thick) 1 else 0,
+                    phase = rnd.nextFloat() * JTau,
+                ),
+            )
+        }
+        for (k in 0 until 4) {
+            list.add(JChain(11, k * JTau / 4f + 0.4f, 1.35f, 2, rnd.nextFloat() * JTau))
+        }
+        chains = list
     }
 
-    val sway = sin(t * 0.23f + spec.seed) * w * 0.07f + sin(t * 0.11f + spec.seed * 1.7f) * w * 0.03f
-    val cx = w * spec.xFrac + sway * spec.scale.coerceAtLeast(0.6f)
-    val cy = h * (1.25f - prog * 1.65f) - r * 0.12f * c   // little thrust on every pulse
+    fun spawn(w: Float, h: Float, initial: Boolean) {
+        r = min(w * 0.16f, h * 0.17f) * spec.scale
+        x = w * (spec.xFrac + if (initial) 0f else (rnd.nextFloat() - 0.5f) * 0.10f)
+        y = if (initial) h * spec.y0Frac else h + r * 1.1f
+        vx = 0f
+        vy = if (initial) -h * 0.04f * spec.speed else 0f
+        phase = rnd.nextFloat()
+        bell = 0f; bellV = 0f; rim = 0f; rimV = 0f
+        tilt = 0f; tiltV = 0f
+        yaw = (rnd.nextFloat() - 0.5f) * 1.0f; yawV = 0f
+        age = if (initial) 3f else 0f
+        rot.set(yaw, pitch, tilt)
+        for (ch in chains) {
+            place(ch)
+            val seg = ch.len * r / (ch.n - 1)
+            for (i in 0 until ch.n) {
+                ch.px[i] = ax + dx * seg * i
+                ch.py[i] = ay + dy * seg * i
+                ch.pz[i] = az + dz * seg * i
+                ch.qx[i] = ch.px[i]; ch.qy[i] = ch.py[i]; ch.qz[i] = ch.pz[i]
+            }
+        }
+    }
 
-    // ── slow 3D tumble: sometimes side-on, sometimes seen from underneath ──
-    val yaw = 0.90f * sin(t * 0.30f + spec.seed)
-    val pitch = -(0.55f + 0.40f * sin(t * 0.24f + spec.seed * 0.7f + 1f))
-    val roll = 0.16f * sin(t * 0.33f + spec.seed + 2f)
-    val cam = JellyCam(cx, cy, yaw, pitch, roll, r * 7f)
+    /** Anchor point (on the bell) and rest direction of a chain, in world space. */
+    private fun place(ch: JChain) {
+        val bellR = r * (1f - 0.16f * bell)
+        val bellH = r * 0.5f * (1f + 0.14f * bell)
+        val ca = cos(ch.angle)
+        val sa = sin(ch.angle)
+        if (ch.kind == 2) {
+            rot.apply(r * 0.12f * ca, -bellH * 0.30f, r * 0.12f * sa)
+        } else {
+            rot.apply(bellR * ca, r * 0.02f, bellR * sa)
+        }
+        ax = x + rot.ox; ay = y + rot.oy; az = rot.oz
+        val flare = if (ch.kind == 2) 0.25f else 0.20f
+        rot.apply(ca * flare, 1f, sa * flare)
+        val l = sqrt(rot.ox * rot.ox + rot.oy * rot.oy + rot.oz * rot.oz).coerceAtLeast(0.0001f)
+        dx = rot.ox / l; dy = rot.oy / l; dz = rot.oz / l
+    }
 
-    val bellR = r * (1f - 0.13f * c)
-    val bellH = r * 0.60f * (1f + 0.12f * c)
+    fun step(dt: Float, time: Float, w: Float, h: Float) {
+        r = min(w * 0.16f, h * 0.17f) * spec.scale
+        age += dt
+        val ratio = dt / prevDt
+        prevDt = dt
 
-    // point on the bell surface: u 0 = apex, 1 = rim; the rim is gently scalloped
+        // ── pulse: quick squeeze, slow relax ──
+        phase += dt / period
+        if (phase >= 1f) {
+            phase -= 1f
+            tiltV += (rnd.nextFloat() - 0.5f) * 0.5f          // every stroke is a little uneven
+            vx += (rnd.nextFloat() - 0.5f) * r * 0.25f
+        }
+        val win = 0.22f
+        val target = if (phase < win) jSmooth(phase / win) else 1f - jSmooth((phase - win) / (1f - win))
+        bellV += (150f * (target - bell) - 11f * bellV) * dt   // under-damped spring → overshoot
+        bell += bellV * dt
+        rimV += (70f * (bell - rim) - 8f * rimV) * dt           // the edge trails the dome
+        rim += rimV * dt
+
+        // ── thrust, drag and sink: surge and glide ──
+        val kd = 1.9f
+        val vr = h * 0.042f * spec.speed          // average climb speed we want (px/s)
+        val vSink = r * 0.05f
+        val amp = (vr + vSink) * kd / 0.14f       // 0.14 = ∫ sin-pulse over one cycle
+        if (phase < win) {
+            val a = amp * sin(phase / win * JPi)
+            vx += sin(tilt) * a * dt                // thrust follows the way the bell leans
+            vy -= cos(tilt) * a * dt
+        }
+        val current = sin(time * 0.17f + spec.seed * 3f) * r * 0.10f +
+            sin(time * 0.071f + spec.seed) * r * 0.06f
+        vx += (current - vx) * kd * dt
+        vy += (vSink - vy) * kd * dt
+        x += vx * dt
+        y += vy * dt
+
+        // ── attitude: leans with its own motion, turns slowly in 3D ──
+        val tTarget = 0.30f * sin(time * 0.19f + spec.seed * 2f) +
+            (vx / (r * 1.2f)).coerceIn(-0.3f, 0.3f) * 0.5f
+        tiltV += (-4f * (tilt - tTarget) - 2.4f * tiltV) * dt
+        tilt += tiltV * dt
+        val yTarget = 0.9f * sin(time * 0.26f + spec.seed * 1.3f)
+        yawV += (-2.2f * (yaw - yTarget) - 2.6f * yawV) * dt
+        yaw += yawV * dt
+        pitch = -(0.55f + 0.30f * sin(time * 0.20f + spec.seed * 0.7f + 1f))
+        rot.set(yaw, pitch, tilt)
+
+        if (y < -r * 3.4f) {
+            spawn(w, h, false)
+            return
+        }
+
+        // ── tentacles and arms: Verlet ropes pinned to the bell ──
+        val damp = exp(-2.6f * dt)
+        val k60 = dt * 60f
+        for (ch in chains) {
+            place(ch)
+            val n = ch.n
+            val seg = ch.len * r / (n - 1)
+            ch.px[0] = ax; ch.py[0] = ay; ch.pz[0] = az
+            ch.qx[0] = ax; ch.qy[0] = ay; ch.qz[0] = az
+            val waveAmp = r * 1.5f * (if (ch.kind == 2) 0.7f else 1f)
+            for (i in 1 until n) {
+                val f = i / (n - 1f)
+                val vxn = (ch.px[i] - ch.qx[i]) * ratio * damp
+                val vyn = (ch.py[i] - ch.qy[i]) * ratio * damp
+                val vzn = (ch.pz[i] - ch.qz[i]) * ratio * damp
+                ch.qx[i] = ch.px[i]; ch.qy[i] = ch.py[i]; ch.qz[i] = ch.pz[i]
+
+                val wa = waveAmp * f.pow(1.2f)
+                val accX = sin(i * 0.7f - time * 2.3f + ch.phase) * wa
+                val accZ = cos(i * 0.7f - time * 2.0f + ch.phase * 1.3f) * wa
+                val g = r * 0.30f                      // slightly heavier than water
+
+                ch.px[i] += vxn + accX * dt * dt
+                ch.py[i] += vyn + g * dt * dt
+                ch.pz[i] += vzn + accZ * dt * dt
+
+                // gentle pull toward the rest line: strong at the root, free at the tip,
+                // stronger while the bell is squeezed (the tentacles stream out behind it)
+                val ks = 0.16f * (1f - f).pow(2.2f) * (1f + 1.3f * bell) * k60
+                ch.px[i] += (ax + dx * seg * i - ch.px[i]) * ks
+                ch.py[i] += (ay + dy * seg * i - ch.py[i]) * ks
+                ch.pz[i] += (az + dz * seg * i - ch.pz[i]) * ks
+            }
+            repeat(3) {
+                for (i in 1 until n) {
+                    val ex = ch.px[i] - ch.px[i - 1]
+                    val ey = ch.py[i] - ch.py[i - 1]
+                    val ez = ch.pz[i] - ch.pz[i - 1]
+                    val dist = sqrt(ex * ex + ey * ey + ez * ez).coerceAtLeast(0.0001f)
+                    val diff = (dist - seg) / dist
+                    if (i == 1) {
+                        ch.px[i] -= ex * diff; ch.py[i] -= ey * diff; ch.pz[i] -= ez * diff
+                    } else {
+                        val hx = ex * diff * 0.5f
+                        val hy = ey * diff * 0.5f
+                        val hz = ez * diff * 0.5f
+                        ch.px[i] -= hx; ch.py[i] -= hy; ch.pz[i] -= hz
+                        ch.px[i - 1] += hx; ch.py[i - 1] += hy; ch.pz[i - 1] += hz
+                    }
+                }
+            }
+        }
+    }
+}
+
+private class JellySim {
+    val bodies = JellyCast.map { JellyBody(it) }
+    private var lastT = -1f
+    private var simTime = 0f
+    private var ready = false
+
+    /** Safe to call any number of times per frame: it only moves forward when the clock did. */
+    fun advance(t: Float, w: Float, h: Float) {
+        if (w < 8f || h < 8f) return
+        if (!ready) {
+            for (b in bodies) b.spawn(w, h, true)
+            ready = true
+            lastT = t
+            return
+        }
+        var dt = t - lastT
+        if (dt <= 0f) return
+        lastT = t
+        dt = dt.coerceAtMost(0.05f)
+        val n = ceil(dt / 0.0125f).toInt().coerceAtLeast(1)    // small sub-steps = stable and smooth
+        val s = dt / n
+        repeat(n) {
+            for (b in bodies) b.step(s, simTime, w, h)
+            simTime += s
+        }
+    }
+}
+
+// ───────────────────────────── drawing ─────────────────────────────
+
+private fun DrawScope.drawBody(b: JellyBody, t: Float) {
+    val spec = b.spec
+    val r = b.r
+    if (r < 4f) return
+
+    val a = (0.30f + 0.70f * spec.depth) *
+        jSmooth(b.age / 2.5f) *
+        jSmooth((b.y + r * 0.8f) / (size.height * 0.22f))
+    if (a < 0.01f) return
+
+    // palette, pushed toward deep blue with distance
+    val fog = (1f - spec.depth) * 0.55f
+    val rimC = lerp(Color.hsv(spec.rimHue, 0.45f, 1f), JellyDeepBlue, fog)
+    val bodyC = lerp(Color.hsv(spec.bodyHue, 0.70f, 0.95f), JellyDeepBlue, fog)
+    val apexC = lerp(Color.hsv(spec.apexHue, 0.80f, 0.95f), JellyDeepBlue, fog)
+    val tentC = lerp(rimC, bodyC, 0.45f)
+    val armC = lerp(bodyC, apexC, 0.5f)
+
+    val focal = r * 7f
+    val bellR = r * (1f - 0.16f * b.bell)
+    val bellH = r * 0.5f * (1f + 0.14f * b.bell)
+    val rot = b.rot
+
+    fun proj(lx: Float, ly: Float, lz: Float): Offset {
+        rot.apply(lx, ly, lz)
+        val s = focal / (focal + rot.oz)
+        return Offset(b.x + rot.ox * s, b.y + rot.oy * s)
+    }
+
+    // u: 0 = apex … 1 = rim.  The rim is scalloped and flares a little when the bell lags.
     fun surf(u: Float, th: Float): Offset {
         val phi = u * JHalfPi
         val lobe = u.pow(10)
-        val rr = bellR * sin(phi) * (1f + 0.035f * cos(th * 16f) * lobe)
+        val flare = 1f + 0.10f * (b.bell - b.rim) * u.pow(3)
+        val rr = bellR * sin(phi) * flare * (1f + 0.03f * cos(th * 16f) * lobe)
         val yy = -bellH * cos(phi) + r * 0.03f * cos(th * 16f) * lobe
-        return cam.p(rr * cos(th), yy, rr * sin(th))
+        return proj(rr * cos(th), yy, rr * sin(th))
     }
 
     val path = Path()
-    val unit = r / 260f
+    val plus = BlendMode.Plus
 
-    // ── luminous halo behind the whole animal ──
-    val bellMid = cam.p(0f, -bellH * 0.4f, 0f)
+    // ── halo ──
+    val mid = proj(0f, -bellH * 0.4f, 0f)
     drawCircle(
         brush = Brush.radialGradient(
-            0f to JellyApex.copy(alpha = 0.16f * a),
+            0f to bodyC.copy(alpha = 0.16f * a),
             1f to Color.Transparent,
-            center = bellMid,
-            radius = r * 1.7f,
+            center = mid,
+            radius = r * 1.9f,
         ),
-        radius = r * 1.7f,
-        center = bellMid,
-        blendMode = BlendMode.Plus,
+        radius = r * 1.9f,
+        center = mid,
+        blendMode = plus,
     )
 
-    // ── dome: nested translucent rings, so the middle is denser like real jelly ──
-    val rings = 14
-    val m = 36
+    // ── bell body: nested translucent rings, denser toward the middle, light adds up ──
+    val rings = 20
+    val m = 40
     for (i in 0 until rings) {
-        val u = 1f - i * (0.88f / (rings - 1))
+        val u = 1f - i * (0.90f / (rings - 1))
         path.reset()
         for (j in 0 until m) {
             val o = surf(u, j * JTau / m)
             if (j == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
         }
         path.close()
-        drawPath(path, lerp(JellyRim, JellyApex, i / (rings - 1f)).copy(alpha = 0.115f * a))
+        val k = i / (rings - 1f)
+        val col = if (k < 0.5f) lerp(rimC, bodyC, k * 2f) else lerp(bodyC, apexC, (k - 0.5f) * 2f)
+        drawPath(path, col.copy(alpha = 0.052f * a), blendMode = plus)
     }
 
-    // ── petals: the blue / pink segments between the ribs ──
-    val k = 16
-    for (i in 0 until k) {
-        val th0 = (i + 0.14f) * JTau / k
-        val th1 = (i + 0.86f) * JTau / k
-        path.reset()
-        val steps = 6
-        for (s in 0..steps) {
-            val o = surf(0.50f + 0.47f * s / steps, th0)
-            if (s == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
-        }
-        for (s in steps downTo 0) {
-            val o = surf(0.50f + 0.47f * s / steps, th1)
-            path.lineTo(o.x, o.y)
-        }
-        path.close()
-        drawPath(path, (if (i % 2 == 0) JellyPetalBlue else JellyPetalPink).copy(alpha = 0.10f * a))
-    }
-
-    // ── ribs (radial canals) ──
-    val ribStroke = Stroke(width = (1.3f * unit).coerceAtLeast(0.8f), cap = StrokeCap.Round)
-    for (i in 0 until k) {
-        val th = i * JTau / k
+    // ── radial canals, each with its own shimmer of colour ──
+    val ribs = 24
+    val ribW = (r * 0.008f).coerceAtLeast(0.8f)
+    for (i in 0 until ribs) {
+        val th = i * JTau / ribs
         path.reset()
         for (s in 0..8) {
-            val o = surf(0.16f + 0.84f * s / 8f, th)
+            val o = surf(0.12f + 0.88f * s / 8f, th)
             if (s == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
         }
-        drawPath(path, JellyRibCol.copy(alpha = 0.30f * a), style = ribStroke)
-    }
-
-    // ── bell edge: bright thin ring + a fainter inner ring ──
-    for (pass in 0..1) {
-        val u = if (pass == 0) 1f else 0.93f
-        path.reset()
-        for (j in 0..48) {
-            val o = surf(u, j * JTau / 48f)
-            if (j == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
-        }
-        path.close()
+        val shimmer = 0.5f + 0.5f * sin(th * 2f + t * 0.6f + spec.seed)
         drawPath(
             path,
-            Color(0xFFD7B5FF).copy(alpha = (if (pass == 0) 0.75f else 0.35f) * a),
-            style = Stroke(width = (if (pass == 0) 4f else 2f) * unit.coerceAtLeast(0.3f), join = StrokeJoin.Round),
+            lerp(rimC, apexC, shimmer).copy(alpha = 0.20f * a),
+            style = Stroke(width = ribW, cap = StrokeCap.Round),
+            blendMode = plus,
         )
     }
 
-    // ── dark rim spots ──
-    val spots = 44
-    for (i in 0 until spots) {
-        val th = i * JTau / spots + jHash(i, 1) * 0.08f
-        val o = surf(0.985f - jHash(i, 2) * 0.05f, th)
-        val sr = r * (0.018f + 0.026f * jHash(i, 3))
-        drawCircle(JellySpot.copy(alpha = 0.92f * a), sr, o)
-        drawCircle(
-            Color(0xFFFF9BE8).copy(alpha = 0.35f * a),
-            sr * 0.45f,
-            Offset(o.x - sr * 0.25f, o.y - sr * 0.35f),
-        )
+    // ── bell edge: soft glow + thin bright line ──
+    path.reset()
+    for (j in 0..48) {
+        val o = surf(1f, j * JTau / 48f)
+        if (j == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
     }
-
-    // ── glowing centre under the bell ──
-    val core = cam.p(0f, -bellH * 0.28f, 0f)
-    drawCircle(
-        brush = Brush.radialGradient(
-            0f to Color(0xFFFFB6F2).copy(alpha = 0.55f * a),
-            1f to Color.Transparent,
-            center = core,
-            radius = r * 0.42f,
-        ),
-        radius = r * 0.42f,
-        center = core,
-        blendMode = BlendMode.Plus,
+    path.close()
+    drawPath(path, rimC.copy(alpha = 0.10f * a), style = Stroke(width = r * 0.09f, join = StrokeJoin.Round), blendMode = plus)
+    drawPath(path, rimC.copy(alpha = 0.30f * a), style = Stroke(width = r * 0.03f, join = StrokeJoin.Round), blendMode = plus)
+    drawPath(
+        path,
+        lerp(rimC, Color.White, 0.55f).copy(alpha = 0.80f * a),
+        style = Stroke(width = (r * 0.011f).coerceAtLeast(1f), join = StrokeJoin.Round),
+        blendMode = plus,
     )
 
-    // ── thin trailing tentacles (every 4th is a thick ribbon) ──
-    val count = (10 + 6 * spec.scale).toInt()
-    val segs = 26
-    for (n in 0 until count) {
-        val th = n * JTau / count + (jHash(n, 5) - 0.5f) * 0.25f
-        val thick = n % 4 == 0
-        val len = r * (1.35f + 1.5f * jHash(n, 6)) * (if (thick) 1.25f else 1f)
-        val phase = jHash(n, 7) * JTau
+    // ── the four horseshoe rings you can see under the dome ──
+    val gonadW = (r * 0.02f).coerceAtLeast(1.2f)
+    for (g in 0 until 4) {
+        val ang = g * JTau / 4f + 0.785f
+        val gx = bellR * 0.40f * cos(ang)
+        val gz = bellR * 0.40f * sin(ang)
+        val rho = bellR * 0.19f
         path.reset()
-        val midSeg = (segs * 0.45f).toInt()
-        val head = Path()
-        for (s in 0..segs) {
-            val f = s / segs.toFloat()
-            val wave = r * 0.11f * f.pow(1.1f) * (1.2f - 0.5f * c)
-            val ang = f * 8.5f - t * 1.9f + phase
-            val bx = bellR * 0.95f * (1f - 0.55f * f)
-            val x = bx * cos(th) + wave * sin(ang) + r * 0.10f * f * f * sin(t * 0.7f + phase)
-            val z = bx * sin(th) + wave * cos(ang)
-            val y = f * len * (1f + 0.08f * c)
-            val o = cam.p(x, y, z)
-            if (s == 0) {
-                path.moveTo(o.x, o.y)
-                head.moveTo(o.x, o.y)
-            } else {
-                path.lineTo(o.x, o.y)
-                if (s <= midSeg) head.lineTo(o.x, o.y)
-            }
+        for (j in 0..20) {
+            val tt = ang + 0.35f + (JTau - 0.7f) * j / 20f
+            val o = proj(gx + rho * cos(tt), -bellH * 0.34f, gz + rho * sin(tt))
+            if (j == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
         }
-        val wBase = (if (thick) 2.6f else 1.3f) * unit.coerceAtLeast(0.45f)
-        val col = JellyTentacle.copy(alpha = (if (thick) 0.55f else 0.42f) * a)
-        drawPath(path, col, style = Stroke(width = wBase, cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawPath(head, col, style = Stroke(width = wBase * 2f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawPath(
+            path,
+            lerp(rimC, Color.White, 0.5f).copy(alpha = 0.50f * a),
+            style = Stroke(width = gonadW, cap = StrokeCap.Round, join = StrokeJoin.Round),
+            blendMode = plus,
+        )
     }
 
-    // ── four frilly oral arms from the centre ──
-    for (n in 0 until 4) {
-        val th = n * JTau / 4f + 0.4f
-        val armLen = r * 1.5f * (1f + 0.15f * c)
-        var prev = Offset.Zero
-        for (s in 0..22) {
-            val f = s / 22f
-            val rad = r * (0.10f + 0.20f * f)
-            val x = rad * cos(th) + r * 0.10f * sin(f * 7f - t * 2.2f + th) * f
-            val z = rad * sin(th) + r * 0.10f * cos(f * 6f - t * 2.0f + th) * f
-            val y = -bellH * 0.28f + f * armLen
-            val o = cam.p(x, y, z)
-            if (s > 0) {
-                drawLine(
-                    color = JellyArm.copy(alpha = 0.50f * a * (1f - f * 0.4f)),
-                    start = prev,
-                    end = o,
-                    strokeWidth = (r * 0.045f * (1f - f * 0.8f)).coerceAtLeast(1f),
-                    cap = StrokeCap.Round,
+    // ── glowing centre ──
+    val core = proj(0f, -bellH * 0.28f, 0f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to lerp(bodyC, Color.White, 0.35f).copy(alpha = 0.45f * a),
+            1f to Color.Transparent,
+            center = core,
+            radius = r * 0.5f,
+        ),
+        radius = r * 0.5f,
+        center = core,
+        blendMode = plus,
+    )
+
+    // ── tentacles and oral arms (the simulated ropes) ──
+    for (ch in b.chains) {
+        val n = ch.n
+        val pts = Array(n) { i ->
+            val s = focal / (focal + ch.pz[i])
+            Offset(b.x + (ch.px[i] - b.x) * s, b.y + (ch.py[i] - b.y) * s)
+        }
+        val base = when (ch.kind) {
+            1 -> r * 0.022f
+            2 -> r * 0.050f
+            else -> r * 0.008f
+        }.coerceAtLeast(0.8f)
+        val col = if (ch.kind == 2) armC else tentC
+        val coreA = when (ch.kind) {
+            1 -> 0.55f
+            2 -> 0.42f
+            else -> 0.42f
+        }
+
+        fun smooth(upTo: Int, into: Path) {
+            into.reset()
+            into.moveTo(pts[0].x, pts[0].y)
+            for (i in 1 until upTo) {
+                val mx = (pts[i].x + pts[i + 1].x) * 0.5f
+                val my = (pts[i].y + pts[i + 1].y) * 0.5f
+                into.quadraticBezierTo(pts[i].x, pts[i].y, mx, my)
+            }
+            into.lineTo(pts[upTo].x, pts[upTo].y)
+        }
+
+        smooth(n - 1, path)
+        drawPath(path, col.copy(alpha = 0.05f * a), style = Stroke(width = base * 5f, cap = StrokeCap.Round, join = StrokeJoin.Round), blendMode = plus)
+        drawPath(path, col.copy(alpha = coreA * a), style = Stroke(width = base, cap = StrokeCap.Round, join = StrokeJoin.Round), blendMode = plus)
+        smooth((n * 0.45f).toInt().coerceIn(2, n - 1), path)   // thicker near the root = tapering
+        drawPath(path, col.copy(alpha = 0.22f * a), style = Stroke(width = base * 1.9f, cap = StrokeCap.Round, join = StrokeJoin.Round), blendMode = plus)
+
+        if (ch.kind == 2) {
+            // frilly arms: a string of glowing beads along the rope
+            for (i in 1 until n) {
+                val f = i / (n - 1f)
+                drawCircle(
+                    col.copy(alpha = 0.28f * a * (1f - f * 0.6f)),
+                    base * 0.55f * (1f - f * 0.5f) + 0.6f,
+                    pts[i],
+                    blendMode = plus,
                 )
             }
-            prev = o
+        } else {
+            // bioluminescent bead where the tentacle meets the rim
+            drawCircle(Color.White.copy(alpha = 0.45f * a), (r * 0.012f).coerceAtLeast(1f), pts[0], blendMode = plus)
         }
     }
 
-    // ── specular glint on the dome (light stays fixed on screen, the jelly turns under it) ──
+    // ── specular glint: the light stays fixed on screen while the animal turns under it ──
     val rx = bellR * 0.80f
     val ry = bellH * 0.90f
     drawArc(
-        color = Color.White.copy(alpha = 0.28f * a),
+        color = Color.White.copy(alpha = 0.26f * a),
         startAngle = 205f,
         sweepAngle = 42f,
         useCenter = false,
-        topLeft = Offset(bellMid.x - rx, bellMid.y - ry),
+        topLeft = Offset(mid.x - rx, mid.y - ry),
         size = Size(rx * 2f, ry * 2f),
-        style = Stroke(width = r * 0.035f, cap = StrokeCap.Round),
+        style = Stroke(width = r * 0.03f, cap = StrokeCap.Round),
+        blendMode = plus,
+    )
+    val sheen = Offset(mid.x - bellR * 0.30f, mid.y - bellH * 0.45f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            0f to Color.White.copy(alpha = 0.16f * a),
+            1f to Color.Transparent,
+            center = sheen,
+            radius = r * 0.45f,
+        ),
+        radius = r * 0.45f,
+        center = sheen,
+        blendMode = plus,
     )
 }
