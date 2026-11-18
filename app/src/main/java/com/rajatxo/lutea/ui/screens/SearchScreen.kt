@@ -791,22 +791,7 @@ private fun JellySongList(
         } else {
             // One clock drives every divider glint. Reading it inside the
             // Canvas keeps the shimmer in the draw phase, not recomposition.
-            val shimmer = rememberInfiniteTransition(label = "jellyDividerShimmer")
-                .animateFloat(
-                    initialValue = 0f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(
-                        animation = keyframes {
-                            durationMillis = 3600
-                            0f at 0
-                            0f at 1800
-                            1f at 3200 using LinearEasing
-                            1f at 3600
-                        },
-                        repeatMode = RepeatMode.Restart,
-                    ),
-                    label = "jellyDividerShimmerPhase",
-                )
+            val shimmer = rememberDividerShimmer()
 
             LazyColumn(
                 state = listState,
@@ -852,6 +837,26 @@ private fun JellySongList(
         }
     }
 }
+
+/** Shared slow glint used by the song list and the simple history lines. */
+@Composable
+private fun rememberDividerShimmer(): State<Float> =
+    rememberInfiniteTransition(label = "dividerShimmer")
+        .animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = keyframes {
+                    durationMillis = 3600
+                    0f at 0
+                    0f at 1800
+                    1f at 3200 using LinearEasing
+                    1f at 3600
+                },
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "dividerShimmerPhase",
+        )
 
 @Composable
 private fun GlassDivider(shimmer: State<Float>) {
@@ -2058,10 +2063,11 @@ private fun defaultVibrator(context: Context): Vibrator? =
 
 /**
  * The no-frills history: just the queries, latest first, separated by thin
- * lines. It fills the whole area below the machine, scrolls normally, and has
- * no expand state or cards. Each row carries a history glyph, a delete cross
- * and a reuse arrow. The shared clear-all glass capsule appears only once this
- * list is actually scrollable and has been scrolled away from the latest row.
+ * shimmering lines. It fills the whole area below the machine, scrolls
+ * normally, and has no expand state or cards. Each row carries a history glyph,
+ * a delete cross and a reuse arrow. The shared clear-all glass capsule appears
+ * only once this list is actually scrollable and has been scrolled away from
+ * the latest row.
  */
 @Composable
 private fun SimpleSearchHistory(
@@ -2106,6 +2112,8 @@ private fun SimpleSearchHistory(
         Box(modifier)
         return
     }
+
+    val shimmer = rememberDividerShimmer()
 
     LazyColumn(
         state = listState,
@@ -2178,14 +2186,35 @@ private fun SimpleSearchHistory(
                 }
             }
             if (index != entries.lastIndex) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(0.6.dp)
-                        .background(Color.White.copy(alpha = 0.28f)),
-                )
+                HistoryDivider(shimmer)
             }
         }
+    }
+}
+
+/** Thin hairline between simple-history rows, with a slow travelling glint. */
+@Composable
+private fun HistoryDivider(shimmer: State<Float>) {
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(0.6.dp),
+    ) {
+        drawRect(Color.White.copy(alpha = 0.28f))
+
+        val band = size.width * 0.38f
+        val head = -band + (size.width + band * 2f) * shimmer.value
+        drawRect(
+            brush = Brush.horizontalGradient(
+                0f to Color.Transparent,
+                0.28f to Color.White.copy(alpha = 0.05f),
+                0.50f to Color.White.copy(alpha = 0.62f),
+                0.72f to Color.White.copy(alpha = 0.05f),
+                1f to Color.Transparent,
+                startX = head,
+                endX = head + band,
+            ),
+        )
     }
 }
 

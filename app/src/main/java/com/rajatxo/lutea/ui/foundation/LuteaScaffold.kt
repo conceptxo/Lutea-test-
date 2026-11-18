@@ -650,16 +650,21 @@ fun LuteaScaffold(
             val navMatchedWidth = navMetrics.navBarWidthFor(LuteaTab.entries.size)
 
             // ★ Black fade at the very bottom edge — pure black at the screen's
-            //    bottom edge, fading UP to transparent, stopping just before the
-            //    miniplayer's bottom edge. The nav bar sits in this region (drawn
-            //    on top of the fade) so the nav glyphs stay readable. Restored
-            //    from a previous build that another session removed. Hidden while
-            //    the keyboard is open (the miniplayer is hidden then anyway).
+            //    bottom edge, fading UP to transparent. Its soft top now dies out
+            //    on the mini player's centre line, so the capsule sits in the
+            //    fade instead of ending above a hard edge. The nav bar sits in
+            //    this region (drawn on top of the fade) so the nav glyphs stay
+            //    readable. Restored from a previous build that another session
+            //    removed. Hidden while the keyboard is open (the mini player is
+            //    hidden then anyway).
             //    This is SEPARATE from the nav's own scrim: that one darkens the
             //    nav area for legibility; this one is a softer ambient fade that
-            //    grounds the bottom of the screen. Drawn BEFORE the miniplayer so
-            //    the miniplayer's glass paints on top of it.
-            val bottomFadeHeightDp = effBottomDp + 56.dp
+            //    grounds the bottom of the screen. Drawn BEFORE the mini player
+            //    so its glass paints on top of it.
+            val miniPlayerGap = 56.dp       // inset → mini player bottom edge
+            val miniPlayerHeight = 56.dp    // keep in sync with MiniPlayer.kt
+            val miniPlayerBottom = effBottomDp + miniPlayerGap
+            val bottomFadeHeightDp = miniPlayerBottom + miniPlayerHeight * 0.5f
             if (!imeOpen) {
                 Box(
                     modifier = Modifier
@@ -670,10 +675,13 @@ fun LuteaScaffold(
                             brush = Brush.verticalGradient(
                                 colorStops = arrayOf(
                                     0.00f to Color.Transparent,
-                                    0.45f to Color.Transparent,
-                                    0.65f to Color.Black.copy(alpha = 0.15f),
-                                    0.80f to Color.Black.copy(alpha = 0.45f),
-                                    0.92f to Color.Black.copy(alpha = 0.80f),
+                                    0.10f to Color.Black.copy(alpha = 0.02f),
+                                    0.28f to Color.Black.copy(alpha = 0.10f),
+                                    0.46f to Color.Black.copy(alpha = 0.26f),
+                                    0.62f to Color.Black.copy(alpha = 0.48f),
+                                    0.76f to Color.Black.copy(alpha = 0.72f),
+                                    0.88f to Color.Black.copy(alpha = 0.90f),
+                                    0.96f to Color.Black.copy(alpha = 0.98f),
                                     1.00f to Color.Black,
                                 )
                             )
@@ -684,7 +692,7 @@ fun LuteaScaffold(
             com.rajatxo.lutea.ui.player.MiniPlayer(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = effBottomDp + 56.dp),
+                    .padding(bottom = miniPlayerBottom),
                 onExpand = { playerVisible = true },
                 hidden = imeOpen,
                 backdrop = glassBackdrop,
