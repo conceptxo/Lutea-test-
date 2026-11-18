@@ -73,6 +73,37 @@ object LuteaIcons {
         lineTo(16.66f, 16.66f)
     }
 
+    /** Lucide history icon (MIT) — circular arrow + clock hands. */
+    val History: ImageVector = stroke("History") {
+        moveTo(3f, 12f)
+        arcTo(9f, 9f, 0f, true, false, 12f, 3f)
+        arcTo(9.75f, 9.75f, 0f, false, false, 5.26f, 5.74f)
+        lineTo(3f, 8f)
+        moveTo(3f, 3f)
+        lineTo(3f, 8f)
+        lineTo(8f, 8f)
+        moveTo(12f, 7f)
+        lineTo(12f, 12f)
+        lineTo(16f, 14f)
+    }
+
+    /** Lucide x icon (MIT) — the per-row remove action. */
+    val Close: ImageVector = stroke("Close") {
+        moveTo(18f, 6f)
+        lineTo(6f, 18f)
+        moveTo(6f, 6f)
+        lineTo(18f, 18f)
+    }
+
+    /** Lucide arrow-up-right icon (MIT) — reuse this history entry. */
+    val ArrowUpRight: ImageVector = stroke("ArrowUpRight") {
+        moveTo(7f, 17f)
+        lineTo(17f, 7f)
+        moveTo(7f, 7f)
+        lineTo(17f, 7f)
+        lineTo(17f, 17f)
+    }
+
     /** Lucide settings/cog icon (MIT). Ported from Coral X. */
     val Cog: ImageVector = stroke("Cog") {
         // Spokes

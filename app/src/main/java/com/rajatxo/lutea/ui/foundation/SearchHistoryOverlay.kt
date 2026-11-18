@@ -31,6 +31,8 @@ import kotlinx.coroutines.delay
 @Stable
 class SearchHistoryOverlayState {
     var expanded by mutableStateOf(false)
+    /** Simple history's scroll-triggered clear capsule, separate from the paper sheet. */
+    var simpleClearVisible by mutableStateOf(false)
     internal var onClearAll: (() -> Unit)? = null
 
     fun clearAll() {

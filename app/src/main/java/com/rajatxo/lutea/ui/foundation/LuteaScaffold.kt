@@ -177,11 +177,12 @@ fun LuteaScaffold(
         if (activeTab != LuteaTab.Search) searchStyleOverlay.expanded = false
     }
 
-    // Simple history has no clear-all sheet; close the sheet if the user
-    // switches to it while the paper deck is expanded.
+    // Simple history has no expanded paper sheet: clear its paper flag, and
+    // hide the scroll-driven simple capsule whenever Paper returns.
     LaunchedEffect(searchStyleOverlay.historyStyle) {
-        if (searchStyleOverlay.historyStyle == SearchHistoryStyle.SIMPLE) {
-            searchHistoryOverlay.expanded = false
+        when (searchStyleOverlay.historyStyle) {
+            SearchHistoryStyle.SIMPLE -> searchHistoryOverlay.expanded = false
+            SearchHistoryStyle.PAPER -> searchHistoryOverlay.simpleClearVisible = false
         }
     }
 
@@ -197,6 +198,13 @@ fun LuteaScaffold(
     // player when one is showing.
     val searchStyleCardBottom =
         effBottomDp + if (currentSong != null && !imeOpen) 132.dp else 70.dp
+
+    // Paper opens its clear-all control with the expanded deck; Simple shows
+    // the same capsule only once its text list is actually scrolled.
+    val historyClearVisible = when (searchStyleOverlay.historyStyle) {
+        SearchHistoryStyle.PAPER -> searchHistoryOverlay.expanded
+        SearchHistoryStyle.SIMPLE -> searchHistoryOverlay.simpleClearVisible
+    }
 
     CompositionLocalProvider(
         LocalLuteaWindowInsets provides insets,
@@ -718,8 +726,7 @@ fun LuteaScaffold(
             //    action through LocalSearchHistoryOverlay.
             if (activeTab == LuteaTab.Search) {
                 SearchClearAllOverlay(
-                    visible = searchStyleOverlay.historyStyle == SearchHistoryStyle.PAPER &&
-                        searchHistoryOverlay.expanded &&
+                    visible = historyClearVisible &&
                         !playerVisible &&
                         !showLyrics,
                     backdrop = glassBackdrop,

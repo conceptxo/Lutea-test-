@@ -151,6 +151,7 @@ import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
 import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
 import com.rajatxo.lutea.ui.foundation.SearchHistoryStyle
 import com.rajatxo.lutea.ui.foundation.SearchSurfaceStyle
+import com.rajatxo.lutea.ui.icons.LuteaIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -188,12 +189,15 @@ import kotlin.random.Random
 //  The three dots on the carriage are a speaker grille: always black.
 //  Everything is drawn with gradients — no images.
 //
-//  The ensemble hangs in the top half of the page, its rail sitting on the
-//  horizontal centre line. The keyboard starts below the middle of the screen,
-//  so it can never cover it — no IME padding, no movement, ever.
+//  The ensemble hangs at 57% of the page height, just below the visual centre.
+//  Even a tall keyboard starts below that line, so the machine stays clear of
+//  it — no IME padding, no movement, ever.
 // ═══════════════════════════════════════════════════════════════════════════
 
 private val TypeCream = Color(0xFFFCF2C7)   // butter cream — text + capsule
+
+/** The machine's rail/bottom edge as a fraction of the page height. */
+private const val MachineBottomFraction = 0.57f
 
 /** One flat colour behind everything: a very slightly warm near-black, so the light reads like light on paper. */
 private val PageBackground = Color(0xFF1E1C1A)
@@ -211,7 +215,7 @@ private val CapsuleInnerPadding = 10.dp
 private val TextStart = 58.dp               // margin + padding + glyph(18) + gap(20): where typed text begins
 
 // ── the lamp: light released by the T hammer ──────────────────────────────
-private val LightColor = Color(0xFFFFE3A3)      // warm tungsten cream
+private val LightColor = Color(0xFF5CC8FF)      // cool ocean blue, not warm tungsten
 private const val BeamReachFactor = 1.30f       // reach = 1.3x the height above the slot, so it fades past the top
 private const val BeamHalfAngleDeg = 66f        // 132 degree spread
 private const val BeamLayers = 18               // fallback only (pre-Android 13) — stacked cones
@@ -470,6 +474,7 @@ fun SearchScreen() {
         history.clear()
         saveSearchHistory(context, history)
         historyOverlay.expanded = false
+        historyOverlay.simpleClearVisible = false
         historyRevision++
     }
 
@@ -490,21 +495,21 @@ fun SearchScreen() {
                 Brush.verticalGradient(
                     0f to PageBackground,
                     0.20f to PageBackground,
-                    0.50f to Color(0xFF0A0A0A),
-                    0.545f to Color.Black,      // solid black just under the rail
+                    MachineBottomFraction to Color(0xFF0A0A0A),
+                    MachineBottomFraction + 0.045f to Color.Black, // solid black under the rail
                     1f to Color.Black,
                 ),
             ),
     ) {
-        // The machine is parked in the top half of the page with its rail sitting
-        // on the horizontal centre line. The keyboard starts below the middle on
-        // every phone, so it can never reach it — no insets, no movement.
+        // The machine is parked at 57% of the page. The keyboard normally starts
+        // around 63–68%, so there is still a deliberate air gap below the rail
+        // even on a small phone with a tall keyboard.
         // Everything above the machine is the result list; it is drawn above
         // the carriage beam so the lamp only ever lights the background.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.5f),
+                .fillMaxHeight(MachineBottomFraction),
         ) {
             SearchResults(
                 query = query,
@@ -548,9 +553,13 @@ fun SearchScreen() {
         // small phone and a tall one.
         val screenH = LocalConfiguration.current.screenHeightDp.dp
         val scale = (LocalConfiguration.current.screenWidthDp / 360f).coerceIn(0.85f, 1.35f)
-        val fadeHeight = screenH * 0.05f            // the black fade under the machine
+        val fadeHeight = screenH * 0.05f            // the black fade under the machine (paper mode)
         val deckTopInset = fadeHeight * 0.45f       // first paper starts inside the fade's tail
         val deckBottomInset = screenH * 0.11f       // keeps the last paper clear of the bottom bar
+        // Simple mode should start almost immediately under the machine: only a
+        // short fade for the scrolling edge, not the paper deck's tall inset.
+        val simpleFadeHeight = 8.dp
+        val simpleTopInset = 4.dp
         // The history area starts right under the carriage instead of a screen-half below it.
         val liftPx = with(LocalDensity.current) {
             ((RailAreaHeight - RailCenterY - 18.dp) * scale).toPx()
@@ -560,7 +569,7 @@ fun SearchScreen() {
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
                 .layout { measurable, constraints ->
-                    val h = (constraints.maxHeight * 0.5f + liftPx).roundToInt()
+                    val h = (constraints.maxHeight * (1f - MachineBottomFraction) + liftPx).roundToInt()
                         .coerceIn(0, constraints.maxHeight)
                     val placeable = measurable.measure(
                         constraints.copy(minHeight = h, maxHeight = h),
@@ -575,9 +584,14 @@ fun SearchScreen() {
                 SimpleSearchHistory(
                     entries = history,
                     resetKey = historyRevision,
-                    topInset = fadeHeight,
+                    topInset = simpleTopInset,
                     bottomInset = deckBottomInset,
                     onPick = { entry -> query = entry.query },
+                    onClear = { entry ->
+                        history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
+                        saveSearchHistory(context, history)
+                    },
+                    onClearVisibilityChange = { historyOverlay.simpleClearVisible = it },
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -603,7 +617,7 @@ fun SearchScreen() {
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(fadeHeight)
+                    .height(if (historyStyle == SearchHistoryStyle.SIMPLE) simpleFadeHeight else fadeHeight)
                     .background(
                         Brush.verticalGradient(
                             0f to Color.Black,
@@ -668,7 +682,7 @@ private fun searchLibrary(songs: List<Song>, rawQuery: String): List<Song> {
 
 /**
  * The area above the machine. It always occupies its weight so the machine stays
- * parked on the centre line, even while nothing is typed.
+ * parked at its fixed 57% line, even while nothing is typed.
  */
 @Composable
 private fun SearchResults(
@@ -1577,7 +1591,7 @@ private fun DrawScope.drawBeamLayers(
     }
 }
 
-/** The warm beam itself: added onto the page (BlendMode.Plus) so the page brightens like paper under a lamp. */
+/** The ocean-blue beam itself: added onto the page (BlendMode.Plus) so the jelly world catches the light. */
 private fun DrawScope.drawLightBeam(path: Path, apex: Offset, reach: Float, level: Float, unit: Float) {
     val half = (BeamHalfAngleDeg * PI / 180.0).toFloat()
 
@@ -2029,7 +2043,9 @@ private fun defaultVibrator(context: Context): Vibrator? =
 /**
  * The no-frills history: just the queries, latest first, separated by thin
  * lines. It fills the whole area below the machine, scrolls normally, and has
- * no expand state, no cards, no clear-all capsule.
+ * no expand state or cards. Each row carries a history glyph, a delete cross
+ * and a reuse arrow. The shared clear-all glass capsule appears only once this
+ * list is actually scrollable and has been scrolled away from the latest row.
  */
 @Composable
 private fun SimpleSearchHistory(
@@ -2038,9 +2054,34 @@ private fun SimpleSearchHistory(
     topInset: Dp,
     bottomInset: Dp,
     onPick: (SearchHistoryEntry) -> Unit,
+    onClear: (SearchHistoryEntry) -> Unit,
+    onClearVisibilityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val currentOnClearVisibilityChange by rememberUpdatedState(onClearVisibilityChange)
+    val scrolledPastTop by remember {
+        derivedStateOf {
+            val threshold = with(density) { 10.dp.roundToPx() }
+            listState.firstVisibleItemIndex > 0 ||
+                listState.firstVisibleItemScrollOffset > threshold
+        }
+    }
+    val canScroll by remember {
+        derivedStateOf {
+            listState.canScrollForward || listState.canScrollBackward
+        }
+    }
+    // Four or five rows stay completely quiet: no clear capsule at all.
+    // From six upward, wait until the user scrolls off the newest row.
+    val showClearAll = entries.size > 5 && canScroll && scrolledPastTop
+    LaunchedEffect(showClearAll) {
+        currentOnClearVisibilityChange(showClearAll)
+    }
+    DisposableEffect(Unit) {
+        onDispose { currentOnClearVisibilityChange(false) }
+    }
     LaunchedEffect(resetKey) {
         if (entries.isNotEmpty()) listState.scrollToItem(0)
     }
@@ -2055,31 +2096,77 @@ private fun SimpleSearchHistory(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 22.dp,
-            end = 22.dp,
-            top = topInset + 6.dp,
+            end = 16.dp,
+            top = topInset,
             bottom = bottomInset + 10.dp,
         ),
     ) {
         itemsIndexed(entries) { index, entry ->
-            Text(
-                text = entry.query,
-                color = Color.White.copy(alpha = if (index == 0) 0.92f else 0.68f),
-                fontSize = 16.sp,
-                fontFamily = CalSansFamily,
-                fontWeight = if (index == 0) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onPick(entry) }
-                    .padding(vertical = 14.dp),
-            )
+                    .height(54.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = LuteaIcons.History,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.40f),
+                    modifier = Modifier.size(19.dp),
+                )
+                Spacer(Modifier.width(15.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable { onPick(entry) },
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        text = entry.query,
+                        color = Color.White.copy(alpha = if (index == 0) 0.92f else 0.72f),
+                        fontSize = 16.sp,
+                        fontFamily = CalSansFamily,
+                        fontWeight = if (index == 0) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable { onClear(entry) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = LuteaIcons.Close,
+                        contentDescription = "Remove ${entry.query}",
+                        tint = Color.White.copy(alpha = 0.48f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable { onPick(entry) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = LuteaIcons.ArrowUpRight,
+                        contentDescription = "Use ${entry.query}",
+                        tint = Color.White.copy(alpha = 0.62f),
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+            }
             if (index != entries.lastIndex) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(0.5.dp)
-                        .background(Color.White.copy(alpha = 0.12f)),
+                        .height(0.6.dp)
+                        .background(Color.White.copy(alpha = 0.28f)),
                 )
             }
         }
