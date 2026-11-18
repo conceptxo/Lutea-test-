@@ -166,6 +166,7 @@ fun LuteaScaffold(
         SearchStyleOverlayState(
             initialStyle = loadSearchSurfaceStyle(context),
             initialHistoryStyle = loadSearchHistoryStyle(context),
+            initialJellyLook = loadJellyLook(context),
             initialTypingSoundEnabled = loadTypingSoundEnabled(context),
         )
     }

@@ -148,6 +148,7 @@ import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.components.LightRaysBackground
+import com.rajatxo.lutea.ui.foundation.JellyLook
 import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
 import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
 import com.rajatxo.lutea.ui.foundation.SearchHistoryStyle
@@ -404,6 +405,7 @@ fun SearchScreen() {
     val historyOverlay = LocalSearchHistoryOverlay.current
     val searchStyleState = LocalSearchStyleOverlay.current
     val searchStyle = searchStyleState.style
+    val jellyLook = searchStyleState.jellyLook
     val historyStyle = searchStyleState.historyStyle
     val typingSoundEnabled = searchStyleState.typingSoundEnabled
     val statusBarInset = with(LocalDensity.current) {
@@ -518,6 +520,7 @@ fun SearchScreen() {
                 library = library,
                 loaded = libraryReady,
                 style = searchStyle,
+                jellyLook = jellyLook,
                 topInset = statusBarInset,
                 nowPlayingId = nowPlaying?.id,
                 onPlay = { song ->
@@ -667,6 +670,7 @@ private fun SearchResults(
     library: List<Song>,
     loaded: Boolean,
     style: SearchSurfaceStyle,
+    jellyLook: JellyLook,
     topInset: Dp,
     nowPlayingId: Long?,
     onPlay: (Song) -> Unit,
@@ -677,6 +681,7 @@ private fun SearchResults(
             SearchSurfaceStyle.JELLY -> {
                 JellyfishBackdrop(
                     searching = query.isNotBlank(),
+                    look = jellyLook,
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds(),

@@ -77,9 +77,13 @@ internal enum class SearchSurfaceStyle { JELLY, CARDS }
 /** The two ways previous searches can be shown below the machine. */
 internal enum class SearchHistoryStyle { PAPER, SIMPLE }
 
+/** The two jellyfish renderers the search page can use. */
+internal enum class JellyLook { CURRENT, CLASSIC }
+
 private const val StylePrefs = "lutea_search"
 private const val StyleKey = "search_surface_style"
 private const val HistoryStyleKey = "search_history_style"
+private const val JellyLookKey = "jelly_look_style"
 private const val TypingSoundKey = "typing_sound_enabled"
 private const val JellyDefaultMigrationKey = "jelly_default_v1"
 
@@ -92,9 +96,11 @@ internal class SearchStyleOverlayState(
     initialStyle: SearchSurfaceStyle,
     initialHistoryStyle: SearchHistoryStyle,
     initialTypingSoundEnabled: Boolean,
+    initialJellyLook: JellyLook = JellyLook.CURRENT,
 ) {
     var style by mutableStateOf(initialStyle)
     var historyStyle by mutableStateOf(initialHistoryStyle)
+    var jellyLook by mutableStateOf(initialJellyLook)
     var typingSoundEnabled by mutableStateOf(initialTypingSoundEnabled)
     var expanded by mutableStateOf(false)
 }
@@ -104,6 +110,7 @@ internal val LocalSearchStyleOverlay = staticCompositionLocalOf {
         initialStyle = SearchSurfaceStyle.JELLY,
         initialHistoryStyle = SearchHistoryStyle.PAPER,
         initialTypingSoundEnabled = true,
+        initialJellyLook = JellyLook.CURRENT,
     )
 }
 
@@ -128,6 +135,13 @@ internal fun loadSearchHistoryStyle(context: Context): SearchHistoryStyle {
         .getString(HistoryStyleKey, null)
     return SearchHistoryStyle.entries.firstOrNull { it.name == saved }
         ?: SearchHistoryStyle.PAPER
+}
+
+internal fun loadJellyLook(context: Context): JellyLook {
+    val saved = context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+        .getString(JellyLookKey, null)
+    return JellyLook.entries.firstOrNull { it.name == saved }
+        ?: JellyLook.CURRENT
 }
 
 internal fun loadTypingSoundEnabled(context: Context): Boolean {
@@ -200,6 +214,7 @@ internal fun SearchStyleOverlay(
             StyleCard(
                 selected = state.style,
                 historyStyle = state.historyStyle,
+                jellyLook = state.jellyLook,
                 typingSoundEnabled = state.typingSoundEnabled,
                 backdrop = backdrop,
                 onSelect = { style ->
@@ -216,6 +231,18 @@ internal fun SearchStyleOverlay(
                     context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
                         .edit()
                         .putString(HistoryStyleKey, historyStyle.name)
+                        .apply()
+                },
+                onJellyLookSelect = { jellyLook ->
+                    state.jellyLook = jellyLook
+                    // A jelly choice is only meaningful on the jelly page, so
+                    // picking one also brings that page back.
+                    state.style = SearchSurfaceStyle.JELLY
+                    state.expanded = false
+                    context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(JellyLookKey, jellyLook.name)
+                        .putString(StyleKey, SearchSurfaceStyle.JELLY.name)
                         .apply()
                 },
                 onTypingSoundToggle = { enabled ->
@@ -239,10 +266,12 @@ internal fun SearchStyleOverlay(
 private fun StyleCard(
     selected: SearchSurfaceStyle,
     historyStyle: SearchHistoryStyle,
+    jellyLook: JellyLook,
     typingSoundEnabled: Boolean,
     backdrop: LayerBackdrop?,
     onSelect: (SearchSurfaceStyle) -> Unit,
     onHistoryStyleSelect: (SearchHistoryStyle) -> Unit,
+    onJellyLookSelect: (JellyLook) -> Unit,
     onTypingSoundToggle: (Boolean) -> Unit,
 ) {
     val shape = RoundedCornerShape(20.dp)
@@ -339,6 +368,12 @@ private fun StyleCard(
         )
 
         Spacer(Modifier.height(9.dp))
+        JellyLookRow(
+            selected = jellyLook,
+            onSelect = onJellyLookSelect,
+        )
+
+        Spacer(Modifier.height(9.dp))
         TypingSoundRow(
             enabled = typingSoundEnabled,
             onToggle = { onTypingSoundToggle(!typingSoundEnabled) },
@@ -363,6 +398,43 @@ private fun StyleCard(
 }
 
 @Composable
+private fun JellyLookRow(
+    selected: JellyLook,
+    onSelect: (JellyLook) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "JELLY UI",
+            color = StyleCream.copy(alpha = 0.44f),
+            fontSize = 8.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.3.sp,
+        )
+        Spacer(Modifier.size(5.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            StyleChip(
+                title = "Current",
+                subtitle = "Physics drift",
+                selected = selected == JellyLook.CURRENT,
+                onClick = { onSelect(JellyLook.CURRENT) },
+                modifier = Modifier.weight(1f),
+            )
+            StyleChip(
+                title = "Classic",
+                subtitle = "Original 3D",
+                selected = selected == JellyLook.CLASSIC,
+                onClick = { onSelect(JellyLook.CLASSIC) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
 private fun HistoryStyleRow(
     selected: SearchHistoryStyle,
     onSelect: (SearchHistoryStyle) -> Unit,
@@ -381,14 +453,14 @@ private fun HistoryStyleRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            HistoryStyleChip(
+            StyleChip(
                 title = "Paper",
                 subtitle = "Tear-off stack",
                 selected = selected == SearchHistoryStyle.PAPER,
                 onClick = { onSelect(SearchHistoryStyle.PAPER) },
                 modifier = Modifier.weight(1f),
             )
-            HistoryStyleChip(
+            StyleChip(
                 title = "Simple",
                 subtitle = "Plain text list",
                 selected = selected == SearchHistoryStyle.SIMPLE,
@@ -400,7 +472,7 @@ private fun HistoryStyleRow(
 }
 
 @Composable
-private fun HistoryStyleChip(
+private fun StyleChip(
     title: String,
     subtitle: String,
     selected: Boolean,
