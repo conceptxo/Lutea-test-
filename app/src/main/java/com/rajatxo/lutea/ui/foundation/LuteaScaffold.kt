@@ -165,6 +165,7 @@ fun LuteaScaffold(
     val searchStyleOverlay = remember(context) {
         SearchStyleOverlayState(
             initialStyle = loadSearchSurfaceStyle(context),
+            initialHistoryStyle = loadSearchHistoryStyle(context),
             initialTypingSoundEnabled = loadTypingSoundEnabled(context),
         )
     }
@@ -174,6 +175,14 @@ fun LuteaScaffold(
     // reappear unexpectedly when the user comes back.
     LaunchedEffect(activeTab) {
         if (activeTab != LuteaTab.Search) searchStyleOverlay.expanded = false
+    }
+
+    // Simple history has no clear-all sheet; close the sheet if the user
+    // switches to it while the paper deck is expanded.
+    LaunchedEffect(searchStyleOverlay.historyStyle) {
+        if (searchStyleOverlay.historyStyle == SearchHistoryStyle.SIMPLE) {
+            searchHistoryOverlay.expanded = false
+        }
     }
 
     // Clear All sits above the nav (48dp + 8dp gap). When the mini player is
@@ -709,7 +718,8 @@ fun LuteaScaffold(
             //    action through LocalSearchHistoryOverlay.
             if (activeTab == LuteaTab.Search) {
                 SearchClearAllOverlay(
-                    visible = searchHistoryOverlay.expanded &&
+                    visible = searchStyleOverlay.historyStyle == SearchHistoryStyle.PAPER &&
+                        searchHistoryOverlay.expanded &&
                         !playerVisible &&
                         !showLyrics,
                     backdrop = glassBackdrop,

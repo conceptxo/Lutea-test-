@@ -149,6 +149,7 @@ import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
 import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
+import com.rajatxo.lutea.ui.foundation.SearchHistoryStyle
 import com.rajatxo.lutea.ui.foundation.SearchSurfaceStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -398,6 +399,7 @@ fun SearchScreen() {
     val historyOverlay = LocalSearchHistoryOverlay.current
     val searchStyleState = LocalSearchStyleOverlay.current
     val searchStyle = searchStyleState.style
+    val historyStyle = searchStyleState.historyStyle
     val typingSoundEnabled = searchStyleState.typingSoundEnabled
     val statusFadeHeight = with(LocalDensity.current) {
         WindowInsets.statusBars.getTop(this).toDp() + 30.dp
@@ -510,6 +512,7 @@ fun SearchScreen() {
                 library = library,
                 loaded = libraryReady,
                 style = searchStyle,
+                topInset = statusFadeHeight,
                 nowPlayingId = nowPlaying?.id,
                 onPlay = { song ->
                     submitSearch(query, song)
@@ -539,9 +542,10 @@ fun SearchScreen() {
             )
         }
 
-        // Search history: a stack of tear-off papers below the machine. Every size
-        // here is a fraction of the screen (or the machine's own scale), never a
-        // fixed dp, so it looks the same on a small phone and a tall one.
+        // Search history below the machine: either the tear-off paper deck or
+        // the plain text list. Every size here is a fraction of the screen (or
+        // the machine's own scale), never a fixed dp, so it looks the same on a
+        // small phone and a tall one.
         val screenH = LocalConfiguration.current.screenHeightDp.dp
         val scale = (LocalConfiguration.current.screenWidthDp / 360f).coerceIn(0.85f, 1.35f)
         val fadeHeight = screenH * 0.05f            // the black fade under the machine
@@ -567,23 +571,34 @@ fun SearchScreen() {
                 // below, instead of sliding over the machine.
                 .clipToBounds(),
         ) {
-            SearchHistoryDeck(
-                entries = history,
-                resetKey = historyRevision,
-                bottomInset = deckBottomInset,
-                onExpandedChange = { historyOverlay.expanded = it },
-                onPick = { entry -> query = entry.query },
-                onClear = { entry ->
-                    history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
-                    saveSearchHistory(context, history)
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = 14.dp, end = 14.dp, top = deckTopInset),
-            )
+            if (historyStyle == SearchHistoryStyle.SIMPLE) {
+                SimpleSearchHistory(
+                    entries = history,
+                    resetKey = historyRevision,
+                    topInset = fadeHeight,
+                    bottomInset = deckBottomInset,
+                    onPick = { entry -> query = entry.query },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                SearchHistoryDeck(
+                    entries = history,
+                    resetKey = historyRevision,
+                    bottomInset = deckBottomInset,
+                    onExpandedChange = { historyOverlay.expanded = it },
+                    onPick = { entry -> query = entry.query },
+                    onClear = { entry ->
+                        history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
+                        saveSearchHistory(context, history)
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(start = 14.dp, end = 14.dp, top = deckTopInset),
+                )
+            }
 
             // Same black the page gradient already has here → no colour seam.
-            // Drawn after the deck, so papers always slide in behind it.
+            // Drawn after the history content so rows slide in behind it.
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -662,6 +677,7 @@ private fun SearchResults(
     library: List<Song>,
     loaded: Boolean,
     style: SearchSurfaceStyle,
+    topInset: Dp,
     nowPlayingId: Long?,
     onPlay: (Song) -> Unit,
     modifier: Modifier = Modifier,
@@ -681,6 +697,7 @@ private fun SearchResults(
                         query = query,
                         songs = songs,
                         loaded = loaded,
+                        topInset = topInset,
                         nowPlayingId = nowPlayingId,
                         onPlay = onPlay,
                         modifier = Modifier.fillMaxSize(),
@@ -718,6 +735,7 @@ private fun JellySongList(
     query: String,
     songs: List<Song>,
     loaded: Boolean,
+    topInset: Dp,
     nowPlayingId: Long?,
     onPlay: (Song) -> Unit,
     modifier: Modifier = Modifier,
@@ -786,6 +804,7 @@ private fun JellySongList(
                 contentPadding = PaddingValues(
                     start = 8.dp,
                     end = 8.dp,
+                    top = topInset + 2.dp,
                     bottom = 10.dp,
                 ),
             ) {
@@ -2006,6 +2025,66 @@ private fun defaultVibrator(context: Context): Vibrator? =
     } else {
         context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
     }
+
+/**
+ * The no-frills history: just the queries, latest first, separated by thin
+ * lines. It fills the whole area below the machine, scrolls normally, and has
+ * no expand state, no cards, no clear-all capsule.
+ */
+@Composable
+private fun SimpleSearchHistory(
+    entries: List<SearchHistoryEntry>,
+    resetKey: Int,
+    topInset: Dp,
+    bottomInset: Dp,
+    onPick: (SearchHistoryEntry) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(resetKey) {
+        if (entries.isNotEmpty()) listState.scrollToItem(0)
+    }
+
+    if (entries.isEmpty()) {
+        Box(modifier)
+        return
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 22.dp,
+            end = 22.dp,
+            top = topInset + 6.dp,
+            bottom = bottomInset + 10.dp,
+        ),
+    ) {
+        itemsIndexed(entries, key = { _, entry -> entry.query }) { index, entry ->
+            Text(
+                text = entry.query,
+                color = Color.White.copy(alpha = if (index == 0) 0.92f else 0.68f),
+                fontSize = 16.sp,
+                fontFamily = CalSansFamily,
+                fontWeight = if (index == 0) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(entry) }
+                    .padding(vertical = 14.dp),
+            )
+            if (index != entries.lastIndex) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(0.5.dp)
+                        .background(Color.White.copy(alpha = 0.12f)),
+                )
+            }
+        }
+    }
+}
 
 /**
  * The history as a card-switcher. Collapsed: the front paper is full size and

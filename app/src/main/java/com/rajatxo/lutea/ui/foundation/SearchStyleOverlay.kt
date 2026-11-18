@@ -20,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -73,8 +74,12 @@ import kotlin.math.sin
 /** The two ways the top half of the search page can look. */
 internal enum class SearchSurfaceStyle { JELLY, CARDS }
 
+/** The two ways previous searches can be shown below the machine. */
+internal enum class SearchHistoryStyle { PAPER, SIMPLE }
+
 private const val StylePrefs = "lutea_search"
 private const val StyleKey = "search_surface_style"
+private const val HistoryStyleKey = "search_history_style"
 private const val TypingSoundKey = "typing_sound_enabled"
 private const val JellyDefaultMigrationKey = "jelly_default_v1"
 
@@ -85,9 +90,11 @@ private val StyleJellyPink = Color(0xFFFFA0C6)
 @Stable
 internal class SearchStyleOverlayState(
     initialStyle: SearchSurfaceStyle,
+    initialHistoryStyle: SearchHistoryStyle,
     initialTypingSoundEnabled: Boolean,
 ) {
     var style by mutableStateOf(initialStyle)
+    var historyStyle by mutableStateOf(initialHistoryStyle)
     var typingSoundEnabled by mutableStateOf(initialTypingSoundEnabled)
     var expanded by mutableStateOf(false)
 }
@@ -95,6 +102,7 @@ internal class SearchStyleOverlayState(
 internal val LocalSearchStyleOverlay = staticCompositionLocalOf {
     SearchStyleOverlayState(
         initialStyle = SearchSurfaceStyle.JELLY,
+        initialHistoryStyle = SearchHistoryStyle.PAPER,
         initialTypingSoundEnabled = true,
     )
 }
@@ -113,6 +121,13 @@ internal fun loadSearchSurfaceStyle(context: Context): SearchSurfaceStyle {
     val saved = prefs.getString(StyleKey, null)
     return SearchSurfaceStyle.entries.firstOrNull { it.name == saved }
         ?: SearchSurfaceStyle.JELLY
+}
+
+internal fun loadSearchHistoryStyle(context: Context): SearchHistoryStyle {
+    val saved = context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+        .getString(HistoryStyleKey, null)
+    return SearchHistoryStyle.entries.firstOrNull { it.name == saved }
+        ?: SearchHistoryStyle.PAPER
 }
 
 internal fun loadTypingSoundEnabled(context: Context): Boolean {
@@ -184,6 +199,7 @@ internal fun SearchStyleOverlay(
         ) {
             StyleCard(
                 selected = state.style,
+                historyStyle = state.historyStyle,
                 typingSoundEnabled = state.typingSoundEnabled,
                 backdrop = backdrop,
                 onSelect = { style ->
@@ -192,6 +208,14 @@ internal fun SearchStyleOverlay(
                     context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
                         .edit()
                         .putString(StyleKey, style.name)
+                        .apply()
+                },
+                onHistoryStyleSelect = { historyStyle ->
+                    state.historyStyle = historyStyle
+                    state.expanded = false
+                    context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(HistoryStyleKey, historyStyle.name)
                         .apply()
                 },
                 onTypingSoundToggle = { enabled ->
@@ -214,9 +238,11 @@ internal fun SearchStyleOverlay(
 @Composable
 private fun StyleCard(
     selected: SearchSurfaceStyle,
+    historyStyle: SearchHistoryStyle,
     typingSoundEnabled: Boolean,
     backdrop: LayerBackdrop?,
     onSelect: (SearchSurfaceStyle) -> Unit,
+    onHistoryStyleSelect: (SearchHistoryStyle) -> Unit,
     onTypingSoundToggle: (Boolean) -> Unit,
 ) {
     val shape = RoundedCornerShape(20.dp)
@@ -318,6 +344,12 @@ private fun StyleCard(
             onToggle = { onTypingSoundToggle(!typingSoundEnabled) },
         )
 
+        Spacer(Modifier.height(9.dp))
+        HistoryStyleRow(
+            selected = historyStyle,
+            onSelect = onHistoryStyleSelect,
+        )
+
         Spacer(Modifier.size(7.dp))
         Text(
             text = "TAP TO SWITCH",
@@ -326,6 +358,91 @@ private fun StyleCard(
             fontFamily = FontFamily.Monospace,
             letterSpacing = 1.2.sp,
             modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
+    }
+}
+
+@Composable
+private fun HistoryStyleRow(
+    selected: SearchHistoryStyle,
+    onSelect: (SearchHistoryStyle) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "HISTORY UI",
+            color = StyleCream.copy(alpha = 0.44f),
+            fontSize = 8.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.3.sp,
+        )
+        Spacer(Modifier.size(5.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            HistoryStyleChip(
+                title = "Paper",
+                subtitle = "Tear-off stack",
+                selected = selected == SearchHistoryStyle.PAPER,
+                onClick = { onSelect(SearchHistoryStyle.PAPER) },
+                modifier = Modifier.weight(1f),
+            )
+            HistoryStyleChip(
+                title = "Simple",
+                subtitle = "Plain text list",
+                selected = selected == SearchHistoryStyle.SIMPLE,
+                onClick = { onSelect(SearchHistoryStyle.SIMPLE) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HistoryStyleChip(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(
+                if (selected) Color.White.copy(alpha = 0.10f)
+                else Color.White.copy(alpha = 0.025f)
+            )
+            .border(
+                width = 1.dp,
+                color = if (selected) StyleCream.copy(alpha = 0.38f)
+                else Color.White.copy(alpha = 0.07f),
+                shape = shape,
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 9.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = title,
+            color = StyleCream.copy(alpha = 0.92f),
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.size(2.dp))
+        Text(
+            text = subtitle,
+            color = StyleCream.copy(alpha = 0.40f),
+            fontSize = 8.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
