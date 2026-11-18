@@ -39,7 +39,7 @@ import com.rajatxo.lutea.ui.foundation.JellyLook
 @Composable
 internal fun JellyfishBackdrop(
     searching: Boolean,
-    look: JellyLook = JellyLook.CURRENT,
+    look: JellyLook = JellyLook.CLASSIC,
     modifier: Modifier = Modifier,
 ) {
     val clock = remember { mutableFloatStateOf(0f) }

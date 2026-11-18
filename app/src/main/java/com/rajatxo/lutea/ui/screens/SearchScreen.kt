@@ -127,10 +127,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -408,6 +411,10 @@ fun SearchScreen() {
     val jellyLook = searchStyleState.jellyLook
     val historyStyle = searchStyleState.historyStyle
     val typingSoundEnabled = searchStyleState.typingSoundEnabled
+    val typingSoundVolume = searchStyleState.typingSoundVolume
+    LaunchedEffect(typingSoundVolume) {
+        TypewriterSound.setLevel(typingSoundVolume)
+    }
     val statusBarInset = with(LocalDensity.current) {
         WindowInsets.statusBars.getTop(this).toDp()
     }
@@ -1012,11 +1019,29 @@ private fun SearchMachine(
     // Everything on the rail is designed for a 360dp-wide phone and scales with the screen width.
     val k = (LocalConfiguration.current.screenWidthDp / 360f).coerceIn(0.85f, 1.35f)
 
-    var caretPx by remember { mutableStateOf(0f) }      // caret x inside the text box
     var viewportPx by remember { mutableStateOf(0f) }   // visible width of the text box
     var railPx by remember { mutableStateOf(0f) }       // rail width
+    var fieldValue by remember { mutableStateOf(TextFieldValue(query, TextRange(query.length))) }
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
 
-    // Carriage target: centre the capsule on the last glyph, never off the rail.
+    // The parent can change the query from history/clear while the field is
+    // composed. Keep the local TextFieldValue (and caret) in step, but never
+    // reset the caret while the user is simply editing the same text.
+    LaunchedEffect(query) {
+        if (query != fieldValue.text) {
+            fieldValue = TextFieldValue(query, TextRange(query.length))
+        }
+    }
+
+    // TextFieldValue carries the insertion caret; BasicTextField's onTextLayout
+    // alone only fires when the layout changes, so a tap in the middle of the
+    // string would otherwise leave the carriage at the end.
+    val caretOffset = fieldValue.selection.end.coerceIn(0, fieldValue.text.length)
+    val caretPx = textLayout?.let { layout ->
+        layout.getCursorRect(caretOffset.coerceIn(0, layout.layoutInput.text.length)).left
+    } ?: 0f
+
+    // Carriage target: centre the capsule on the actual caret, never off the rail.
     val capsuleWPx = with(density) { CapsuleWidth.toPx() } * k
     val textStartPx = with(density) { TextStart.toPx() }
     val halfGlyphPx = with(density) { 4.2.dp.toPx() }          // caret sits AFTER the last letter
@@ -1024,7 +1049,8 @@ private fun SearchMachine(
     val notchClearPx = with(density) { 20.dp.toPx() } * k
     val minLeft = notchClearPx
     val maxLeft = (railPx - capsuleWPx - notchClearPx).coerceAtLeast(minLeft)
-    val caretLead = minOf(caretPx, viewportPx) - if (query.isEmpty()) 0f else halfGlyphPx
+    val caretLead = minOf(caretPx, viewportPx) -
+        if (fieldValue.text.isEmpty()) 0f else halfGlyphPx
     val targetLeft = (textStartPx + caretLead - capsuleWPx / 2f)
         .coerceIn(minLeft, maxLeft)
     val carriageX by animateFloatAsState(
@@ -1180,16 +1206,19 @@ private fun SearchMachine(
                     )
                 }
                 BasicTextField(
-                    value = query,
+                    value = fieldValue,
                     onValueChange = { next ->
-                        if (next.length < query.length) {
+                        val oldText = fieldValue.text
+                        val nextText = next.text
+                        if (nextText.length < oldText.length) {
                             mode = TypeState.CLEARED       // backspace → red
                             clearTick++
-                        } else if (next.length > query.length) {
+                        } else if (nextText != oldText) {
                             mode = TypeState.TYPING        // a new letter → green
                             if (typingSoundEnabled) TypewriterSound.playKey()
                         }
-                        onQueryChange(next)
+                        fieldValue = next
+                        if (nextText != oldText) onQueryChange(nextText)
                     },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -1206,10 +1235,7 @@ private fun SearchMachine(
                         ),
                     ),
                     cursorBrush = SolidColor(TypeCream),
-                    onTextLayout = { layout ->
-                        val end = layout.layoutInput.text.length
-                        caretPx = layout.getCursorRect(query.length.coerceIn(0, end)).left
-                    },
+                    onTextLayout = { textLayout = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focus)
@@ -1233,6 +1259,7 @@ private fun SearchMachine(
                         .clickable {
                             mode = TypeState.CLEARED       // red
                             clearTick++
+                            fieldValue = TextFieldValue("")
                             onQueryChange("")
                         },
                     contentAlignment = Alignment.Center,

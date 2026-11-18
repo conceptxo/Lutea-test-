@@ -168,6 +168,7 @@ fun LuteaScaffold(
             initialHistoryStyle = loadSearchHistoryStyle(context),
             initialJellyLook = loadJellyLook(context),
             initialTypingSoundEnabled = loadTypingSoundEnabled(context),
+            initialTypingSoundVolume = loadTypingSoundVolume(context),
         )
     }
     val currentSong by PlaybackConnection.currentSong.collectAsState()

@@ -177,14 +177,14 @@ fun EffectVisual(
     var ballRotationOn by remember {
         mutableStateOf(prefs.getBoolean("ball_rotation", true))
     }
-    // Which sphere the Effect page draws. The glow-ball-coloured dot sphere
-    // is the default. Persisted.
+    // Which sphere the Effect page draws. Glass Bubble is the default.
+    // Persisted; an explicit Metamorphic/Jelly choice is always kept.
     var sphereStyle by remember {
         mutableStateOf(
-            when (prefs.getString("sphere_style", "metamorphic")) {
+            when (prefs.getString("sphere_style", "glass")) {
+                "metamorphic" -> SphereStyle.METAMORPHIC
                 "jelly" -> SphereStyle.JELLY
-                "glass" -> SphereStyle.GLASS
-                else -> SphereStyle.METAMORPHIC
+                else -> SphereStyle.GLASS
             }
         )
     }
@@ -3036,7 +3036,7 @@ private fun sphereRadiusForWidth(w: Float): Float {
 
 /** Which creature the Effect page shows in the middle. */
 private enum class SphereStyle {
-    /** The original white dot sphere (default). */
+    /** The original white dot sphere. */
     METAMORPHIC,
     /** The jellyfish renderer. */
     JELLY,
@@ -3058,7 +3058,7 @@ private fun SphereComposition(
     spinDeg: Float = 0f,
     tint: Color = Color.White,
     sphereMix: Float = 0f,
-    sphereStyle: SphereStyle = SphereStyle.METAMORPHIC,
+    sphereStyle: SphereStyle = SphereStyle.GLASS,
     onQuickTap: () -> Unit = {},
 ) {
     val points = remember { fibonacciSphere(180) }

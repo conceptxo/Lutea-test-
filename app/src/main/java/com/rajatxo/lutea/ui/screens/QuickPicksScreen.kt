@@ -49,7 +49,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import com.rajatxo.lutea.audio.TypewriterSound
 import com.rajatxo.lutea.data.prefs.PlaylistStyle
 import com.rajatxo.lutea.data.prefs.PlaylistStyleManager
 import com.rajatxo.lutea.data.scanner.MusicScanner
@@ -176,9 +175,6 @@ fun QuickPicksScreen(
                         onValueChange = { newValue ->
                             val filtered = newValue.filter { it.isLetter() || it.isWhitespace() }
                             if (filtered.count { it.isLetter() } <= MAX_LETTERS) {
-                                if (filtered.length > renameValue.length) {
-                                    TypewriterSound.playKey()
-                                }
                                 renameValue = filtered
                             }
                         },
@@ -277,9 +273,6 @@ fun QuickPicksScreen(
                     onValueChange = { newValue ->
                         val filtered = newValue.filter { it.isLetter() || it.isWhitespace() }
                         if (filtered.count { it.isLetter() } <= MAX_LETTERS) {
-                            if (filtered.length > playlistName.length) {
-                                TypewriterSound.playKey()
-                            }
                             playlistName = filtered
                         }
                     },

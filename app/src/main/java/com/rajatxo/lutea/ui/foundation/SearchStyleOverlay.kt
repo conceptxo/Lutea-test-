@@ -69,6 +69,7 @@ import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.audio.TypewriterSound
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** The two ways the top half of the search page can look. */
@@ -85,6 +86,7 @@ private const val StyleKey = "search_surface_style"
 private const val HistoryStyleKey = "search_history_style"
 private const val JellyLookKey = "jelly_look_style"
 private const val TypingSoundKey = "typing_sound_enabled"
+private const val TypingVolumeKey = "typing_sound_volume"
 private const val JellyDefaultMigrationKey = "jelly_default_v1"
 
 private val StyleCream = Color(0xFFFCF2C7)
@@ -94,23 +96,26 @@ private val StyleJellyPink = Color(0xFFFFA0C6)
 @Stable
 internal class SearchStyleOverlayState(
     initialStyle: SearchSurfaceStyle,
-    initialHistoryStyle: SearchHistoryStyle,
+    initialHistoryStyle: SearchHistoryStyle = SearchHistoryStyle.SIMPLE,
     initialTypingSoundEnabled: Boolean,
-    initialJellyLook: JellyLook = JellyLook.CURRENT,
+    initialJellyLook: JellyLook = JellyLook.CLASSIC,
+    initialTypingSoundVolume: Float = TypewriterSound.DEFAULT_LEVEL,
 ) {
     var style by mutableStateOf(initialStyle)
     var historyStyle by mutableStateOf(initialHistoryStyle)
     var jellyLook by mutableStateOf(initialJellyLook)
     var typingSoundEnabled by mutableStateOf(initialTypingSoundEnabled)
+    var typingSoundVolume by mutableStateOf(initialTypingSoundVolume.coerceIn(0f, 1f))
     var expanded by mutableStateOf(false)
 }
 
 internal val LocalSearchStyleOverlay = staticCompositionLocalOf {
     SearchStyleOverlayState(
         initialStyle = SearchSurfaceStyle.JELLY,
-        initialHistoryStyle = SearchHistoryStyle.PAPER,
+        initialHistoryStyle = SearchHistoryStyle.SIMPLE,
         initialTypingSoundEnabled = true,
-        initialJellyLook = JellyLook.CURRENT,
+        initialJellyLook = JellyLook.CLASSIC,
+        initialTypingSoundVolume = TypewriterSound.DEFAULT_LEVEL,
     )
 }
 
@@ -134,19 +139,25 @@ internal fun loadSearchHistoryStyle(context: Context): SearchHistoryStyle {
     val saved = context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
         .getString(HistoryStyleKey, null)
     return SearchHistoryStyle.entries.firstOrNull { it.name == saved }
-        ?: SearchHistoryStyle.PAPER
+        ?: SearchHistoryStyle.SIMPLE
 }
 
 internal fun loadJellyLook(context: Context): JellyLook {
     val saved = context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
         .getString(JellyLookKey, null)
     return JellyLook.entries.firstOrNull { it.name == saved }
-        ?: JellyLook.CURRENT
+        ?: JellyLook.CLASSIC
 }
 
 internal fun loadTypingSoundEnabled(context: Context): Boolean {
     return context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
         .getBoolean(TypingSoundKey, true)
+}
+
+internal fun loadTypingSoundVolume(context: Context): Float {
+    return context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+        .getFloat(TypingVolumeKey, TypewriterSound.DEFAULT_LEVEL)
+        .coerceIn(0f, 1f)
 }
 
 /**
@@ -216,6 +227,7 @@ internal fun SearchStyleOverlay(
                 historyStyle = state.historyStyle,
                 jellyLook = state.jellyLook,
                 typingSoundEnabled = state.typingSoundEnabled,
+                typingSoundVolume = state.typingSoundVolume,
                 backdrop = backdrop,
                 onSelect = { style ->
                     state.style = style
@@ -253,9 +265,20 @@ internal fun SearchStyleOverlay(
                         .apply()
                     if (enabled) {
                         TypewriterSound.init(context)
+                        TypewriterSound.setLevel(state.typingSoundVolume)
                     } else {
                         TypewriterSound.stopAll()
                     }
+                },
+                onTypingVolumeChange = { volume ->
+                    state.typingSoundVolume = volume.coerceIn(0f, 1f)
+                    TypewriterSound.setLevel(state.typingSoundVolume)
+                },
+                onTypingVolumeChangeFinished = {
+                    context.getSharedPreferences(StylePrefs, Context.MODE_PRIVATE)
+                        .edit()
+                        .putFloat(TypingVolumeKey, state.typingSoundVolume)
+                        .apply()
                 },
             )
         }
@@ -268,11 +291,14 @@ private fun StyleCard(
     historyStyle: SearchHistoryStyle,
     jellyLook: JellyLook,
     typingSoundEnabled: Boolean,
+    typingSoundVolume: Float,
     backdrop: LayerBackdrop?,
     onSelect: (SearchSurfaceStyle) -> Unit,
     onHistoryStyleSelect: (SearchHistoryStyle) -> Unit,
     onJellyLookSelect: (JellyLook) -> Unit,
     onTypingSoundToggle: (Boolean) -> Unit,
+    onTypingVolumeChange: (Float) -> Unit,
+    onTypingVolumeChangeFinished: () -> Unit,
 ) {
     val shape = RoundedCornerShape(20.dp)
     val glass = if (backdrop != null) {
@@ -374,9 +400,12 @@ private fun StyleCard(
         )
 
         Spacer(Modifier.height(9.dp))
-        TypingSoundRow(
+        TypingSoundSection(
             enabled = typingSoundEnabled,
+            volume = typingSoundVolume,
             onToggle = { onTypingSoundToggle(!typingSoundEnabled) },
+            onVolumeChange = onTypingVolumeChange,
+            onVolumeChangeFinished = onTypingVolumeChangeFinished,
         )
 
         Spacer(Modifier.height(9.dp))
@@ -515,6 +544,67 @@ private fun StyleChip(
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun TypingSoundSection(
+    enabled: Boolean,
+    volume: Float,
+    onToggle: () -> Unit,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "SOUND",
+            color = StyleCream.copy(alpha = 0.44f),
+            fontSize = 8.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.3.sp,
+        )
+        Spacer(Modifier.size(5.dp))
+
+        TypingSoundRow(
+            enabled = enabled,
+            onToggle = onToggle,
+        )
+
+        Spacer(Modifier.size(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = "Volume",
+                color = StyleCream.copy(alpha = 0.38f),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                text = "${(volume * 100f).roundToInt()}%",
+                color = StyleCream.copy(alpha = 0.38f),
+                fontSize = 8.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        androidx.compose.material3.Slider(
+            value = volume,
+            onValueChange = onVolumeChange,
+            onValueChangeFinished = onVolumeChangeFinished,
+            valueRange = 0f..1f,
+            enabled = enabled,
+            colors = androidx.compose.material3.SliderDefaults.colors(
+                thumbColor = StyleCream.copy(alpha = 0.92f),
+                activeTrackColor = StyleCream.copy(alpha = 0.80f),
+                inactiveTrackColor = Color.White.copy(alpha = 0.12f),
+                disabledThumbColor = StyleCream.copy(alpha = 0.34f),
+                disabledActiveTrackColor = StyleCream.copy(alpha = 0.22f),
+                disabledInactiveTrackColor = Color.White.copy(alpha = 0.07f),
+            ),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
