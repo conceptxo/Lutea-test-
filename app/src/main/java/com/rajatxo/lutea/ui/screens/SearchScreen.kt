@@ -1,25 +1,14 @@
 package com.rajatxo.lutea.ui.screens
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Color as AndroidColor
 import android.graphics.RuntimeShader
-import android.net.Uri
 import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.view.HapticFeedbackConstants
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -30,8 +19,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,56 +54,41 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageShader
-import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -126,7 +98,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -134,30 +105,22 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.palette.graphics.Palette
 import coil3.compose.AsyncImage
 import com.rajatxo.lutea.audio.TypewriterSound
 import com.rajatxo.lutea.data.scanner.MusicScanner
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
-import com.rajatxo.lutea.ui.foundation.JellyLook
 import com.rajatxo.lutea.ui.foundation.LocalSearchHistoryOverlay
-import com.rajatxo.lutea.ui.foundation.LocalSearchStyleOverlay
-import com.rajatxo.lutea.ui.foundation.SearchHistoryStyle
-import com.rajatxo.lutea.ui.foundation.SearchSurfaceStyle
+import com.rajatxo.lutea.ui.foundation.LocalSearchSoundOverlay
 import com.rajatxo.lutea.ui.icons.LuteaIcons
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -165,23 +128,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.ceil
 import kotlin.math.cos
-import kotlin.math.floor
-import kotlin.math.pow
 import kotlin.math.roundToInt
-import kotlin.math.sign
 import kotlin.math.sin
-import kotlin.random.Random
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SEARCH PAGE — a bare search line and the typewriter under it.
 //
-//  Search page: a bare search line, the typewriter under it, and the past
-//  searches below the rail as tear-off paper tickets.
-//
-//  Top to bottom:  the search icon + text box (nothing around them, straight on
+//  Top to bottom: the search icon + text box (nothing around them, straight on
 //  the page — you type here) →
 //  the T hammer → the cream carriage on its steel rail. The carriage follows the
 //  caret; on every keystroke the hammer taps up under the text like a typebar.
@@ -189,7 +143,7 @@ import kotlin.random.Random
 //      green  = actively typing
 //      yellow = keyboard open, paused
 //      red    = backspace / ✕ pressed
-//  Below the rail: one ticket per search, torn off by its stub to clear it.
+//  Below the rail: the plain list of previous searches.
 //  The three dots on the carriage are a speaker grille: always black.
 //  Everything is drawn with gradients — no images.
 //
@@ -271,80 +225,6 @@ private val SearchGlyph: ImageVector = ImageVector.Builder(
     }
 }.build()
 
-/** Lucide "chevrons-up-down" (MIT): the expand icon printed on every paper. */
-private val ExpandGlyph: ImageVector = ImageVector.Builder(
-    name = "Expand",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        fill = null,
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2f,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-        strokeLineMiter = 4f,
-    ) {
-        moveTo(7f, 15f)
-        lineTo(12f, 20f)
-        lineTo(17f, 15f)
-        moveTo(7f, 9f)
-        lineTo(12f, 4f)
-        lineTo(17f, 9f)
-    }
-}.build()
-
-/** Lucide "chevrons-down-up" (MIT): shown instead while the list is open. */
-private val CollapseGlyph: ImageVector = ImageVector.Builder(
-    name = "Collapse",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        fill = null,
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2f,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-        strokeLineMiter = 4f,
-    ) {
-        moveTo(7f, 20f)
-        lineTo(12f, 15f)
-        lineTo(17f, 20f)
-        moveTo(7f, 4f)
-        lineTo(12f, 9f)
-        lineTo(17f, 4f)
-    }
-}.build()
-
-/** The little curved arrow printed on the stub: "pull me off". */
-private val TearGlyph: ImageVector = ImageVector.Builder(
-    name = "Tear",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        fill = null,
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2f,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-        strokeLineMiter = 4f,
-    ) {
-        moveTo(6f, 6f)
-        curveTo(12f, 6f, 18f, 9f, 18f, 17f)
-        moveTo(14f, 14f)
-        lineTo(18f, 18f)
-        lineTo(22f, 14f)
-    }
-}.build()
-
 /**
  * AGSL (Android Graphics Shading Language) — this is the thing that paints real light on Android: a fragment
  * shader compiled by Skia at runtime. Every pixel works out its own distance and angle from the slot and fades
@@ -401,16 +281,12 @@ fun SearchScreen() {
     var query by remember { mutableStateOf("") }
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val history = remember { mutableStateListOf<SearchHistoryEntry>() }
-    val scope = rememberCoroutineScope()
+    val history = remember { mutableStateListOf<String>() }
     var historyRevision by remember { mutableStateOf(0) }
     val historyOverlay = LocalSearchHistoryOverlay.current
-    val searchStyleState = LocalSearchStyleOverlay.current
-    val searchStyle = searchStyleState.style
-    val jellyLook = searchStyleState.jellyLook
-    val historyStyle = searchStyleState.historyStyle
-    val typingSoundEnabled = searchStyleState.typingSoundEnabled
-    val typingSoundVolume = searchStyleState.typingSoundVolume
+    val soundState = LocalSearchSoundOverlay.current
+    val typingSoundEnabled = soundState.typingSoundEnabled
+    val typingSoundVolume = soundState.typingSoundVolume
     LaunchedEffect(typingSoundVolume) {
         TypewriterSound.setLevel(typingSoundVolume)
     }
@@ -431,58 +307,31 @@ fun SearchScreen() {
     val nowPlaying by PlaybackConnection.currentSong.collectAsState()
     val results = remember(query, library) { searchLibrary(library, query) }
 
-    // Searches live between launches. A fresh install is seeded with a few papers
-    // so the tear-off stack has something to show before real results are wired.
-    // Older string-only entries are given a stable colour and rewritten as objects.
+    // Searches live between launches. A fresh install is seeded with a few
+    // examples so the simple list has something to show.
     LaunchedEffect(Unit) {
         val saved = loadSearchHistory(context)
-        if (saved == null) {
-            history.addAll(
-                DemoSearchHistory.map { SearchHistoryEntry(it, stablePaperColor(it)) },
-            )
-        } else {
-            history.addAll(saved)
-        }
+        history.addAll(saved ?: DemoSearchHistory)
         saveSearchHistory(context, history)
     }
 
-    fun addToHistory(entry: String, color: Int) {
-        history.removeAll { it.query.equals(entry, ignoreCase = true) }
-        history.add(0, SearchHistoryEntry(entry, color))
+    fun addToHistory(entry: String) {
+        history.removeAll { it.equals(entry, ignoreCase = true) }
+        history.add(0, entry)
         while (history.size > 30) history.removeAt(history.lastIndex)
         saveSearchHistory(context, history)
         historyRevision++
     }
 
-    /**
-     * Work out the paper's colour before it is placed on the stack. A tapped
-     * song is stored under its full title, so searching "moon" and tapping
-     * "Moonlight" leaves a Moonlight paper. A submitted query keeps the typed
-     * text; it takes the colour of its best match, or a random colour when
-     * nothing matches.
-     */
     fun submitSearch(raw: String, song: Song? = null) {
         val entry = (song?.title ?: raw).trim()
         if (entry.isEmpty()) return
-        val previousColor = history.firstOrNull {
-            it.query.equals(entry, ignoreCase = true)
-        }?.color
-        scope.launch {
-            val source = song ?: results.firstOrNull()
-            val albumRgb = withContext(Dispatchers.IO) {
-                source?.albumArtUri?.let { uri -> dominantArtColor(context, uri) }
-            }
-            val color = albumRgb?.let { rgb -> paperColorFromSwatch(rgb) }
-                ?: previousColor
-                ?: randomPaperColor()
-            addToHistory(entry, color)
-        }
+        addToHistory(entry)
     }
 
     fun clearAllHistory() {
         history.clear()
         saveSearchHistory(context, history)
-        historyOverlay.expanded = false
         historyOverlay.simpleClearVisible = false
         historyRevision++
     }
@@ -493,7 +342,6 @@ fun SearchScreen() {
         historyOverlay.onClearAll = { clearAllHistory() }
         onDispose {
             historyOverlay.onClearAll = null
-            historyOverlay.expanded = false
         }
     }
 
@@ -523,28 +371,20 @@ fun SearchScreen() {
             SearchResults(
                 query = query,
                 songs = results,
-                library = library,
                 loaded = libraryReady,
-                style = searchStyle,
-                jellyLook = jellyLook,
                 topInset = statusBarInset,
                 nowPlayingId = nowPlaying?.id,
                 onPlay = { song ->
                     submitSearch(query, song)
-                    // Card style can play straight from the library while no
-                    // query is typed; in that case results is empty.
-                    PlaybackConnection.playSong(
-                        song,
-                        if (query.isBlank()) library else results,
-                    )
+                    PlaybackConnection.playSong(song, results)
                     keyboard?.hide()
                 },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     // The typewriter beam is drawn by the machine below. Keep
-                    // results, jellyfish and cards above it so the lamp stays
-                    // a background light instead of washing out content.
+                    // the result rows above it so the lamp stays a background
+                    // light instead of washing out content.
                     .zIndex(1f),
             )
 
@@ -557,17 +397,11 @@ fun SearchScreen() {
             )
         }
 
-        // Search history below the machine: either the tear-off paper deck or
-        // the plain text list. Every size here is a fraction of the screen (or
-        // the machine's own scale), never a fixed dp, so it looks the same on a
-        // small phone and a tall one.
+        // Simple search history below the machine. Every size here is a
+        // fraction of the screen (or the machine's own scale).
         val screenH = LocalConfiguration.current.screenHeightDp.dp
         val scale = (LocalConfiguration.current.screenWidthDp / 360f).coerceIn(0.85f, 1.35f)
-        val fadeHeight = screenH * 0.05f            // the black fade under the machine (paper mode)
-        val deckTopInset = fadeHeight * 0.45f       // first paper starts inside the fade's tail
-        val deckBottomInset = screenH * 0.11f       // keeps the last paper clear of the bottom bar
-        // Simple mode should start almost immediately under the machine: only a
-        // short fade for the scrolling edge, not the paper deck's tall inset.
+        val historyBottomInset = screenH * 0.11f
         val simpleFadeHeight = 8.dp
         val simpleTopInset = 4.dp
         // The history area starts right under the carriage instead of a screen-half below it.
@@ -586,40 +420,23 @@ fun SearchScreen() {
                     )
                     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                 }
-                // Papers that scroll past the top edge vanish here, under the fade
+                // Rows that scroll past the top edge vanish here, under the fade
                 // below, instead of sliding over the machine.
                 .clipToBounds(),
         ) {
-            if (historyStyle == SearchHistoryStyle.SIMPLE) {
-                SimpleSearchHistory(
-                    entries = history,
-                    resetKey = historyRevision,
-                    topInset = simpleTopInset,
-                    bottomInset = deckBottomInset,
-                    onPick = { entry -> query = entry.query },
-                    onClear = { entry ->
-                        history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
-                        saveSearchHistory(context, history)
-                    },
-                    onClearVisibilityChange = { historyOverlay.simpleClearVisible = it },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                SearchHistoryDeck(
-                    entries = history,
-                    resetKey = historyRevision,
-                    bottomInset = deckBottomInset,
-                    onExpandedChange = { historyOverlay.expanded = it },
-                    onPick = { entry -> query = entry.query },
-                    onClear = { entry ->
-                        history.removeAll { it.query.equals(entry.query, ignoreCase = true) }
-                        saveSearchHistory(context, history)
-                    },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = 14.dp, end = 14.dp, top = deckTopInset),
-                )
-            }
+            SimpleSearchHistory(
+                entries = history,
+                resetKey = historyRevision,
+                topInset = simpleTopInset,
+                bottomInset = historyBottomInset,
+                onPick = { entry -> query = entry },
+                onClear = { entry ->
+                    history.removeAll { it.equals(entry, ignoreCase = true) }
+                    saveSearchHistory(context, history)
+                },
+                onClearVisibilityChange = { historyOverlay.simpleClearVisible = it },
+                modifier = Modifier.fillMaxSize(),
+            )
 
             // Same black the page gradient already has here → no colour seam.
             // Drawn after the history content so rows slide in behind it.
@@ -627,7 +444,7 @@ fun SearchScreen() {
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(if (historyStyle == SearchHistoryStyle.SIMPLE) simpleFadeHeight else fadeHeight)
+                    .height(simpleFadeHeight)
                     .background(
                         Brush.verticalGradient(
                             0f to Color.Black,
@@ -673,83 +490,29 @@ private fun searchLibrary(songs: List<Song>, rawQuery: String): List<Song> {
 private fun SearchResults(
     query: String,
     songs: List<Song>,
-    library: List<Song>,
     loaded: Boolean,
-    style: SearchSurfaceStyle,
-    jellyLook: JellyLook,
     topInset: Dp,
     nowPlayingId: Long?,
     onPlay: (Song) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
-        when (style) {
-            SearchSurfaceStyle.JELLY -> {
-                // Idle keeps the jellyfish; results sit on a plain dark gradient.
-                // The blurred jelly behind text made the result list muddy.
-                if (query.isBlank()) {
-                    JellyfishBackdrop(
-                        searching = false,
-                        look = jellyLook,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clipToBounds(),
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0f to PageBackground,
-                                    0.55f to Color(0xFF0B0B0B),
-                                    1f to Color.Black,
-                                ),
-                            ),
-                    )
-                }
-
-                if (query.isNotBlank()) {
-                    JellySongList(
-                        query = query,
-                        songs = songs,
-                        loaded = loaded,
-                        topInset = topInset,
-                        nowPlayingId = nowPlayingId,
-                        onPlay = onPlay,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-
-            SearchSurfaceStyle.CARDS -> {
-                // While idle the cards are the library; while searching they
-                // are the filtered results. Either way they use the same
-                // swipeable stack as the supplied SongCardCarousel.
-                val cardSongs = if (query.isBlank()) library else songs
-                if (cardSongs.isNotEmpty()) {
-                    // Rebuild the pager at the idle/search boundary. Deleting
-                    // the last character swaps the whole backing list, and a
-                    // retained pager can briefly ask for an old page index.
-                    key(if (query.isBlank()) "library" else "results") {
-                        SongCardCarousel(
-                            songs = cardSongs,
-                            nowPlayingId = nowPlayingId,
-                            onPlay = onPlay,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                } else {
-                    CardStyleEmpty(loaded = loaded, searching = query.isNotBlank())
-                }
-            }
+        if (query.isNotBlank()) {
+            SearchSongList(
+                query = query,
+                songs = songs,
+                loaded = loaded,
+                topInset = topInset,
+                nowPlayingId = nowPlayingId,
+                onPlay = onPlay,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
-
     }
 }
 
 @Composable
-private fun JellySongList(
+private fun SearchSongList(
     query: String,
     songs: List<Song>,
     loaded: Boolean,
@@ -787,9 +550,8 @@ private fun JellySongList(
                     .fillMaxSize()
                     // The list starts just below the status-bar inset when at
                     // rest. Once it scrolls, rows pass under the transparent
-                    // status bar. The bottom mask uses the same 0.78 → 1.00
-                    // cadence as JellyfishBackdrop, so both the jelly and the
-                    // songs dissolve at the same line.
+                    // status bar. The bottom mask makes the last row dissolve
+                    // into the page instead of ending on a hard edge.
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
                     }
@@ -880,31 +642,6 @@ private fun GlassDivider(shimmer: State<Float>) {
                 startX = head,
                 endX = head + band,
             ),
-        )
-    }
-}
-
-@Composable
-private fun CardStyleEmpty(
-    loaded: Boolean,
-    searching: Boolean,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(start = 22.dp, top = 58.dp, end = 22.dp),
-    ) {
-        Text(
-            text = when {
-                !loaded -> "Reading library…"
-                searching -> "No songs found"
-                else -> "Your library is empty"
-            },
-            color = Color.White.copy(alpha = 0.38f),
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 0.8.sp,
         )
     }
 }
@@ -1697,11 +1434,7 @@ private fun DrawScope.drawShaderBeam(
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SEARCH HISTORY — one tear-off paper ticket per past search
-//
-//  A port of the Kokonut UI "tear button": the stub swings on a stiff spring,
-//  the perforation gives hole by hole (stick-slip), a tick per hole, then the
-//  stub snaps off under gravity. Drag it, or just tap it and it tears itself.
+//  SEARCH HISTORY — a plain list of past queries
 // ═══════════════════════════════════════════════════════════════════════════
 
 private val DemoSearchHistory = listOf(
@@ -1714,363 +1447,36 @@ private val DemoSearchHistory = listOf(
     "Evergreen",
 )
 
-/** One past search and the paper colour it earned. */
-private data class SearchHistoryEntry(
-    val query: String,
-    val color: Int,
-)
-
-private val HistoryPaperHeight = 64.dp
-private val HistoryStubWidth = 74.dp
-private val HistoryBadgeSize = 34.dp
-private val HistoryNotchRadius = 7.dp
-
-/**
- * Card-switcher layout: the front paper is full size, every other paper is a
- * slim pill above or below it. Gaps are in dp; pills get narrower with depth.
- */
-private val HistoryPillHeight = 36.dp
-private val HistoryStackGap = 8.dp
-private val HistoryListGap = 12.dp
-
-/** Float lerp (the imported `lerp` is the Color one). */
-private fun mixF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
-
-/** Clips a paper to a pill: corner radius follows the height, capped at the paper's own 18dp. */
-private val PillClipShape: Shape = object : Shape {
-    override fun createOutline(
-        size: Size,
-        layoutDirection: LayoutDirection,
-        density: Density,
-    ): Outline {
-        val r = minOf(size.height / 2f, 18f * density.density)
-        return Outline.Rounded(RoundRect(0f, 0f, size.width, size.height, CornerRadius(r, r)))
-    }
-}
-
-/** Ink is picked from the paper's real luminance, never from a fixed theme. */
-private val PaperInkDark = Color(0xFF201A12)
-private val PaperInkLight = Color(0xFFFFFBF0)
-
 private const val HistoryPrefs = "lutea_search"
 private const val HistoryKey = "history"
 
-/**
- * A procedural sheet of paper: fine warm grain, darker flecks and short fibres
- * baked into one small repeating shader. It tints the paper underneath, so the
- * same texture reads on every album colour without washing the colour out.
- */
-private val PaperTexture: Brush by lazy {
-    val side = 224
-    val rnd = Random(0x5EEDBEEF)
-    val pixels = IntArray(side * side)
-    for (i in pixels.indices) {
-        val alpha = rnd.nextInt(0, 22)
-        val rgb = if (rnd.nextBoolean()) 0xFFFFFF else 0x000000
-        pixels[i] = (alpha shl 24) or rgb
-    }
-    // A handful of darker/brighter fibres; one pixel wide, like real pulp.
-    repeat(260) {
-        val x0 = rnd.nextInt(side)
-        val y0 = rnd.nextInt(side)
-        val length = 3 + rnd.nextInt(15)
-        val horizontal = rnd.nextBoolean()
-        val dark = rnd.nextBoolean()
-        val alpha = 10 + rnd.nextInt(15)
-        val rgb = if (dark) 0x1A1510 else 0xFFF8E8
-        for (k in 0 until length) {
-            val x = if (horizontal) (x0 + k) % side else x0
-            val y = if (horizontal) y0 else (y0 + k) % side
-            pixels[y * side + x] = (alpha shl 24) or rgb
-        }
-    }
-    val bitmap = Bitmap.createBitmap(pixels, side, side, Bitmap.Config.ARGB_8888)
-    ShaderBrush(ImageShader(bitmap.asImageBitmap(), TileMode.Repeated, TileMode.Repeated))
-}
-
-private fun relativeLuminance(color: Int): Float {
-    fun channel(c: Int): Float {
-        val s = (c and 0xFF) / 255f
-        return if (s <= 0.04045f) s / 12.92f else ((s + 0.055f) / 1.055f).pow(2.4f)
-    }
-    return 0.2126f * channel(color shr 16) +
-        0.7152f * channel(color shr 8) +
-        0.0722f * channel(color)
-}
-
-/** Pure black or warm white, chosen so the paper's own colour stays readable. */
-private fun inkForPaper(color: Int): Color =
-    if (relativeLuminance(color) > 0.30f) PaperInkDark else PaperInkLight
-
-private fun blendPaperColor(from: Int, to: Int, fraction: Float): Int {
-    val t = fraction.coerceIn(0f, 1f)
-    fun mix(shift: Int): Int {
-        val a = (from shr shift) and 0xFF
-        val b = (to shr shift) and 0xFF
-        return (a + (b - a) * t).toInt().coerceIn(0, 255)
-    }
-    return (0xFF shl 24) or (mix(16) shl 16) or (mix(8) shl 8) or mix(0)
-}
-
-/**
- * Turn any hue into a real paper tone. Light papers always receive the dark
- * ink, deep ones the warm-white ink; the builder deliberately avoids the muddy
- * middle where neither ink has enough contrast.
- */
-private fun buildPaperColor(hue: Float, saturation: Float, dark: Boolean): Int {
-    val safeHue = ((hue % 360f) + 360f) % 360f
-    val sat = saturation.coerceIn(0.22f, 0.62f)
-    val hsv = floatArrayOf(safeHue, sat, if (dark) 0.36f else 0.90f)
-    var color = AndroidColor.HSVToColor(hsv)
-    if (dark) {
-        var guard = 0
-        while (relativeLuminance(color) > 0.16f && guard < 10) {
-            hsv[2] = (hsv[2] * 0.86f).coerceAtLeast(0.18f)
-            color = AndroidColor.HSVToColor(hsv)
-            guard++
-        }
-    } else {
-        var mix = 0.10f
-        while (relativeLuminance(color) < 0.46f && mix <= 0.80f) {
-            color = blendPaperColor(color, 0xFFFFFBF2.toInt(), mix)
-            mix += 0.12f
-        }
-    }
-    return color or (0xFF shl 24)
-}
-
-private fun randomPaperColor(): Int = buildPaperColor(
-    hue = Random.nextFloat() * 360f,
-    saturation = 0.30f + Random.nextFloat() * 0.30f,
-    dark = Random.nextFloat() < 0.30f,
-)
-
-private fun stablePaperColor(query: String): Int {
-    val h = query.hashCode()
-    return buildPaperColor(
-        hue = (((h ushr 3) and 0xFF) / 255f) * 360f,
-        saturation = 0.30f + (((h ushr 11) and 0xFF) / 255f) * 0.30f,
-        dark = ((h ushr 19) and 1) == 1,
-    )
-}
-
-/** Keep the cover's hue, but move it into a paper-friendly light or deep tone. */
-private fun paperColorFromSwatch(rgb: Int): Int {
-    val hsv = FloatArray(3)
-    AndroidColor.colorToHSV(rgb, hsv)
-    return buildPaperColor(
-        hue = hsv[0],
-        saturation = hsv[1],
-        dark = relativeLuminance(rgb) < 0.18f,
-    )
-}
-
-/** Decode a small copy of the cover and pull its overall dominant colour. */
-private fun dominantArtColor(context: Context, uri: Uri): Int? {
-    return runCatching {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
-        var sample = 1
-        while (bounds.outWidth / sample > 96 || bounds.outHeight / sample > 96) {
-            sample *= 2
-        }
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bitmap = context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
-        } ?: return@runCatching null
-        try {
-            val palette = Palette.from(bitmap).maximumColorCount(24).generate()
-            val swatch = palette.dominantSwatch
-                ?: palette.mutedSwatch
-                ?: palette.vibrantSwatch
-                ?: palette.lightVibrantSwatch
-                ?: palette.darkVibrantSwatch
-            swatch?.rgb
-        } finally {
-            bitmap.recycle()
-        }
-    }.getOrNull()
-}
-
-/** Tear geometry, same numbers as the original component. */
-private const val TearAngle = 34f
-private const val TearHoles = 7
-private const val TearHold = 0.55f
-private const val TearHoldShare = 0.3f
-private const val TearStiffness = 900f
-private const val TearDamping = 42f
-private const val TearReturnStiffness = 520f
-private const val TearReturnDamping = 22f
-private const val TearGravity = 2600f       // dp / s²
-private const val TearFallDistance = 190f   // dp
-
-/** Ragged edge of the tear, offsets in dp along the perforation. */
-private val TearFibres = floatArrayOf(
-    3.8f, 1.1f, 5.2f, 2.4f, 4.3f, 0.8f, 5.6f, 2.9f, 1.6f, 4.8f,
-    3.1f, 0.6f, 5.0f, 2.0f, 4.0f, 1.2f, 5.4f, 2.7f, 1.5f, 4.5f,
-)
-
-/**
- * History is a JSON array of `{ "q": ..., "c": ... }` objects. Old versions
- * stored bare strings; those are given a stable colour and upgraded in place
- * the next time the screen saves the list.
- */
-private fun loadSearchHistory(context: Context): List<SearchHistoryEntry>? {
+/** Older builds stored `{ "q": ..., "c": ... }` objects; accept both shapes. */
+private fun loadSearchHistory(context: Context): List<String>? {
     val raw = context.getSharedPreferences(HistoryPrefs, Context.MODE_PRIVATE)
         .getString(HistoryKey, null) ?: return null
     return runCatching {
         val arr = JSONArray(raw)
         buildList {
             for (i in 0 until arr.length()) {
-                when (val item = arr.opt(i)) {
-                    is String -> if (item.isNotBlank()) {
-                        add(SearchHistoryEntry(item, stablePaperColor(item)))
-                    }
-                    is JSONObject -> {
-                        val query = item.optString("q").ifBlank { item.optString("query") }
-                        if (query.isNotBlank()) {
-                            val savedColor = item.optInt("c", 0)
-                            add(
-                                SearchHistoryEntry(
-                                    query,
-                                    if (savedColor == 0) stablePaperColor(query) else savedColor,
-                                ),
-                            )
-                        }
-                    }
+                val query = when (val item = arr.opt(i)) {
+                    is String -> item
+                    is JSONObject -> item.optString("q").ifBlank { item.optString("query") }
+                    else -> ""
                 }
+                if (query.isNotBlank()) add(query)
             }
-        }
+        }.distinct()
     }.getOrNull()
 }
 
-private fun saveSearchHistory(context: Context, entries: List<SearchHistoryEntry>) {
+private fun saveSearchHistory(context: Context, entries: List<String>) {
     val arr = JSONArray()
-    entries.forEach { entry ->
-        arr.put(
-            JSONObject()
-                .put("q", entry.query)
-                .put("c", entry.color),
-        )
-    }
+    entries.forEach { arr.put(it) }
     context.getSharedPreferences(HistoryPrefs, Context.MODE_PRIVATE)
         .edit()
         .putString(HistoryKey, arr.toString())
         .apply()
 }
-
-/** Raw pull (0..1) → how far the tear has run, holding at each hole. */
-private fun stickSlip(pull: Float): Float {
-    val scaled = pull.coerceIn(0f, 1f) * TearHoles
-    val hole = minOf(scaled.toInt(), TearHoles - 1)
-    val f = scaled - hole
-    val given = if (f < TearHold) {
-        (f / TearHold) * TearHoldShare
-    } else {
-        TearHoldShare + ((f - TearHold) / (1f - TearHold)) * (1f - TearHoldShare)
-    }
-    return (hole + given) / TearHoles
-}
-
-/**
- * One side of the tear as a polygon: ragged down to `tip`, straight below.
- * `side` is 1 for the body's right edge, -1 for the stub's left edge.
- */
-private fun buildTearPath(
-    path: Path,
-    width: Float,
-    height: Float,
-    tip: Float,
-    side: Int,
-    fibres: FloatArray,
-) {
-    path.reset()
-    val far = if (side == 1) 0f else width
-    val edge = if (side == 1) width else 0f
-    path.moveTo(far, 0f)
-    val rows = ceil((tip / height) * fibres.size).toInt()
-    for (k in 0..rows) {
-        val y = minOf((k / fibres.size.toFloat()) * height, tip)
-        val x = edge - side * fibres[k % fibres.size]
-        path.lineTo(x, y)
-    }
-    path.lineTo(edge, tip)
-    path.lineTo(edge, height)
-    path.lineTo(far, height)
-    path.close()
-}
-
-/** Paper fill, grain and a soft top-light/underside for a card face. */
-private fun DrawScope.drawPaperFace(paper: Brush, texture: Brush) {
-    drawRect(brush = paper, size = size)
-    drawRect(brush = texture, size = size, alpha = 0.88f)
-    drawRect(
-        brush = Brush.verticalGradient(
-            0f to Color.White.copy(alpha = 0.13f),
-            0.14f to Color.Transparent,
-            0.86f to Color.Transparent,
-            1f to Color.Black.copy(alpha = 0.09f),
-        ),
-        size = size,
-    )
-}
-
-/** Paper face of the stub: fill, printed contents, then the dotted perforation. */
-private fun DrawScope.drawStubFace(
-    paper: Brush,
-    texture: Brush,
-    ink: Color,
-    notch: Float,
-    content: DrawScope.() -> Unit,
-) {
-    drawPaperFace(paper, texture)
-    content()
-    drawLine(
-        color = ink.copy(alpha = 0.30f),
-        start = Offset(1.dp.toPx(), notch + 1.dp.toPx()),
-        end = Offset(1.dp.toPx(), size.height - notch - 1.dp.toPx()),
-        strokeWidth = 1.8.dp.toPx(),
-        cap = StrokeCap.Round,
-        pathEffect = PathEffect.dashPathEffect(
-            floatArrayOf(0.1f, 4.4.dp.toPx()),
-            0f,
-        ),
-    )
-}
-
-private class TearSim {
-    var angle by mutableFloatStateOf(0f)
-    var speed = 0f
-    var target = 0f
-    var held = false
-    var auto = false
-    var hole = 0
-    var flying by mutableStateOf(false)
-    var x by mutableFloatStateOf(0f)
-    var y by mutableFloatStateOf(0f)
-    var vx = 0f
-    var vy = 0f
-    var spin = 0f
-    var grabAngle = 0f
-    var px = 0f
-    var py = 0f
-    var pt = 0L
-    var pvx = 0f
-    var pvy = 0f
-}
-
-/** The device's default vibrator, whichever API way is available. */
-@Suppress("DEPRECATION")
-private fun defaultVibrator(context: Context): Vibrator? =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
-            ?.defaultVibrator
-    } else {
-        context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-    }
 
 /**
  * The no-frills history: just the queries, latest first, separated by thin
@@ -2082,12 +1488,12 @@ private fun defaultVibrator(context: Context): Vibrator? =
  */
 @Composable
 private fun SimpleSearchHistory(
-    entries: List<SearchHistoryEntry>,
+    entries: List<String>,
     resetKey: Int,
     topInset: Dp,
     bottomInset: Dp,
-    onPick: (SearchHistoryEntry) -> Unit,
-    onClear: (SearchHistoryEntry) -> Unit,
+    onPick: (String) -> Unit,
+    onClear: (String) -> Unit,
     onClearVisibilityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -2158,7 +1564,7 @@ private fun SimpleSearchHistory(
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Text(
-                        text = entry.query,
+                        text = entry,
                         color = Color.White.copy(alpha = if (index == 0) 0.92f else 0.72f),
                         fontSize = 16.sp,
                         fontFamily = CalSansFamily,
@@ -2176,7 +1582,7 @@ private fun SimpleSearchHistory(
                 ) {
                     Icon(
                         imageVector = LuteaIcons.Close,
-                        contentDescription = "Remove ${entry.query}",
+                        contentDescription = "Remove $entry",
                         tint = Color.White.copy(alpha = 0.48f),
                         modifier = Modifier.size(16.dp),
                     )
@@ -2190,7 +1596,7 @@ private fun SimpleSearchHistory(
                 ) {
                     Icon(
                         imageVector = LuteaIcons.ArrowUpRight,
-                        contentDescription = "Use ${entry.query}",
+                        contentDescription = "Use $entry",
                         tint = Color.White.copy(alpha = 0.62f),
                         modifier = Modifier.size(17.dp),
                     )
@@ -2226,765 +1632,5 @@ private fun HistoryDivider(shimmer: State<Float>) {
                 endX = head + band,
             ),
         )
-    }
-}
-
-/**
- * The history as a card-switcher. Collapsed: the front paper is full size and
- * the others are slim pills peeking below (and above, once you have moved on).
- * Dragging or tapping a pill springs it forward while the old front paper
- * shrinks into a pill. Tapping a paper reuses its query; tapping its expand
- * icon opens every search as a full ticket in a scrollable list, and tapping
- * the icon again folds it back. Only a full-size paper can be torn; the rest
- * of the list closes the gap.
- */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable
-private fun SearchHistoryDeck(
-    entries: List<SearchHistoryEntry>,
-    resetKey: Int,
-    bottomInset: Dp,
-    onExpandedChange: (Boolean) -> Unit,
-    onPick: (SearchHistoryEntry) -> Unit,
-    onClear: (SearchHistoryEntry) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
-    val currentOnExpandedChange by rememberUpdatedState(onExpandedChange)
-    val currentOnPick by rememberUpdatedState(onPick)
-    // Plain float states, not Animatables: the drag loop runs inside Compose's
-    // restricted pointer scope. Springs on release are driven from `scope`.
-    val scroll = remember { mutableFloatStateOf(0f) }       // stack position, in cards
-    val listScroll = remember { mutableFloatStateOf(0f) }   // list position, in px
-    val viewportPx = remember { mutableFloatStateOf(0f) }
-    val expandT = remember { mutableFloatStateOf(0f) }      // 0 = stack, 1 = list (follows the finger)
-    val closeP = remember { Animatable(0f) }                // 0..1 while a torn paper closes up
-    var expanded by remember { mutableStateOf(false) }
-    var closingIndex by remember { mutableStateOf(-1) }
-    var snapJob by remember { mutableStateOf<Job?>(null) }
-    var expandJob by remember { mutableStateOf<Job?>(null) }
-
-    LaunchedEffect(expanded) { currentOnExpandedChange(expanded) }
-
-    val cardHeightPx = with(density) { HistoryPaperHeight.toPx() }
-    val pillPx = with(density) { HistoryPillHeight.toPx() }
-    val gapPx = with(density) { HistoryStackGap.toPx() }
-    val listGapPx = with(density) { HistoryListGap.toPx() }
-    val bottomInsetPx = with(density) { bottomInset.toPx() }
-    val maxIndex = entries.lastIndex.coerceAtLeast(0)
-
-    val activeIndex by remember {
-        derivedStateOf {
-            scroll.floatValue.roundToInt()
-                .coerceIn(0, entries.lastIndex.coerceAtLeast(0))
-        }
-    }
-
-    // Which papers are worth composing right now (stack neighbours, list window, or both mid-morph).
-    val range by remember(maxIndex) {
-        derivedStateOf {
-            val a = scroll.floatValue.roundToInt().coerceIn(0, maxIndex)
-            var lo = (a - 2).coerceAtLeast(0)
-            var hi = (a + 2).coerceAtMost(maxIndex)
-            val t = expandT.floatValue
-            if (expanded || t > 0.001f) {
-                val step = cardHeightPx + listGapPx
-                val l0 = (floor(listScroll.floatValue / step).toInt() - 1).coerceIn(0, maxIndex)
-                val l1 = (ceil((listScroll.floatValue + viewportPx.floatValue) / step).toInt() + 1)
-                    .coerceIn(0, maxIndex)
-                if (t > 0.985f) {
-                    lo = l0
-                    hi = l1
-                } else {
-                    lo = minOf(lo, l0)
-                    hi = maxOf(hi, l1)
-                }
-            }
-            lo..hi
-        }
-    }
-
-    fun maxListScroll(): Float =
-        (entries.size * (cardHeightPx + listGapPx) - listGapPx - viewportPx.floatValue + bottomInsetPx)
-            .coerceAtLeast(0f)
-
-    // Every new search puts its paper on top of the deck.
-    LaunchedEffect(resetKey) {
-        snapJob?.cancel()
-        scroll.floatValue = 0f
-        listScroll.floatValue = 0f
-    }
-
-    // A torn paper shortens the stack; never leave the deck pointing past it.
-    LaunchedEffect(entries.size) {
-        val max = entries.lastIndex.coerceAtLeast(0).toFloat()
-        if (scroll.floatValue > max) {
-            snapJob?.cancel()
-            scroll.floatValue = max
-        }
-        val maxList = maxListScroll()
-        if (listScroll.floatValue > maxList) listScroll.floatValue = maxList
-        if (entries.isEmpty()) {
-            expanded = false
-            expandT.floatValue = 0f
-        }
-    }
-
-    // Stack <-> list morph: one soft spring with a tiny overshoot, starting from
-    // wherever the finger left it.
-    fun settleExpand(open: Boolean) {
-        expandJob?.cancel()
-        expanded = open
-        expandJob = scope.launch {
-            animate(
-                initialValue = expandT.floatValue,
-                targetValue = if (open) 1f else 0f,
-                animationSpec = spring(dampingRatio = 0.86f, stiffness = 320f),
-            ) { value, _ ->
-                expandT.floatValue = value
-            }
-        }
-    }
-
-    fun focusIndex(target: Int) {
-        snapJob?.cancel()
-        snapJob = scope.launch {
-            animate(
-                initialValue = scroll.floatValue,
-                targetValue = target.coerceIn(0, maxIndex).toFloat(),
-                animationSpec = spring(dampingRatio = 0.82f, stiffness = 300f),
-            ) { value, _ ->
-                scroll.floatValue = value
-            }
-        }
-    }
-
-    fun expandDeckAt(index: Int) {
-        snapJob?.cancel()
-        val target = index.coerceIn(0, maxIndex)
-        scroll.floatValue = target.toFloat()
-        val step = cardHeightPx + listGapPx
-        listScroll.floatValue = (target * step).coerceIn(0f, maxListScroll())
-        settleExpand(true)
-    }
-
-    fun collapseDeck(to: Int) {
-        snapJob?.cancel()
-        scroll.floatValue = to.coerceIn(0, maxIndex).toFloat()
-        settleExpand(false)
-    }
-
-    /** A torn paper folds shut while everything after it slides up, then it is really removed. */
-    fun startClose(entry: SearchHistoryEntry) {
-        if (closingIndex >= 0) return
-        val idx = entries.indexOfFirst { it.query == entry.query }
-        if (idx < 0) return
-        closingIndex = idx
-        scope.launch {
-            val newMaxIndex = (entries.size - 2).coerceAtLeast(0).toFloat()
-            if (scroll.floatValue > newMaxIndex) {
-                launch {
-                    animate(
-                        initialValue = scroll.floatValue,
-                        targetValue = newMaxIndex,
-                        animationSpec = spring(dampingRatio = 0.9f, stiffness = 300f),
-                    ) { value, _ -> scroll.floatValue = value }
-                }
-            }
-            val newMaxList = ((entries.size - 1) * (cardHeightPx + listGapPx) - listGapPx -
-                viewportPx.floatValue + bottomInsetPx).coerceAtLeast(0f)
-            if (listScroll.floatValue > newMaxList) {
-                launch {
-                    animate(
-                        initialValue = listScroll.floatValue,
-                        targetValue = newMaxList,
-                        animationSpec = spring(dampingRatio = 0.9f, stiffness = 300f),
-                    ) { value, _ -> listScroll.floatValue = value }
-                }
-            }
-            closeP.snapTo(0f)
-            closeP.animateTo(1f, tween(300, easing = FastOutSlowInEasing))
-            onClear(entry)
-            closingIndex = -1
-            closeP.snapTo(0f)
-        }
-    }
-
-    // ── geometry: one paper's place in the stack, the list, or anywhere between ──
-    fun relOf(i: Int): Float {
-        val c = closingIndex
-        val shift = if (c in 0 until i) closeP.value else 0f
-        return (i - scroll.floatValue) - shift
-    }
-
-    fun eOf(i: Int): Float {
-        val stackE = (1f - abs(relOf(i))).coerceIn(0f, 1f)
-        return mixF(stackE, 1f, expandT.floatValue)
-    }
-
-    fun hOf(i: Int): Float = mixF(pillPx, cardHeightPx, eOf(i))
-
-    fun wFractionOf(i: Int): Float {
-        val stackW = 1f - 0.07f * abs(relOf(i)).coerceAtMost(3f)
-        return mixF(stackW, 1f, eOf(i)).coerceAtMost(1f)
-    }
-
-    fun yOf(i: Int): Float {
-        val rel = relOf(i)
-        // Once you have moved past the first paper, the one you left sits above as a pill.
-        val base = (pillPx + gapPx) * scroll.floatValue.coerceIn(0f, 1f)
-        val raw = when {
-            rel >= 1f -> (cardHeightPx + gapPx) + (rel - 1f) * (pillPx + gapPx)
-            rel >= 0f -> rel * (cardHeightPx + gapPx)
-            else -> rel * (pillPx + gapPx)
-        }
-        val c = closingIndex
-        val shift = if (c in 0 until i) closeP.value else 0f
-        val listY = i * (cardHeightPx + listGapPx) - listScroll.floatValue -
-            shift * (cardHeightPx + listGapPx)
-        return mixF(base + raw, listY, expandT.floatValue)
-    }
-
-    fun alphaOf(i: Int): Float {
-        val rel = relOf(i)
-        // Exactly three papers show in the stack: a pill above, the big one, a pill below.
-        val stackA = (2f - abs(rel)).coerceIn(0f, 1f)
-        val fade = if (i == closingIndex) 1f - closeP.value else 1f
-        return (mixF(stackA, 1f, expandT.floatValue) * fade).coerceIn(0f, 1f)
-    }
-
-    if (entries.isEmpty()) {
-        Box(modifier)
-        return
-    }
-
-    Box(
-        contentAlignment = Alignment.TopCenter,
-        modifier = modifier
-            .onSizeChanged { viewportPx.floatValue = it.height.toFloat() }
-            .pointerInput(entries.size) {
-                if (entries.size < 2) return@pointerInput
-                awaitEachGesture {
-                    // Watched on the Initial pass: the papers' own tap handlers would
-                    // otherwise swallow the touch before the deck ever saw it.
-                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    // A finger that lands on a tearable stub belongs to the stub.
-                    if (down.position.x >= size.width - HistoryStubWidth.toPx()) {
-                        for (i in range) {
-                            if (!(expanded || i == activeIndex)) continue
-                            val top = yOf(i)
-                            if (eOf(i) > 0.9f && down.position.y >= top &&
-                                down.position.y <= top + hOf(i)
-                            ) {
-                                return@awaitEachGesture
-                            }
-                        }
-                    }
-                    val tracker = VelocityTracker()
-                    tracker.addPosition(down.uptimeMillis, down.position)
-                    var previousY = down.position.y
-                    var travel = 0f
-                    var dragging = false
-                    val listMode = expanded
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        tracker.addPosition(change.uptimeMillis, change.position)
-                        if (!change.pressed) break
-                        val dy = change.position.y - previousY
-                        previousY = change.position.y
-                        travel += dy
-                        if (!dragging && abs(travel) > viewConfiguration.touchSlop) {
-                            dragging = true
-                        }
-                        if (dragging) {
-                            snapJob?.cancel()
-                            if (listMode) {
-                                listScroll.floatValue =
-                                    (listScroll.floatValue - dy).coerceIn(0f, maxListScroll())
-                            } else {
-                                // Swipe up/down: the next paper grows while this one shrinks.
-                                scroll.floatValue = (scroll.floatValue - dy / cardHeightPx)
-                                    .coerceIn(0f, maxIndex.toFloat())
-                            }
-                            change.consume()
-                        }
-                    }
-                    if (dragging) {
-                        val vy = tracker.calculateVelocity().y
-                        snapJob?.cancel()
-                        if (listMode) {
-                            val target = (listScroll.floatValue - vy * 0.22f)
-                                .coerceIn(0f, maxListScroll())
-                            snapJob = scope.launch {
-                                animate(
-                                    initialValue = listScroll.floatValue,
-                                    targetValue = target,
-                                    animationSpec = tween(520, easing = LinearOutSlowInEasing),
-                                ) { value, _ ->
-                                    listScroll.floatValue = value
-                                }
-                            }
-                        } else {
-                            val fling = if (abs(vy) > 650f) -sign(vy) else 0f
-                            val target = (scroll.floatValue.roundToInt() + fling)
-                                .coerceIn(0f, maxIndex.toFloat())
-                            snapJob = scope.launch {
-                                animate(
-                                    initialValue = scroll.floatValue,
-                                    targetValue = target,
-                                    animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
-                                ) { value, _ ->
-                                    scroll.floatValue = value
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-    ) {
-        val active = activeIndex
-        for (i in range) {
-            val entry = entries.getOrNull(i) ?: continue
-            key(entry.query) {
-                Box(
-                    modifier = Modifier
-                        // Fixed order (newer on top): it never flips while papers swap
-                        // sizes, so shadows cannot pop over a neighbour mid-animation.
-                        .zIndex(1000f - i)
-                        // Outer layer: where the paper sits and how visible it is.
-                        .graphicsLayer {
-                            translationY = yOf(i)
-                            alpha = alphaOf(i)
-                        }
-                        .drawBehind {
-                            softShadow(
-                                topLeft = Offset(3.dp.toPx(), 7.dp.toPx()),
-                                size = Size(size.width - 6.dp.toPx(), size.height),
-                                corner = 18.dp.toPx(),
-                                color = Color.Black,
-                                spread = 12.dp.toPx(),
-                                alpha = mixF(0.30f, 0.70f, eOf(i).coerceIn(0f, 1f)),
-                                steps = 8,
-                            )
-                        }
-                        // Inner layer: trims a collapsed paper to its pill. A full-size
-                        // paper is never clipped so the torn stub can swing and fall freely.
-                        .graphicsLayer {
-                            clip = eOf(i) < 0.995f
-                            shape = PillClipShape
-                        }
-                        // The paper itself is always laid out full size; the card just
-                        // shows a slice of it (its middle line), so the query text stays
-                        // readable as a pill and nothing is ever squashed.
-                        .layout { measurable, constraints ->
-                            val fullW = constraints.maxWidth
-                            val fullH = cardHeightPx.roundToInt()
-                            val w = (fullW * wFractionOf(i)).roundToInt().coerceIn(0, fullW)
-                            val h = hOf(i).roundToInt().coerceAtLeast(0)
-                            val placeable = measurable.measure(Constraints.fixed(fullW, fullH))
-                            layout(w, h) {
-                                placeable.place((w - fullW) / 2, (h - fullH) / 2)
-                            }
-                        },
-                ) {
-                    SearchHistoryPaper(
-                        entry = entry,
-                        interactive = expanded || i == active,
-                        expanded = expanded,
-                        expansion = { eOf(i) },
-                        onPick = {
-                            if (!expanded && i != active) focusIndex(i)
-                            currentOnPick(entry)
-                        },
-                        onToggle = {
-                            if (expanded) collapseDeck(i)
-                            else expandDeckAt(i)
-                        },
-                        onClear = { startClose(entry) },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable
-private fun SearchHistoryPaper(
-    entry: SearchHistoryEntry,
-    interactive: Boolean,
-    expanded: Boolean,
-    expansion: () -> Float,
-    onPick: () -> Unit,
-    onToggle: () -> Unit,
-    onClear: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val density = LocalDensity.current
-    val context = LocalContext.current
-    val view = LocalView.current
-    val currentOnClear by rememberUpdatedState(onClear)
-    val currentOnPick by rememberUpdatedState(onPick)
-    val currentOnToggle by rememberUpdatedState(onToggle)
-    val bodyTapSource = remember { MutableInteractionSource() }
-    val expandTapSource = remember { MutableInteractionSource() }
-    val stubTapSource = remember { MutableInteractionSource() }
-    val sim = remember { TearSim() }
-    var wakeToken by remember { mutableStateOf(0) }
-
-    // A real Vibrator, not View haptics: short one-shots are felt even when the
-    // system's touch-feedback haptics are off, which is what the tear needs.
-    val vibrator = remember(context) { defaultVibrator(context) }
-
-    val fibrePx = remember(density) {
-        FloatArray(TearFibres.size) { TearFibres[it] * density.density }
-    }
-    val notchPx = with(density) { HistoryNotchRadius.toPx() }
-    val fallPx = TearFallDistance * density.density
-    val heightPx = with(density) { HistoryPaperHeight.toPx() }
-
-    val bodyTear = remember { Path() }
-    val stubTear = remember { Path() }
-    val bodyShape = remember {
-        RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp, topEnd = 1.dp, bottomEnd = 1.dp)
-    }
-    val stubShape = remember {
-        RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp, topStart = 1.dp, bottomStart = 1.dp)
-    }
-
-    // Every paper carries its own colour. The cover colour is softened into a
-    // paper tint; the ink is computed from that final colour, not guessed.
-    val base = Color(entry.color)
-    val paperTop = remember(entry.color) { lerp(base, Color.White, 0.10f) }
-    val paperBottom = remember(entry.color) { lerp(base, Color.Black, 0.09f) }
-    val paperBrush = remember(entry.color) {
-        Brush.verticalGradient(
-            0f to paperTop,
-            0.48f to base,
-            1f to paperBottom,
-        )
-    }
-    val ink = remember(entry.color) { inkForPaper(entry.color) }
-    val texture = PaperTexture
-
-    fun buzz(ms: Long, amplitude: Int) {
-        val v = vibrator
-        if (v != null && v.hasVibrator()) {
-            v.vibrate(VibrationEffect.createOneShot(ms, amplitude))
-        } else {
-            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-        }
-    }
-
-    fun tick() = buzz(12L, 200)
-
-    // While the paper is held, springing back, or flying, this advances the sim
-    // once a frame. Reads happen inside graphicsLayer / drawWithContent, so the
-    // ticket animates without recomposing the stack on every frame.
-    LaunchedEffect(wakeToken) {
-        val d = density.density
-        var last = 0L
-        while (true) {
-            val now = withFrameNanos { it }
-            val dt = if (last == 0L) 1f / 120f
-            else ((now - last) / 1_000_000_000f).coerceIn(1f / 240f, 0.05f)
-            last = now
-
-            if (sim.flying) {
-                sim.vy += TearGravity * d * dt
-                sim.x += sim.vx * dt
-                sim.y += sim.vy * dt
-                sim.angle += sim.spin * dt
-                if (sim.y > fallPx) {
-                    currentOnClear()
-                    break
-                }
-            } else {
-                val active = sim.held || sim.auto
-                if (sim.auto) {
-                    sim.target = (sim.target + dt * 60f).coerceAtMost(TearAngle * 1.05f)
-                }
-                val stiffness = if (active) TearStiffness else TearReturnStiffness
-                val damping = if (active) TearDamping else TearReturnDamping
-                val force = (sim.target - sim.angle) * stiffness - sim.speed * damping
-                sim.speed += force * dt
-                sim.angle += sim.speed * dt
-
-                // A tick for each hole that gives.
-                val hole = ((sim.angle / TearAngle).coerceIn(0f, 1f) * TearHoles).toInt()
-                if (hole > sim.hole) {
-                    sim.hole = hole
-                    tick()
-                }
-
-                if (active && sim.angle >= TearAngle * 0.995f) {
-                    sim.held = false
-                    buzz(32L, 255)
-                    // Leaves with the swing it had, plus the hand's throw.
-                    val rad = sim.angle * PI.toFloat() / 180f
-                    val tangential = (sim.speed * PI.toFloat() / 180f) * heightPx
-                    sim.x = 0f
-                    sim.y = 0f
-                    sim.vx = cos(rad) * tangential +
-                        sim.pvx.coerceIn(-900f, 900f) * 0.6f + 30f * d
-                    sim.vy = sin(rad) * tangential +
-                        sim.pvy.coerceIn(-900f, 900f) * 0.6f - 45f * d
-                    sim.spin = sim.speed * 0.6f + 140f
-                    sim.flying = true
-                } else if (!active && abs(sim.angle) < 0.02f && abs(sim.speed) < 0.05f) {
-                    sim.angle = 0f
-                    sim.speed = 0f
-                    sim.hole = 0
-                    break
-                }
-            }
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(HistoryPaperHeight),
-    ) {
-        // ── the body: chip and query; its right edge tears away ──
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(end = HistoryStubWidth)
-                .clip(bodyShape)
-                .clickable(
-                    interactionSource = bodyTapSource,
-                    indication = null,
-                ) { currentOnPick() }
-                .drawWithContent {
-                    val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
-                    if (tip > 0.5f) {
-                        buildTearPath(bodyTear, size.width, size.height, tip, 1, fibrePx)
-                        // The paper itself lives inside the ragged clip so the
-                        // grain vanishes with the torn edge instead of leaving
-                        // a clean, coloured rectangle behind.
-                        clipPath(bodyTear) {
-                            drawPaperFace(paperBrush, texture)
-                            this@drawWithContent.drawContent()
-                        }
-                    } else {
-                        drawPaperFace(paperBrush, texture)
-                        this@drawWithContent.drawContent()
-                    }
-                    // Ticket notches: the black behind the paper shows through
-                    // the seam, exactly where the perforation meets the edges.
-                    drawCircle(Color.Black, notchPx, Offset(size.width, 0f))
-                    drawCircle(Color.Black, notchPx, Offset(size.width, size.height))
-                },
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = 16.dp, end = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        // The badge shrinks with the paper: ~60% size as a pill.
-                        .layout { measurable, _ ->
-                            val e = expansion().coerceIn(0f, 1f)
-                            val side = (HistoryBadgeSize.toPx() * mixF(0.60f, 1f, e)).roundToInt()
-                            val placeable = measurable.measure(Constraints.fixed(side, side))
-                            layout(side, side) { placeable.place(0, 0) }
-                        }
-                        .clip(CircleShape)
-                        .background(ink.copy(alpha = 0.10f))
-                        .clickable(
-                            interactionSource = expandTapSource,
-                            indication = null,
-                        ) { currentOnToggle() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Crossfade(
-                        targetState = expanded,
-                        animationSpec = tween(220),
-                        label = "expandGlyph",
-                    ) { isOpen ->
-                        Icon(
-                            imageVector = if (isOpen) CollapseGlyph else ExpandGlyph,
-                            contentDescription = if (isOpen) "Collapse history" else "Expand history",
-                            tint = ink.copy(alpha = 0.75f),
-                            modifier = Modifier.fillMaxSize(0.47f),
-                        )
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                ) {
-                    Text(
-                        text = entry.query,
-                        color = ink,
-                        fontSize = 15.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 0.2.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .fillMaxWidth(),
-                    )
-                }
-            }
-        }
-
-        // ── the stub: swings on the foot of the perforation, then falls ──
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .width(HistoryStubWidth)
-                .graphicsLayer {
-                    transformOrigin = TransformOrigin(0f, 1f)
-                    rotationZ = sim.angle
-                    if (sim.flying) {
-                        translationX = sim.x
-                        translationY = sim.y
-                        val fade = 1f - ((sim.y - fallPx * 0.5f) / (fallPx * 0.5f))
-                        alpha = fade.coerceIn(0f, 1f)
-                    }
-                }
-                .clip(stubShape)
-                .drawWithContent {
-                    val tip = (sim.angle / TearAngle).coerceIn(0f, 1f) * size.height
-                    if (tip > 0.5f) {
-                        buildTearPath(stubTear, size.width, size.height, tip, -1, fibrePx)
-                        clipPath(stubTear) {
-                            drawStubFace(paperBrush, texture, ink, notchPx) {
-                                this@drawWithContent.drawContent()
-                            }
-                        }
-                    } else {
-                        drawStubFace(paperBrush, texture, ink, notchPx) {
-                            this@drawWithContent.drawContent()
-                        }
-                    }
-                    drawCircle(Color.Black, notchPx, Offset(0f, 0f))
-                    drawCircle(Color.Black, notchPx, Offset(0f, size.height))
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.graphicsLayer {
-                    val e = expansion().coerceIn(0f, 1f)
-                    alpha = e * e
-                },
-            ) {
-                Icon(
-                    imageVector = TearGlyph,
-                    contentDescription = null,
-                    tint = ink.copy(alpha = 0.68f),
-                    modifier = Modifier.size(15.dp),
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = "Clear",
-                    color = ink.copy(alpha = 0.68f),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
-
-        // Gesture surface: a still sibling over the resting stub. If the gesture
-        // lived on the rotating stub, Compose would feed the pointer back through
-        // the rotation and the angle would chase its own tail. Only the front
-        // paper owns this surface; the papers behind it are a pure visual stack.
-        if (!interactive) {
-            // A paper waiting behind the front one: tapping anywhere on it brings it forward.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .width(HistoryStubWidth)
-                    .clickable(
-                        interactionSource = stubTapSource,
-                        indication = null,
-                    ) { currentOnToggle() },
-            )
-        }
-        if (interactive) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .width(HistoryStubWidth)
-                    .pointerInput(entry.query) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            if (sim.flying) return@awaitEachGesture
-                            down.consume()
-                            val h = size.height.toFloat()
-                            sim.held = true
-                            sim.auto = false
-                            sim.grabAngle =
-                                atan2(down.position.y - h, down.position.x) * 180f / PI.toFloat() -
-                                sim.angle
-                            sim.px = down.position.x
-                            sim.py = down.position.y
-                            sim.pt = down.uptimeMillis
-                            sim.pvx = 0f
-                            sim.pvy = 0f
-                            sim.hole = ((sim.angle / TearAngle).coerceIn(0f, 1f) * TearHoles).toInt()
-                            wakeToken++
-
-                            var dragged = false
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (change.pressed) {
-                                    val pos = change.position
-                                    val dt = (change.uptimeMillis - sim.pt).coerceAtLeast(1L)
-                                    sim.pvx = sim.pvx * 0.5f + ((pos.x - sim.px) / dt) * 500f
-                                    sim.pvy = sim.pvy * 0.5f + ((pos.y - sim.py) / dt) * 500f
-                                    sim.px = pos.x
-                                    sim.py = pos.y
-                                    sim.pt = change.uptimeMillis
-                                    if ((pos - down.position).getDistance() > 8.dp.toPx()) {
-                                        dragged = true
-                                    }
-                                    val raw =
-                                        atan2(pos.y - h, pos.x) * 180f / PI.toFloat() - sim.grabAngle
-                                    // Pushing the stub back into the body only gives a little.
-                                    val pull = if (raw < 0f) raw * 0.15f else raw
-                                    sim.target = if (pull >= TearAngle) {
-                                        TearAngle * 1.05f
-                                    } else {
-                                        stickSlip(pull.coerceAtLeast(0f) / TearAngle) * TearAngle +
-                                            minOf(pull, 0f)
-                                    }
-                                    change.consume()
-                                } else {
-                                    sim.held = false
-                                    if (!sim.flying) {
-                                        if (!dragged &&
-                                            change.uptimeMillis - down.uptimeMillis < 320L
-                                        ) {
-                                            sim.auto = true   // a tap tears it hole by hole
-                                        }
-                                        sim.target = 0f
-                                    }
-                                    change.consume()
-                                    break
-                                }
-                            }
-                        }
-                    },
-            )
-        }
     }
 }

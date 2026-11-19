@@ -162,30 +162,18 @@ fun LuteaScaffold(
     var showLyrics by remember { mutableStateOf(false) }
     val searchHistoryOverlay = remember { SearchHistoryOverlayState() }
     val context = LocalContext.current
-    val searchStyleOverlay = remember(context) {
-        SearchStyleOverlayState(
-            initialStyle = loadSearchSurfaceStyle(context),
-            initialHistoryStyle = loadSearchHistoryStyle(context),
-            initialJellyLook = loadJellyLook(context),
+    val searchSoundOverlay = remember(context) {
+        SearchSoundOverlayState(
             initialTypingSoundEnabled = loadTypingSoundEnabled(context),
             initialTypingSoundVolume = loadTypingSoundVolume(context),
         )
     }
     val currentSong by PlaybackConnection.currentSong.collectAsState()
 
-    // Leaving the Search tab always closes the style menu, so it cannot
+    // Leaving the Search tab always closes the sound menu, so it cannot
     // reappear unexpectedly when the user comes back.
     LaunchedEffect(activeTab) {
-        if (activeTab != LuteaTab.Search) searchStyleOverlay.expanded = false
-    }
-
-    // Simple history has no expanded paper sheet: clear its paper flag, and
-    // hide the scroll-driven simple capsule whenever Paper returns.
-    LaunchedEffect(searchStyleOverlay.historyStyle) {
-        when (searchStyleOverlay.historyStyle) {
-            SearchHistoryStyle.SIMPLE -> searchHistoryOverlay.expanded = false
-            SearchHistoryStyle.PAPER -> searchHistoryOverlay.simpleClearVisible = false
-        }
+        if (activeTab != LuteaTab.Search) searchSoundOverlay.expanded = false
     }
 
     // Clear All sits above the nav (48dp + 8dp gap). When the mini player is
@@ -196,17 +184,13 @@ fun LuteaScaffold(
         label = "searchClearAllBottom",
     )
 
-    // The long-press style card floats above the nav, and above the mini
+    // The long-press sound card floats above the nav, and above the mini
     // player when one is showing.
-    val searchStyleCardBottom =
+    val searchSoundCardBottom =
         effBottomDp + if (currentSong != null && !imeOpen) 132.dp else 70.dp
 
-    // Paper opens its clear-all control with the expanded deck; Simple shows
-    // the same capsule only once its text list is actually scrolled.
-    val historyClearVisible = when (searchStyleOverlay.historyStyle) {
-        SearchHistoryStyle.PAPER -> searchHistoryOverlay.expanded
-        SearchHistoryStyle.SIMPLE -> searchHistoryOverlay.simpleClearVisible
-    }
+    // The clear-all capsule appears once the simple history is scrolled.
+    val historyClearVisible = searchHistoryOverlay.simpleClearVisible
 
     CompositionLocalProvider(
         LocalLuteaWindowInsets provides insets,
@@ -217,7 +201,7 @@ fun LuteaScaffold(
         },
         LocalSearchOpen provides searchOpenState,
         LocalSearchHistoryOverlay provides searchHistoryOverlay,
-        LocalSearchStyleOverlay provides searchStyleOverlay,
+        LocalSearchSoundOverlay provides searchSoundOverlay,
     ) {
         // ★ Law 7: BoxWithConstraints at root (NEVER screenHeightDp).
         //    Works in multi-window, split-screen, floating windows, foldables.
@@ -226,12 +210,12 @@ fun LuteaScaffold(
                 .fillMaxSize()
                 .background(Color.Black)
         ) {
-            // ★ BackHandler — the search style menu closes first, then the
+            // ★ BackHandler — the search sound menu closes first, then the
             //    search overlay, then the Library menu.
             BackHandler(
-                enabled = searchStyleOverlay.expanded || searchOpen || menuOpen,
+                enabled = searchSoundOverlay.expanded || searchOpen || menuOpen,
             ) {
-                if (searchStyleOverlay.expanded) searchStyleOverlay.expanded = false
+                if (searchSoundOverlay.expanded) searchSoundOverlay.expanded = false
                 else if (searchOpen) { searchOpen = false; searchOpenState.value = false }
                 else if (menuOpen) menuOpen = false
             }
@@ -724,15 +708,14 @@ fun LuteaScaffold(
                         if (!playerVisible && !showLyrics) {
                             if (activeTab != LuteaTab.Search) onTabSelected(LuteaTab.Search)
                             menuOpen = false
-                            searchHistoryOverlay.expanded = false
-                            searchStyleOverlay.expanded = true
+                            searchSoundOverlay.expanded = true
                         }
                     },
                 )
             }
 
             // ★ Hold-to-clear history — a sibling of the layerBackdrop, never a
-            //    child. SearchScreen publishes its expanded state + real clear
+            //    child. SearchScreen publishes its scroll state + real clear
             //    action through LocalSearchHistoryOverlay.
             if (activeTab == LuteaTab.Search) {
                 SearchClearAllOverlay(
@@ -747,16 +730,16 @@ fun LuteaScaffold(
                 )
             }
 
-            // ★ Search style menu — also a sibling of the layerBackdrop, so
+            // ★ Search sound menu — also a sibling of the layerBackdrop, so
             //    the card is REAL kyant glass. It only exists on the Search
             //    tab and gets out of the way of the player.
-            SearchStyleOverlay(
-                state = searchStyleOverlay,
+            SearchSoundOverlay(
+                state = searchSoundOverlay,
                 backdrop = glassBackdrop,
                 visible = activeTab == LuteaTab.Search &&
                     !playerVisible &&
                     !showLyrics,
-                bottomPadding = searchStyleCardBottom,
+                bottomPadding = searchSoundCardBottom,
             )
 
             // ★ Full player — overlays the entire screen when expanded.

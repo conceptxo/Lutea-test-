@@ -20,7 +20,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
-import com.rajatxo.lutea.ui.foundation.JellyLook
+
+/** The two jellyfish renderers the name-card intro can use. */
+internal enum class JellyLook { CURRENT, CLASSIC }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  JELLYFISH BACKDROP — scene wrapper

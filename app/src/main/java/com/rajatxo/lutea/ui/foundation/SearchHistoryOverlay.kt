@@ -30,8 +30,7 @@ import kotlinx.coroutines.delay
  */
 @Stable
 class SearchHistoryOverlayState {
-    var expanded by mutableStateOf(false)
-    /** Simple history's scroll-triggered clear capsule, separate from the paper sheet. */
+    /** The scroll-triggered clear capsule for the simple history list. */
     var simpleClearVisible by mutableStateOf(false)
     internal var onClearAll: (() -> Unit)? = null
 
@@ -43,9 +42,9 @@ class SearchHistoryOverlayState {
 val LocalSearchHistoryOverlay = staticCompositionLocalOf { SearchHistoryOverlayState() }
 
 /**
- * The expanded-history clear action, rendered above the nav / mini player.
+ * The clear-history action, rendered above the nav / mini player.
  *
- * It holds its own success state briefly after the history collapses, so the
+ * It holds its own success state briefly after the list clears, so the
  * "Ghee Khatam" confirmation remains readable before the capsule fades away.
  */
 @Composable
