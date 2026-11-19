@@ -3,6 +3,7 @@ package com.rajatxo.lutea.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -59,6 +61,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -71,7 +74,6 @@ import androidx.core.view.WindowCompat
 import coil3.compose.AsyncImage
 import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.domain.model.Song
-import com.rajatxo.lutea.ui.components.BillieEilishFamily
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 
@@ -107,7 +109,6 @@ import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 
 private const val COVER_HEIGHT_FRACTION = 0.60f   // cover = 60% of the real container height
 private const val TITLE_OVERLAP_FRACTION = 0.14f  // big title starts this much inside the cover's fade zone
-private const val TOP_BAR_THRESHOLD = 0.55f       // scrollProgress where the small title morphs in
 private val TopBarContentHeight = 56.dp
 
 /**
@@ -141,6 +142,7 @@ fun PlaylistDetailScreen(
     insets: WindowInsets = WindowInsets.systemBars,
 ) {
     DetailLightSystemBarIcons()
+    BackHandler { onBack() }
 
     val themeState = rememberCoverThemeColor(playlist.coverUri, fallbackSeed = playlist.id.toString())
     val listState = rememberLazyListState()
@@ -163,6 +165,7 @@ fun PlaylistDetailScreen(
         val sidePad = screenW * 0.06f
         val thumbSize = screenW * 0.13f
         val topInset = with(density) { insets.getTop(this).toDp() }
+        val topInsetPx = with(density) { topInset.toPx() }
         val bottomInset = with(density) { insets.getBottom(this).toDp() }
 
         // 0f..1f as the FIRST SONG ROW reaches the top of the screen.
@@ -196,16 +199,28 @@ fun PlaylistDetailScreen(
             }
         }
 
-        // frosted bar: spring in with a little overshoot, settle out more calmly
-        val barShown by remember(progress) { derivedStateOf { progress.value > TOP_BAR_THRESHOLD } }
-        val morph = animateFloatAsState(
-            targetValue = if (barShown) 1f else 0f,
-            animationSpec = spring(
-                dampingRatio = if (barShown) 0.62f else 0.9f,
-                stiffness = Spring.StiffnessMediumLow,
-            ),
-            label = "topBarMorph",
-        )
+        // The top-bar title is driven by where the real header title is, not by a scroll
+        // percentage. It starts docking only when that title reaches the top bar.
+        val topBarContentPx = with(density) { TopBarContentHeight.toPx() }
+        val titleDockEndPx = topInsetPx + with(density) { 4.dp.toPx() }
+        val titleCollapse = remember(
+            listState,
+            contentTopPx,
+            topInsetPx,
+            topBarContentPx,
+            titleDockEndPx,
+        ) {
+            derivedStateOf {
+                val header = listState.layoutInfo.visibleItemsInfo
+                    .firstOrNull { it.key == "header" }
+                val headerOffset = header?.offset?.toFloat()
+                    ?: if (listState.firstVisibleItemIndex == 0) 0f else -contentTopPx
+                val titleTop = contentTopPx + headerOffset
+                val dockStart = topInsetPx + topBarContentPx
+                ((dockStart - titleTop) / (dockStart - titleDockEndPx).coerceAtLeast(1f))
+                    .coerceIn(0f, 1f)
+            }
+        }
 
         val totalMs = remember(songs) { songs.sumOf { detailDurationMs(it.duration) } }
         val subtitle = remember(songs, totalMs) { detailSubtitle(songs.size, totalMs) }
@@ -237,12 +252,10 @@ fun PlaylistDetailScreen(
                         name = playlist.name,
                         subtitle = subtitle,
                         sidePad = sidePad,
+                        titleAlpha = { 1f - titleCollapse.value },
                         onPlayAll = onPlayAll,
                         onShuffle = onShuffle,
-                        onRename = onRename,
-                        onChangeCover = onChangeCover,
-                        onAddSongs = onAddSongs,
-                        onDelete = onDelete,
+                        onSearch = {},
                     )
                 }
                 if (songs.isEmpty()) {
@@ -261,13 +274,22 @@ fun PlaylistDetailScreen(
             }
         }
 
-        // layer 2: back button + small title (morphs in once the cover has scrolled away)
+        // layer 2: back button + menu, plus the title/shuffle that dock as the header
+        // title reaches the bar. The bar stays transparent so songs pass behind it.
         PlaylistTopBar(
             title = playlist.name,
-            morph = { morph.value },
+            collapse = { titleCollapse.value },
             topInset = topInset,
             sidePad = sidePad,
+            titleMaxWidth = (screenW - sidePad * 2f - 40.dp - 12.dp - 36.dp - 8.dp - 48.dp)
+                .coerceAtLeast(72.dp),
+            slideFrom = screenW * 0.28f,
             onBack = onBack,
+            onShuffle = onShuffle,
+            onRename = onRename,
+            onChangeCover = onChangeCover,
+            onAddSongs = onAddSongs,
+            onDelete = onDelete,
             modifier = Modifier.align(Alignment.TopStart),
         )
     }
@@ -280,55 +302,77 @@ private fun PlaylistHeader(
     name: String,
     subtitle: String,
     sidePad: Dp,
+    titleAlpha: () -> Float,
     onPlayAll: () -> Unit,
     onShuffle: () -> Unit,
-    onRename: () -> Unit,
-    onChangeCover: () -> Unit,
-    onAddSongs: () -> Unit,
-    onDelete: () -> Unit,
+    onSearch: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = sidePad),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // big title scrolls naturally with the list (Mochy doesn't fade/scale it)
+        // big title scrolls naturally with the list; its alpha hands off to the docked title
         DetailText(
             text = name,
             size = 38.sp,
             lineHeight = 42.sp,
-            family = BillieEilishFamily,
+            family = CalSansFamily,
             maxLines = 3,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { alpha = titleAlpha().coerceIn(0f, 1f) },
         )
         Spacer(Modifier.height(6.dp))
         DetailText(
             text = subtitle,
             size = 14.sp,
             color = Color.White.copy(alpha = 0.62f),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(20.dp))
 
-        // ---- action buttons: placeholders, reposition freely ----
+        // centred: shuffle, play, search. The menu lives at the top-right of the screen.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.Center,
         ) {
-            DetailPill(label = "Play", filled = true, onClick = onPlayAll) {
-                DetailPlayGlyph(Color.Black, Modifier.size(18.dp))
-            }
             DetailPill(label = "Shuffle", filled = false, onClick = onShuffle) {
                 DetailShuffleGlyph(Color.White, Modifier.size(18.dp))
             }
-            Spacer(Modifier.weight(1f))
-            DetailMoreMenu(
-                onRename = onRename,
-                onChangeCover = onChangeCover,
-                onAddSongs = onAddSongs,
-                onDelete = onDelete,
-            )
+            Spacer(Modifier.width(10.dp))
+            DetailPill(label = "Play", filled = true, onClick = onPlayAll) {
+                DetailPlayGlyph(Color.Black, Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            DetailIconButton(desc = "Search playlist", onClick = onSearch) {
+                DetailSearchGlyph(Color.White, Modifier.size(18.dp))
+            }
         }
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun DetailIconButton(
+    desc: String,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .detailPressable(onClick = onClick)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.14f))
+            .semantics { contentDescription = desc },
+        contentAlignment = Alignment.Center,
+    ) {
+        icon()
     }
 }
 
@@ -372,7 +416,7 @@ private fun DetailMoreMenu(
                 .size(48.dp)
                 .detailPressable { open = true }
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.14f))
+                .background(Color.Black.copy(alpha = 0.30f))
                 .semantics { contentDescription = "More" },
             contentAlignment = Alignment.Center,
         ) {
@@ -492,16 +536,23 @@ private fun DetailEmptyHint(sidePad: Dp) {
 // ------------------------------------------------------------------ top bar row
 
 /**
- * Back button (always visible) + small title that morphs in after
- * scrollProgress > TOP_BAR_THRESHOLD.
+ * Back button + menu, and the title + shuffle that dock beside the back button as the
+ * centred header title reaches the bar. No bar background: songs scroll behind it.
  */
 @Composable
 private fun PlaylistTopBar(
     title: String,
-    morph: () -> Float,
+    collapse: () -> Float,
     topInset: Dp,
     sidePad: Dp,
+    titleMaxWidth: Dp,
+    slideFrom: Dp,
     onBack: () -> Unit,
+    onShuffle: () -> Unit,
+    onRename: () -> Unit,
+    onChangeCover: () -> Unit,
+    onAddSongs: () -> Unit,
+    onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -517,39 +568,62 @@ private fun PlaylistTopBar(
                 .padding(horizontal = sidePad),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DetailBackButton(morph = morph, onBack = onBack)
+            DetailBackButton(collapse = collapse, onBack = onBack)
             Spacer(Modifier.width(12.dp))
-            // small title: grows in from a larger size as the bar morphs
-            DetailText(
-                text = title,
-                size = 17.sp,
-                modifier = Modifier
-                    .weight(1f)
-                    .graphicsLayer {
-                        val m = morph().coerceIn(0f, 1f)
-                        alpha = m
-                        translationY = (1f - m) * 10.dp.toPx()
-                        val s = 1.18f - 0.18f * m
-                        scaleX = s
-                        scaleY = s
-                        transformOrigin = TransformOrigin(0f, 0.5f)
-                    },
+            Row(
+                modifier = Modifier.graphicsLayer {
+                    val c = collapse().coerceIn(0f, 1f)
+                    alpha = c
+                    translationX = (1f - c) * slideFrom.toPx()
+                    translationY = (1f - c) * 8.dp.toPx()
+                    val s = 1.10f - 0.10f * c
+                    scaleX = s
+                    scaleY = s
+                    transformOrigin = TransformOrigin(0f, 0.5f)
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DetailText(
+                    text = title,
+                    size = 17.sp,
+                    maxLines = 1,
+                    modifier = Modifier.widthIn(max = titleMaxWidth),
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .detailPressable(onClick = onShuffle)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.24f))
+                        .semantics { contentDescription = "Shuffle" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    DetailShuffleGlyph(Color.White, Modifier.size(17.dp))
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            DetailMoreMenu(
+                onRename = onRename,
+                onChangeCover = onChangeCover,
+                onAddSongs = onAddSongs,
+                onDelete = onDelete,
             )
         }
     }
 }
 
 @Composable
-private fun DetailBackButton(morph: () -> Float, onBack: () -> Unit) {
+private fun DetailBackButton(collapse: () -> Float, onBack: () -> Unit) {
     Box(
         modifier = Modifier
             .size(40.dp)
             .detailPressable(onClick = onBack)
             .clip(CircleShape)
-            // dark disc over the cover for legibility; fades out once the bar's own tint takes over
+            // dark disc over the cover for legibility; fades as the title docks
             .drawBehind {
-                val m = morph().coerceIn(0f, 1f)
-                drawRect(Color.Black.copy(alpha = 0.30f * (1f - m)))
+                val c = collapse().coerceIn(0f, 1f)
+                drawRect(Color.Black.copy(alpha = 0.30f * (1f - c)))
             }
             .semantics { contentDescription = "Back" },
         contentAlignment = Alignment.Center,
@@ -571,6 +645,7 @@ private fun DetailText(
     weight: FontWeight? = null,
     maxLines: Int = 1,
     lineHeight: TextUnit = TextUnit.Unspecified,
+    textAlign: TextAlign? = null,
 ) {
     BasicText(
         text = text,
@@ -581,6 +656,7 @@ private fun DetailText(
             fontFamily = family,
             fontWeight = weight,
             lineHeight = lineHeight,
+            textAlign = textAlign,
         ),
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
@@ -745,6 +821,27 @@ private fun DetailDotsGlyph(color: Color, modifier: Modifier = Modifier) {
         for (i in 0..2) {
             drawCircle(color, radius = r, center = Offset(size.width * (0.2f + 0.3f * i), cy))
         }
+    }
+}
+
+@Composable
+private fun DetailSearchGlyph(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        drawCircle(
+            color = color,
+            radius = w * 0.27f,
+            center = Offset(w * 0.42f, h * 0.42f),
+            style = Stroke(width = w * 0.09f),
+        )
+        drawLine(
+            color = color,
+            start = Offset(w * 0.62f, h * 0.62f),
+            end = Offset(w * 0.86f, h * 0.86f),
+            strokeWidth = w * 0.09f,
+            cap = StrokeCap.Round,
+        )
     }
 }
 

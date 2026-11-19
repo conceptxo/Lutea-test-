@@ -85,7 +85,7 @@ import kotlin.math.roundToInt
  *
  *  NOT IN THIS FILE
  *   The tab shown at app start. Keep the initial activeTab in QuickPicksScreen
- *   as LuteaTab.Search so Search is the first page.
+ *   as LuteaTab.Library so the playlist wheel is the first page.
  *
  *  EASY TUNING: change the constants just below, nothing else.
  * =============================================================================

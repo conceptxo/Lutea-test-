@@ -18,6 +18,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -165,8 +166,8 @@ private val CapsuleHeight = 34.dp
 private val RailAreaHeight = 52.dp          // hammer on top, rail at 30dp, a little air under the pipe
 private val RailCenterY = 30.dp             // centre of the rail inside the rail area
 
-// The search box that sits right above the mechanism — just the icon and the
-// text, printed straight onto the page. No capsule, no border, no fill.
+// The search field that sits right above the mechanism — a lit glass strip with
+// a diagonal gradient fill and border, so it reads as a place you can reach for.
 private val CapsuleBarHeight = 42.dp
 private val CapsuleSideMargin = 10.dp
 private val CapsuleInnerPadding = 10.dp
@@ -878,12 +879,39 @@ private fun SearchMachine(
                 }
             },
     ) {
-        // ── the search box: just the icon and the text, straight on the page ──
+        // ── the search box: a lit glass strip, not just floating text ──
+        val searchFieldShape = RoundedCornerShape(14.dp)
+        val searchFieldGlow by animateFloatAsState(
+            targetValue = if (focused) 1f else 0.35f,
+            animationSpec = tween(220),
+            label = "searchFieldGlow",
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = CapsuleSideMargin)
                 .height(CapsuleBarHeight)
+                .clip(searchFieldShape)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.055f + 0.040f * searchFieldGlow),
+                            Color.Black.copy(alpha = 0.20f),
+                            TypeCream.copy(alpha = 0.025f + 0.020f * searchFieldGlow),
+                        ),
+                    ),
+                )
+                .border(
+                    width = 1.dp,
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.16f + 0.20f * searchFieldGlow),
+                            Color.White.copy(alpha = 0.04f),
+                            TypeCream.copy(alpha = 0.10f + 0.18f * searchFieldGlow),
+                        ),
+                    ),
+                    shape = searchFieldShape,
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -910,7 +938,7 @@ private fun SearchMachine(
                 if (query.isEmpty()) {
                     Text(
                         text = "Search songs, artists, albums",
-                        color = Color.White.copy(alpha = 0.62f),
+                        color = Color.White.copy(alpha = 0.72f),
                         fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 0.2.sp,
