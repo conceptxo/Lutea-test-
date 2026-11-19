@@ -645,7 +645,7 @@ private fun DetailText(
     weight: FontWeight? = null,
     maxLines: Int = 1,
     lineHeight: TextUnit = TextUnit.Unspecified,
-    textAlign: TextAlign? = null,
+    textAlign: TextAlign = TextAlign.Unspecified,
 ) {
     BasicText(
         text = text,
