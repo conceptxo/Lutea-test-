@@ -334,7 +334,7 @@ fun PlaylistDetailScreen(
                 sidePad = sidePad,
                 headerTop = headerTop,
                 titleScale = titleScale,
-                translationX = titleTranslationX,
+                titleTranslationX = titleTranslationX,
                 onSize = { titleSize = it },
             )
             PlaylistSubtitleOverlay(
@@ -417,7 +417,7 @@ private fun PlaylistTitleOverlay(
     sidePad: Dp,
     headerTop: () -> Float,
     titleScale: () -> Float,
-    translationX: () -> Float,
+    titleTranslationX: () -> Float,
     onSize: (IntSize) -> Unit,
 ) {
     Box(
@@ -440,7 +440,7 @@ private fun PlaylistTitleOverlay(
                     val s = titleScale()
                     scaleX = s
                     scaleY = s
-                    translationX = translationX()
+                    translationX = titleTranslationX()
                     transformOrigin = TransformOrigin(0f, 0f)
                 },
         )
