@@ -17,12 +17,12 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.rajatxo.lutea"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.rajatxo.lutea"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 699
         versionName = "0.1.599"
     }
