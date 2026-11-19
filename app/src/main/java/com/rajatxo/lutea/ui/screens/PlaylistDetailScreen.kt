@@ -346,6 +346,7 @@ fun PlaylistDetailScreen(
             )
             PlaylistActionsOverlay(
                 actionsTop = actionsTop,
+                topInsetPx = topInsetPx,
                 dock = { dockProgress.value },
                 dockShuffleX = dockShuffleX,
                 dockShuffleY = dockShuffleY,
@@ -477,6 +478,7 @@ private fun PlaylistSubtitleOverlay(
 @Composable
 private fun PlaylistActionsOverlay(
     actionsTop: () -> Float,
+    topInsetPx: Float,
     dock: () -> Float,
     dockShuffleX: () -> Float,
     dockShuffleY: () -> Float,
@@ -509,7 +511,7 @@ private fun PlaylistActionsOverlay(
         },
         modifier = Modifier
             .fillMaxWidth()
-            .offset { IntOffset(0, actionsTop().roundToInt()) },
+            .offset { IntOffset(0, topInsetPx.roundToInt()) },
     ) { measurables, constraints ->
         val gap = 10.dp.roundToPx()
         val shuffle = measurables[0].measure(Constraints())
@@ -520,20 +522,23 @@ private fun PlaylistActionsOverlay(
         val shuffleRestX = startX
         val playRestX = startX + shuffle.width + gap
         val searchRestX = playRestX + play.width + gap
-        layout(constraints.maxWidth, shuffle.height) {
+        // Keep the layout tall enough to contain the docked shuffle too, so its hit
+        // target stays valid even after it moves up into the top bar.
+        val restY = (actionsTop() - topInsetPx).roundToInt().coerceAtLeast(0)
+        layout(constraints.maxWidth, restY + shuffle.height) {
             val progress = dock().coerceIn(0f, 1f)
             val scale = 1f - 0.28f * progress
             val shuffleX =
                 (shuffleRestX + (dockShuffleX() - shuffleRestX) * progress).roundToInt()
-            val shuffleY = (dockShuffleY() * progress).roundToInt()
+            val shuffleY = (restY + dockShuffleY() * progress).roundToInt()
             shuffle.placeWithLayer(shuffleX, shuffleY) {
                 scaleX = scale
                 scaleY = scale
                 transformOrigin = TransformOrigin(0f, 0f)
             }
             val otherAlpha = (1f - progress * 1.35f).coerceIn(0f, 1f)
-            play.placeWithLayer(playRestX, 0) { alpha = otherAlpha }
-            search.placeWithLayer(searchRestX, 0) { alpha = otherAlpha }
+            play.placeWithLayer(playRestX, restY) { alpha = otherAlpha }
+            search.placeWithLayer(searchRestX, restY) { alpha = otherAlpha }
         }
     }
 }
