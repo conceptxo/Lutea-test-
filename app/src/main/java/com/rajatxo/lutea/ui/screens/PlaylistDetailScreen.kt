@@ -4,11 +4,14 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -34,8 +37,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,18 +50,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -80,6 +90,7 @@ import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /*
@@ -148,6 +159,13 @@ fun PlaylistDetailScreen(
 ) {
     DetailLightSystemBarIcons()
     BackHandler { onBack() }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    // Search mode is an overlay state: back closes it before leaving the playlist.
+    BackHandler(enabled = searchOpen) { searchOpen = false }
+    LaunchedEffect(searchOpen) {
+        if (!searchOpen) searchQuery = ""
+    }
 
     val themeState = rememberCoverThemeColor(playlist.coverUri, fallbackSeed = playlist.id.toString())
     val listState = rememberLazyListState()
@@ -204,19 +222,13 @@ fun PlaylistDetailScreen(
             }
         }
 
-        // The top-bar title is driven by where the real header title is, not by a scroll
-        // percentage. It starts docking only when that title reaches the top bar.
+        // Title and shuffle stay in the header and scroll with it. Only search detaches
+        // and animates into the top bar, so no title docking/scale/fade state is needed.
         val topBarContentPx = with(density) { TopBarContentHeight.toPx() }
-        val screenWpx = with(density) { screenW.toPx() }
         val defaultTitleHeightPx = with(density) { 42.dp.toPx() }
         val defaultSubtitleHeightPx = with(density) { 17.dp.toPx() }
         val subtitleGapPx = with(density) { 6.dp.toPx() }
         val actionsGapPx = with(density) { 20.dp.toPx() }
-        val shuffleGapPx = with(density) { 8.dp.toPx() }
-        val shuffleHeightPx = with(density) { 48.dp.toPx() }
-        val titleDockLeftPx = with(density) { (sidePad + 52.dp).toPx() }
-        val titleDockScale = 0.45f
-        val shuffleDockScale = 0.72f
 
         var titleSize by remember { mutableStateOf(IntSize.Zero) }
         var subtitleSize by remember { mutableStateOf(IntSize.Zero) }
@@ -231,8 +243,6 @@ fun PlaylistDetailScreen(
             defaultSubtitleHeightPx
         }
 
-        // The header no longer lives in the list. It is an overlay whose top follows
-        // the header spacer's scroll offset, then pins when the name reaches the bar.
         val rawTitleTop = remember(listState, contentTopPx) {
             derivedStateOf {
                 val header = listState.layoutInfo.visibleItemsInfo
@@ -242,56 +252,46 @@ fun PlaylistDetailScreen(
                 contentTopPx + headerOffset
             }
         }
-        val dockTitleTopPx = topInsetPx +
-            (topBarContentPx - titleHeightPx * titleDockScale) / 2f
-        val dockProgress = remember(
-            listState,
-            contentTopPx,
-            topInsetPx,
-            topBarContentPx,
-            dockTitleTopPx,
-        ) {
-            derivedStateOf {
-                val dockStart = topInsetPx + topBarContentPx
-                ((dockStart - rawTitleTop.value) /
-                    (dockStart - dockTitleTopPx).coerceAtLeast(1f))
-                    .coerceIn(0f, 1f)
-            }
-        }
-        val headerTop: () -> Float = { rawTitleTop.value.coerceAtLeast(dockTitleTopPx) }
-        val titleScale: () -> Float = {
-            1f - (1f - titleDockScale) * dockProgress.value
-        }
-        val titleTranslationX: () -> Float = {
-            val width = titleSize.width.toFloat()
-            (titleDockLeftPx - (screenWpx - width) / 2f) * dockProgress.value
-        }
-        val titleVisualHeight: () -> Float = { titleHeightPx * titleScale() }
-        val subtitleTop: () -> Float = {
-            headerTop() + titleVisualHeight() + subtitleGapPx
-        }
+        val headerTop: () -> Float = { rawTitleTop.value }
+        val subtitleTop: () -> Float = { headerTop() + titleHeightPx + subtitleGapPx }
         val actionsTop: () -> Float = {
             subtitleTop() + subtitleHeightPx + actionsGapPx
         }
-        val dockShuffleX: () -> Float = {
-            titleDockLeftPx + titleSize.width * titleScale() + shuffleGapPx
-        }
-        val dockShuffleYAbs = topInsetPx +
-            (topBarContentPx - shuffleHeightPx * shuffleDockScale) / 2f
-        val dockShuffleY: () -> Float = { dockShuffleYAbs - actionsTop() }
+
+        // Where the search capsule lands: between the 40dp back disc and the menu.
+        val searchDockX = with(density) { (sidePad + 48.dp).toPx() }
+        val searchDockY = topInsetPx +
+            (topBarContentPx - with(density) { 40.dp.toPx() }) / 2f
+        val searchCapsuleWidth =
+            (screenW - sidePad * 2f - 104.dp).coerceAtLeast(120.dp)
 
         val totalMs = remember(songs) { songs.sumOf { detailDurationMs(it.duration) } }
         val subtitle = remember(songs, totalMs) { detailSubtitle(songs.size, totalMs) }
+        val visibleSongs = remember(songs, searchOpen, searchQuery) {
+            val q = searchQuery.trim()
+            if (searchOpen && q.isNotEmpty()) {
+                songs.withIndex().filter { (_, song) ->
+                    song.title.orEmpty().contains(q, ignoreCase = true) ||
+                        song.artist.orEmpty().contains(q, ignoreCase = true)
+                }
+            } else {
+                songs.withIndex().toList()
+            }
+        }
 
         // cover + list. No capture layer — the cover's own RenderEffect blur is the only blur.
         Box(modifier = Modifier.fillMaxSize()) {
+            // Keep the heavy cover skippable while the search query recomposes the list.
+            val coverModifier = remember { Modifier.align(Alignment.TopStart) }
+            val coverScroll = remember(progress) { { progress.value } }
+            val coverColor = remember(themeState) { { themeState.value } }
             // layer 0: the cover — Mochy's ScrollAwayCover (rides up, zooms, blurs, dims, dissolves, fades)
             PlaylistCoverBackground(
                 coverUri = playlist.coverUri,
-                backgroundColor = { themeState.value },
+                backgroundColor = coverColor,
                 coverHeight = coverHeight,
-                scrollProgress = { progress.value },
-                modifier = Modifier.align(Alignment.TopStart),
+                scrollProgress = coverScroll,
+                modifier = coverModifier,
                 placeholderSeed = playlist.id.toString(),
             )
 
@@ -312,53 +312,59 @@ fun PlaylistDetailScreen(
                         sidePad = sidePad,
                     )
                 }
-                if (songs.isEmpty()) {
-                    item(key = "empty") { DetailEmptyHint(sidePad) }
+                if (visibleSongs.isEmpty()) {
+                    item(key = "empty") {
+                        DetailEmptyHint(
+                            sidePad = sidePad,
+                            searching = searchOpen && searchQuery.isNotBlank(),
+                        )
+                    }
                 } else {
-                    itemsIndexed(songs) { index, song ->
+                    itemsIndexed(visibleSongs) { _, indexed ->
+                        val song = indexed.value
                         PlaylistSongRow(
                             song = song,
                             art = songArt(song),
                             thumbSize = thumbSize,
                             sidePad = sidePad,
-                            onClick = { onSongClick(index, song) },
+                            onClick = { onSongClick(indexed.index, song) },
                         )
                     }
                 }
             }
 
-            // Layer 2: header pieces are overlays, not list rows. Each one moves on its
-            // own and docks into the top bar instead of scrolling away with the songs.
+            // Layer 2: title/subtitle/shuffle scroll with the header. Only the search
+            // control detaches and animates into the top bar.
             PlaylistTitleOverlay(
                 name = playlist.name,
                 sidePad = sidePad,
                 headerTop = headerTop,
-                titleScale = titleScale,
-                titleTranslationX = titleTranslationX,
                 onSize = { titleSize = it },
             )
             PlaylistSubtitleOverlay(
                 subtitle = subtitle,
                 sidePad = sidePad,
                 subtitleTop = subtitleTop,
-                dock = { dockProgress.value },
                 onSize = { subtitleSize = it },
             )
             PlaylistActionsOverlay(
                 actionsTop = actionsTop,
-                topInsetPx = topInsetPx,
-                dock = { dockProgress.value },
-                dockShuffleX = dockShuffleX,
-                dockShuffleY = dockShuffleY,
+                searchOpen = searchOpen,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                onOpenSearch = { searchOpen = true },
+                searchDockX = searchDockX,
+                searchDockY = searchDockY,
+                searchCapsuleWidth = searchCapsuleWidth,
                 onPlayAll = onPlayAll,
                 onShuffle = onShuffle,
-                onSearch = {},
             )
         }
 
         // layer 3: back + menu. Transparent bar, so songs pass behind the buttons.
         PlaylistTopBar(
-            collapse = { dockProgress.value },
+            searchOpen = searchOpen,
+            onCloseSearch = { searchOpen = false },
             topInset = topInset,
             sidePad = sidePad,
             onBack = onBack,
@@ -407,7 +413,7 @@ private fun PlaylistHeaderSpacer(
                 .graphicsLayer { alpha = 0f },
         )
         Spacer(Modifier.height(20.dp))
-        Spacer(Modifier.height(48.dp))
+        Spacer(Modifier.height(44.dp))
         Spacer(Modifier.height(12.dp))
     }
 }
@@ -417,8 +423,6 @@ private fun PlaylistTitleOverlay(
     name: String,
     sidePad: Dp,
     headerTop: () -> Float,
-    titleScale: () -> Float,
-    titleTranslationX: () -> Float,
     onSize: (IntSize) -> Unit,
 ) {
     Box(
@@ -435,15 +439,7 @@ private fun PlaylistTitleOverlay(
             family = CalSansFamily,
             maxLines = 3,
             textAlign = TextAlign.Center,
-            modifier = Modifier
-                .onSizeChanged(onSize)
-                .graphicsLayer {
-                    val s = titleScale()
-                    scaleX = s
-                    scaleY = s
-                    translationX = titleTranslationX()
-                    transformOrigin = TransformOrigin(0f, 0f)
-                },
+            modifier = Modifier.onSizeChanged(onSize),
         )
     }
 }
@@ -453,15 +449,13 @@ private fun PlaylistSubtitleOverlay(
     subtitle: String,
     sidePad: Dp,
     subtitleTop: () -> Float,
-    dock: () -> Float,
     onSize: (IntSize) -> Unit,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .offset { IntOffset(0, subtitleTop().roundToInt()) }
-            .padding(horizontal = sidePad)
-            .graphicsLayer { alpha = (1f - dock()).coerceIn(0f, 1f) },
+            .padding(horizontal = sidePad),
     ) {
         DetailText(
             text = subtitle,
@@ -478,88 +472,187 @@ private fun PlaylistSubtitleOverlay(
 @Composable
 private fun PlaylistActionsOverlay(
     actionsTop: () -> Float,
-    topInsetPx: Float,
-    dock: () -> Float,
-    dockShuffleX: () -> Float,
-    dockShuffleY: () -> Float,
+    searchOpen: Boolean,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onOpenSearch: () -> Unit,
+    searchDockX: Float,
+    searchDockY: Float,
+    searchCapsuleWidth: Dp,
     onPlayAll: () -> Unit,
     onShuffle: () -> Unit,
-    onSearch: () -> Unit,
 ) {
-    val docked = dock().coerceIn(0f, 1f)
-    val othersEnabled = docked < 0.2f
+    val searchProgress by animateFloatAsState(
+        targetValue = if (searchOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "playlistSearchExpand",
+    )
+    val density = LocalDensity.current
+    val gapPx = with(density) { 12.dp.roundToPx() }
+    val restSizePx = with(density) { 44.dp.roundToPx() }
+
     Layout(
         content = {
-            DetailPill(label = "Shuffle", filled = false, onClick = onShuffle) {
+            DetailGlassCircleButton(
+                desc = "Shuffle playlist",
+                onClick = onShuffle,
+            ) {
                 DetailShuffleGlyph(Color.White, Modifier.size(18.dp))
             }
             DetailPill(
                 label = "Play",
                 filled = true,
                 onClick = onPlayAll,
-                enabled = othersEnabled,
+                height = 44.dp,
+                horizontalPadding = 26.dp,
             ) {
                 DetailPlayGlyph(Color.Black, Modifier.size(18.dp))
             }
-            DetailIconButton(
-                desc = "Search playlist",
-                onClick = onSearch,
-                enabled = othersEnabled,
-            ) {
-                DetailSearchGlyph(Color.White, Modifier.size(18.dp))
-            }
+            DetailSearchCapsule(
+                expanded = searchOpen,
+                progress = searchProgress,
+                width = searchCapsuleWidth,
+                query = searchQuery,
+                onQueryChange = onSearchQueryChange,
+                onOpen = onOpenSearch,
+            )
         },
-        modifier = Modifier
-            .fillMaxWidth()
-            .offset { IntOffset(0, topInsetPx.roundToInt()) },
+        modifier = Modifier.fillMaxSize(),
     ) { measurables, constraints ->
-        val gap = 10.dp.roundToPx()
         val shuffle = measurables[0].measure(Constraints())
         val play = measurables[1].measure(Constraints())
         val search = measurables[2].measure(Constraints())
-        val total = shuffle.width + gap + play.width + gap + search.width
+        val total = shuffle.width + gapPx + play.width + gapPx + restSizePx
         val startX = ((constraints.maxWidth - total) / 2).coerceAtLeast(0)
         val shuffleRestX = startX
-        val playRestX = startX + shuffle.width + gap
-        val searchRestX = playRestX + play.width + gap
-        // Keep the layout tall enough to contain the docked shuffle too, so its hit
-        // target stays valid even after it moves up into the top bar.
-        val restY = (actionsTop() - topInsetPx).roundToInt().coerceAtLeast(0)
-        layout(constraints.maxWidth, restY + shuffle.height) {
-            val progress = dock().coerceIn(0f, 1f)
-            val scale = 1f - 0.28f * progress
-            val shuffleX =
-                (shuffleRestX + (dockShuffleX() - shuffleRestX) * progress).roundToInt()
-            val shuffleY = (restY + dockShuffleY() * progress).roundToInt()
-            shuffle.placeWithLayer(shuffleX, shuffleY) {
-                scaleX = scale
-                scaleY = scale
-                transformOrigin = TransformOrigin(0f, 0f)
-            }
-            val otherAlpha = (1f - progress * 1.35f).coerceIn(0f, 1f)
-            play.placeWithLayer(playRestX, restY) { alpha = otherAlpha }
-            search.placeWithLayer(searchRestX, restY) { alpha = otherAlpha }
+        val playRestX = startX + shuffle.width + gapPx
+        val searchRestX = playRestX + play.width + gapPx
+
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            val p = searchProgress.coerceIn(0f, 1f)
+            val restY = actionsTop()
+            val shuffleY = restY + (restSizePx - shuffle.height) / 2f
+            val playY = restY + (restSizePx - play.height) / 2f
+            shuffle.placeWithLayer(shuffleRestX, shuffleY.roundToInt())
+            play.placeWithLayer(playRestX, playY.roundToInt())
+
+            val searchX = searchRestX + (searchDockX - searchRestX) * p
+            val searchY = restY + (searchDockY - restY) * p
+            search.placeWithLayer(searchX.roundToInt(), searchY.roundToInt())
         }
     }
 }
 
 @Composable
-private fun DetailIconButton(
+private fun DetailGlassCircleButton(
     desc: String,
     onClick: () -> Unit,
-    enabled: Boolean = true,
+    size: Dp = 44.dp,
     icon: @Composable () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(48.dp)
-            .detailPressable(onClick = onClick, enabled = enabled)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.14f))
+            .size(size)
+            .detailPressable(onClick = onClick)
+            .detailGlass(CircleShape)
             .semantics { contentDescription = desc },
         contentAlignment = Alignment.Center,
     ) {
         icon()
+    }
+}
+
+@Composable
+private fun DetailSearchCapsule(
+    expanded: Boolean,
+    progress: Float,
+    width: Dp,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onOpen: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    val interaction = remember { MutableInteractionSource() }
+    val currentWidth = 44.dp + (width - 44.dp) * progress
+    val currentHeight = 44.dp + (40.dp - 44.dp) * progress
+    // Keep the glyph at the left of the growing capsule instead of letting the
+    // expanding centre drag it across the text field.
+    val iconShiftDp = 22.dp - currentWidth * 0.5f
+    val pressModifier = if (expanded) {
+        Modifier.clickable(
+            interactionSource = interaction,
+            indication = null,
+            onClick = { focusRequester.requestFocus() },
+        )
+    } else {
+        Modifier.detailPressable(onClick = onOpen)
+    }
+
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            // Wait for the circle-to-capsule motion before the IME can resize anything.
+            delay(420)
+            runCatching { focusRequester.requestFocus() }
+        } else {
+            focusManager.clearFocus()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .width(currentWidth)
+            .height(currentHeight)
+            .then(pressModifier)
+            .detailGlass(CircleShape, baseAlpha = 0.44f)
+            .semantics { contentDescription = "Search playlist" },
+        contentAlignment = Alignment.Center,
+    ) {
+        DetailSearchGlyph(
+            color = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier
+                .size(18.dp)
+                .graphicsLayer {
+                    translationX = with(density) { iconShiftDp.toPx() }
+                },
+        )
+        if (expanded || progress > 0.02f) {
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = TextStyle(
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontFamily = CalSansFamily,
+                ),
+                cursorBrush = SolidColor(Color.White),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 40.dp, end = 16.dp)
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .graphicsLayer {
+                        alpha = ((progress - 0.25f) / 0.75f).coerceIn(0f, 1f)
+                    },
+                decorationBox = { innerTextField ->
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (query.isEmpty()) {
+                            DetailText(
+                                text = "Search songs",
+                                size = 14.sp,
+                                color = Color.White.copy(alpha = 0.5f),
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -569,17 +662,23 @@ private fun DetailPill(
     filled: Boolean,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    height: Dp = 44.dp,
+    horizontalPadding: Dp = 26.dp,
     icon: @Composable () -> Unit,
 ) {
-    val bg = if (filled) Color.White else Color.White.copy(alpha = 0.14f)
     val fg = if (filled) Color.Black else Color.White
+    val surface = if (filled) {
+        Modifier.background(Color.White)
+    } else {
+        Modifier.detailGlass(CircleShape)
+    }
     Row(
         modifier = Modifier
-            .height(48.dp)
+            .height(height)
             .detailPressable(onClick = onClick, enabled = enabled)
             .clip(CircleShape)
-            .background(bg)
-            .padding(horizontal = 20.dp),
+            .then(surface)
+            .padding(horizontal = horizontalPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -588,8 +687,34 @@ private fun DetailPill(
     }
 }
 
+private fun Modifier.detailGlass(
+    shape: Shape,
+    baseAlpha: Float = 0.35f,
+): Modifier = this
+    .clip(shape)
+    .background(Color.Black.copy(alpha = baseAlpha), shape)
+    .background(
+        brush = Brush.verticalGradient(
+            0f to Color.White.copy(alpha = 0.14f),
+            0.45f to Color.White.copy(alpha = 0.03f),
+            1f to Color.Transparent,
+        ),
+        shape = shape,
+    )
+    .border(
+        width = 1.dp,
+        brush = Brush.verticalGradient(
+            0f to Color.White.copy(alpha = 0.52f),
+            0.5f to Color.White.copy(alpha = 0.16f),
+            1f to Color.White.copy(alpha = 0.08f),
+        ),
+        shape = shape,
+    )
+
 @Composable
 private fun DetailMoreMenu(
+    searchOpen: Boolean,
+    onCloseSearch: () -> Unit,
     onRename: () -> Unit,
     onChangeCover: () -> Unit,
     onAddSongs: () -> Unit,
@@ -597,21 +722,54 @@ private fun DetailMoreMenu(
 ) {
     var open by remember { mutableStateOf(false) }
     val density = LocalDensity.current
+    val dotsAlpha by animateFloatAsState(
+        targetValue = if (searchOpen) 0f else 1f,
+        animationSpec = tween(durationMillis = 220),
+        label = "playlistMenuDots",
+    )
+    val crossAlpha by animateFloatAsState(
+        targetValue = if (searchOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 220),
+        label = "playlistMenuCross",
+    )
+    LaunchedEffect(searchOpen) {
+        if (searchOpen) open = false
+    }
 
     Box {
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .detailPressable { open = true }
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.30f))
-                .semantics { contentDescription = "More" },
+                .detailPressable {
+                    if (searchOpen) onCloseSearch() else open = true
+                }
+                .detailGlass(CircleShape)
+                .semantics {
+                    contentDescription = if (searchOpen) "Close search" else "More"
+                },
             contentAlignment = Alignment.Center,
         ) {
-            DetailDotsGlyph(Color.White, Modifier.size(20.dp))
+            DetailDotsGlyph(
+                color = Color.White,
+                modifier = Modifier
+                    .size(20.dp)
+                    .graphicsLayer {
+                        alpha = dotsAlpha
+                        rotationZ = 90f * (1f - dotsAlpha)
+                    },
+            )
+            DetailCloseGlyph(
+                color = Color.White,
+                modifier = Modifier
+                    .size(20.dp)
+                    .graphicsLayer {
+                        alpha = crossAlpha
+                        rotationZ = -90f * (1f - crossAlpha)
+                    },
+            )
         }
 
-        if (open) {
+        if (open && !searchOpen) {
             Popup(
                 alignment = Alignment.TopEnd,
                 offset = IntOffset(0, with(density) { 52.dp.roundToPx() }),
@@ -711,9 +869,13 @@ private fun DetailSongThumb(art: Any?, size: Dp) {
 }
 
 @Composable
-private fun DetailEmptyHint(sidePad: Dp) {
+private fun DetailEmptyHint(sidePad: Dp, searching: Boolean) {
     DetailText(
-        text = "No songs yet. Add some from your library.",
+        text = if (searching) {
+            "No songs found."
+        } else {
+            "No songs yet. Add some from your library."
+        },
         size = 14.sp,
         color = Color.White.copy(alpha = 0.55f),
         maxLines = 3,
@@ -724,12 +886,13 @@ private fun DetailEmptyHint(sidePad: Dp) {
 // ------------------------------------------------------------------ top bar row
 
 /**
- * Back button + menu only. The title/shuffle overlays dock into this row from the list
- * header, so the bar itself stays transparent and songs scroll behind it.
+ * Back + menu only. The bar stays transparent so the title/shuffle scroll behind it.
+ * While the search capsule is open the menu disc becomes a cross that closes it.
  */
 @Composable
 private fun PlaylistTopBar(
-    collapse: () -> Float,
+    searchOpen: Boolean,
+    onCloseSearch: () -> Unit,
     topInset: Dp,
     sidePad: Dp,
     onBack: () -> Unit,
@@ -752,9 +915,11 @@ private fun PlaylistTopBar(
                 .padding(horizontal = sidePad),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DetailBackButton(collapse = collapse, onBack = onBack)
+            DetailBackButton(onBack = onBack)
             Spacer(Modifier.weight(1f))
             DetailMoreMenu(
+                searchOpen = searchOpen,
+                onCloseSearch = onCloseSearch,
                 onRename = onRename,
                 onChangeCover = onChangeCover,
                 onAddSongs = onAddSongs,
@@ -765,17 +930,12 @@ private fun PlaylistTopBar(
 }
 
 @Composable
-private fun DetailBackButton(collapse: () -> Float, onBack: () -> Unit) {
+private fun DetailBackButton(onBack: () -> Unit) {
     Box(
         modifier = Modifier
             .size(40.dp)
             .detailPressable(onClick = onBack)
-            .clip(CircleShape)
-            // dark disc over the cover for legibility; fades as the title docks
-            .drawBehind {
-                val c = collapse().coerceIn(0f, 1f)
-                drawRect(Color.Black.copy(alpha = 0.30f * (1f - c)))
-            }
+            .detailGlass(CircleShape)
             .semantics { contentDescription = "Back" },
         contentAlignment = Alignment.Center,
     ) {
@@ -974,6 +1134,29 @@ private fun DetailDotsGlyph(color: Color, modifier: Modifier = Modifier) {
         for (i in 0..2) {
             drawCircle(color, radius = r, center = Offset(size.width * (0.2f + 0.3f * i), cy))
         }
+    }
+}
+
+@Composable
+private fun DetailCloseGlyph(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.09f
+        drawLine(
+            color = color,
+            start = Offset(w * 0.22f, h * 0.22f),
+            end = Offset(w * 0.78f, h * 0.78f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = color,
+            start = Offset(w * 0.78f, h * 0.22f),
+            end = Offset(w * 0.22f, h * 0.78f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
