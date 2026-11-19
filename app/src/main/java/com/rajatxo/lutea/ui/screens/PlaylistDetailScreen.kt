@@ -86,9 +86,15 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.core.view.WindowCompat
 import coil3.compose.AsyncImage
+import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.colorControls
+import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.ui.components.CalSansFamily
+import com.rajatxo.lutea.ui.foundation.LuteaBackdrop
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -172,10 +178,7 @@ fun PlaylistDetailScreen(
     val density = LocalDensity.current
 
     BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            // solid extracted colour behind everything (read in the draw phase)
-            .drawBehind { drawRect(themeState.value) },
+        modifier = modifier.fillMaxSize(),
     ) {
         val screenW = maxWidth
         val screenH = maxHeight
@@ -243,12 +246,15 @@ fun PlaylistDetailScreen(
             defaultSubtitleHeightPx
         }
 
-        val rawTitleTop = remember(listState, contentTopPx) {
+        val screenHPx = with(density) { screenH.toPx() }
+        val rawTitleTop = remember(listState, contentTopPx, screenHPx) {
             derivedStateOf {
                 val header = listState.layoutInfo.visibleItemsInfo
                     .firstOrNull { it.key == "header" }
+                // Once the header leaves the viewport, keep the overlay fully off-screen.
+                // Using -contentTopPx pinned the title at y=0 under the top bar.
                 val headerOffset = header?.offset?.toFloat()
-                    ?: if (listState.firstVisibleItemIndex == 0) 0f else -contentTopPx
+                    ?: if (listState.firstVisibleItemIndex == 0) 0f else -screenHPx
                 contentTopPx + headerOffset
             }
         }
@@ -279,100 +285,141 @@ fun PlaylistDetailScreen(
             }
         }
 
-        // cover + list. No capture layer — the cover's own RenderEffect blur is the only blur.
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Keep the heavy cover skippable while the search query recomposes the list.
-            val coverModifier = remember { Modifier.align(Alignment.TopStart) }
-            val coverScroll = remember(progress) { { progress.value } }
-            val coverColor = remember(themeState) { { themeState.value } }
-            // layer 0: the cover — Mochy's ScrollAwayCover (rides up, zooms, blurs, dims, dissolves, fades)
-            PlaylistCoverBackground(
-                coverUri = playlist.coverUri,
-                backgroundColor = coverColor,
-                coverHeight = coverHeight,
-                scrollProgress = coverScroll,
-                modifier = coverModifier,
-                placeholderSeed = playlist.id.toString(),
-            )
+        // The cover is the backdrop. The capture copy is the same cover without its
+        // expensive scroll blur, so the glass buttons sample the real artwork.
+        val coverScroll = remember(progress) { { progress.value } }
+        val coverColor = remember(themeState) { { themeState.value } }
+        LuteaBackdrop(
+            modifier = Modifier.fillMaxSize(),
+            background = {
+                PlaylistPageBackground(
+                    coverUri = playlist.coverUri,
+                    backgroundColor = coverColor,
+                    coverHeight = coverHeight,
+                    scrollProgress = coverScroll,
+                    placeholderSeed = playlist.id.toString(),
+                    enableBlur = true,
+                )
+            },
+            captureBackground = {
+                PlaylistPageBackground(
+                    coverUri = playlist.coverUri,
+                    backgroundColor = coverColor,
+                    coverHeight = coverHeight,
+                    scrollProgress = coverScroll,
+                    placeholderSeed = playlist.id.toString(),
+                    enableBlur = false,
+                )
+            },
+        ) { backdrop ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                // Top padding puts the header at the bottom of the cover's fade zone,
+                // so the list "rides over" the blended background.
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        top = coverHeight - titleOverlap,
+                        bottom = bottomInset + screenH * 0.04f,
+                    ),
+                ) {
+                    item(key = "header") {
+                        PlaylistHeaderSpacer(
+                            name = playlist.name,
+                            subtitle = subtitle,
+                            sidePad = sidePad,
+                        )
+                    }
+                    if (visibleSongs.isEmpty()) {
+                        item(key = "empty") {
+                            DetailEmptyHint(
+                                sidePad = sidePad,
+                                searching = searchOpen && searchQuery.isNotBlank(),
+                            )
+                        }
+                    } else {
+                        itemsIndexed(visibleSongs) { _, indexed ->
+                            val song = indexed.value
+                            PlaylistSongRow(
+                                song = song,
+                                art = songArt(song),
+                                thumbSize = thumbSize,
+                                sidePad = sidePad,
+                                onClick = { onSongClick(indexed.index, song) },
+                            )
+                        }
+                    }
+                }
 
-            // layer 1: content. Top padding puts the header at the bottom of the cover's fade
-            // zone, so the list "rides over" the blended background.
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    top = coverHeight - titleOverlap,
-                    bottom = bottomInset + screenH * 0.04f,
-                ),
-            ) {
-                item(key = "header") {
-                    PlaylistHeaderSpacer(
-                        name = playlist.name,
-                        subtitle = subtitle,
-                        sidePad = sidePad,
-                    )
-                }
-                if (visibleSongs.isEmpty()) {
-                    item(key = "empty") {
-                        DetailEmptyHint(
-                            sidePad = sidePad,
-                            searching = searchOpen && searchQuery.isNotBlank(),
-                        )
-                    }
-                } else {
-                    itemsIndexed(visibleSongs) { _, indexed ->
-                        val song = indexed.value
-                        PlaylistSongRow(
-                            song = song,
-                            art = songArt(song),
-                            thumbSize = thumbSize,
-                            sidePad = sidePad,
-                            onClick = { onSongClick(indexed.index, song) },
-                        )
-                    }
-                }
+                // Title/subtitle/shuffle scroll with the header. Only the search
+                // control detaches and animates into the top bar.
+                PlaylistTitleOverlay(
+                    name = playlist.name,
+                    sidePad = sidePad,
+                    headerTop = headerTop,
+                    onSize = { titleSize = it },
+                )
+                PlaylistSubtitleOverlay(
+                    subtitle = subtitle,
+                    sidePad = sidePad,
+                    subtitleTop = subtitleTop,
+                    onSize = { subtitleSize = it },
+                )
+                PlaylistActionsOverlay(
+                    actionsTop = actionsTop,
+                    searchOpen = searchOpen,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    onOpenSearch = { searchOpen = true },
+                    searchDockX = searchDockX,
+                    searchDockY = searchDockY,
+                    searchCapsuleWidth = searchCapsuleWidth,
+                    onPlayAll = onPlayAll,
+                    onShuffle = onShuffle,
+                    backdrop = backdrop,
+                )
+
+                // Back + menu. Transparent bar, so songs pass behind the buttons.
+                PlaylistTopBar(
+                    searchOpen = searchOpen,
+                    onCloseSearch = { searchOpen = false },
+                    topInset = topInset,
+                    sidePad = sidePad,
+                    onBack = onBack,
+                    onRename = onRename,
+                    onChangeCover = onChangeCover,
+                    onAddSongs = onAddSongs,
+                    onDelete = onDelete,
+                    backdrop = backdrop,
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
             }
-
-            // Layer 2: title/subtitle/shuffle scroll with the header. Only the search
-            // control detaches and animates into the top bar.
-            PlaylistTitleOverlay(
-                name = playlist.name,
-                sidePad = sidePad,
-                headerTop = headerTop,
-                onSize = { titleSize = it },
-            )
-            PlaylistSubtitleOverlay(
-                subtitle = subtitle,
-                sidePad = sidePad,
-                subtitleTop = subtitleTop,
-                onSize = { subtitleSize = it },
-            )
-            PlaylistActionsOverlay(
-                actionsTop = actionsTop,
-                searchOpen = searchOpen,
-                searchQuery = searchQuery,
-                onSearchQueryChange = { searchQuery = it },
-                onOpenSearch = { searchOpen = true },
-                searchDockX = searchDockX,
-                searchDockY = searchDockY,
-                searchCapsuleWidth = searchCapsuleWidth,
-                onPlayAll = onPlayAll,
-                onShuffle = onShuffle,
-            )
         }
+    }
+}
 
-        // layer 3: back + menu. Transparent bar, so songs pass behind the buttons.
-        PlaylistTopBar(
-            searchOpen = searchOpen,
-            onCloseSearch = { searchOpen = false },
-            topInset = topInset,
-            sidePad = sidePad,
-            onBack = onBack,
-            onRename = onRename,
-            onChangeCover = onChangeCover,
-            onAddSongs = onAddSongs,
-            onDelete = onDelete,
+@Composable
+private fun PlaylistPageBackground(
+    coverUri: String?,
+    backgroundColor: () -> Color,
+    coverHeight: Dp,
+    scrollProgress: () -> Float,
+    placeholderSeed: String,
+    enableBlur: Boolean,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .drawBehind { drawRect(backgroundColor()) },
+    ) {
+        PlaylistCoverBackground(
+            coverUri = coverUri,
+            backgroundColor = backgroundColor,
+            coverHeight = coverHeight,
+            scrollProgress = scrollProgress,
             modifier = Modifier.align(Alignment.TopStart),
+            placeholderSeed = placeholderSeed,
+            enableBlur = enableBlur,
         )
     }
 }
@@ -481,6 +528,7 @@ private fun PlaylistActionsOverlay(
     searchCapsuleWidth: Dp,
     onPlayAll: () -> Unit,
     onShuffle: () -> Unit,
+    backdrop: LayerBackdrop?,
 ) {
     val searchProgress by animateFloatAsState(
         targetValue = if (searchOpen) 1f else 0f,
@@ -496,6 +544,7 @@ private fun PlaylistActionsOverlay(
             DetailGlassCircleButton(
                 desc = "Shuffle playlist",
                 onClick = onShuffle,
+                backdrop = backdrop,
             ) {
                 DetailShuffleGlyph(Color.White, Modifier.size(18.dp))
             }
@@ -515,6 +564,7 @@ private fun PlaylistActionsOverlay(
                 query = searchQuery,
                 onQueryChange = onSearchQueryChange,
                 onOpen = onOpenSearch,
+                backdrop = backdrop,
             )
         },
         modifier = Modifier.fillMaxSize(),
@@ -548,13 +598,14 @@ private fun DetailGlassCircleButton(
     desc: String,
     onClick: () -> Unit,
     size: Dp = 44.dp,
+    backdrop: LayerBackdrop? = null,
     icon: @Composable () -> Unit,
 ) {
     Box(
         modifier = Modifier
             .size(size)
             .detailPressable(onClick = onClick)
-            .detailGlass(CircleShape)
+            .detailGlass(CircleShape, backdrop = backdrop)
             .semantics { contentDescription = desc },
         contentAlignment = Alignment.Center,
     ) {
@@ -570,6 +621,7 @@ private fun DetailSearchCapsule(
     query: String,
     onQueryChange: (String) -> Unit,
     onOpen: () -> Unit,
+    backdrop: LayerBackdrop?,
 ) {
     val density = LocalDensity.current
     val focusRequester = remember { FocusRequester() }
@@ -605,7 +657,7 @@ private fun DetailSearchCapsule(
             .width(currentWidth)
             .height(currentHeight)
             .then(pressModifier)
-            .detailGlass(CircleShape, baseAlpha = 0.44f)
+            .detailGlass(CircleShape, baseAlpha = 0.44f, backdrop = backdrop)
             .semantics { contentDescription = "Search playlist" },
         contentAlignment = Alignment.Center,
     ) {
@@ -687,29 +739,57 @@ private fun DetailPill(
     }
 }
 
+@Composable
 private fun Modifier.detailGlass(
     shape: Shape,
+    backdrop: LayerBackdrop? = null,
     baseAlpha: Float = 0.35f,
-): Modifier = this
-    .clip(shape)
-    .background(Color.Black.copy(alpha = baseAlpha), shape)
-    .background(
-        brush = Brush.verticalGradient(
-            0f to Color.White.copy(alpha = 0.14f),
-            0.45f to Color.White.copy(alpha = 0.03f),
-            1f to Color.Transparent,
-        ),
-        shape = shape,
-    )
-    .border(
-        width = 1.dp,
-        brush = Brush.verticalGradient(
-            0f to Color.White.copy(alpha = 0.52f),
-            0.5f to Color.White.copy(alpha = 0.16f),
-            1f to Color.White.copy(alpha = 0.08f),
-        ),
-        shape = shape,
-    )
+): Modifier {
+    val surface = if (backdrop != null) {
+        Modifier.drawBackdrop(
+            backdrop = backdrop,
+            shape = { shape },
+            effects = {
+                vibrancy()
+                colorControls(brightness = 0.05f, contrast = 1f, saturation = 1.4f)
+                blur(20f.dp.toPx())
+            },
+            onDrawSurface = {
+                drawRect(Color.Black.copy(alpha = baseAlpha))
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0.10f),
+                        0.45f to Color.White.copy(alpha = 0.02f),
+                        1f to Color.Transparent,
+                    ),
+                )
+            },
+        )
+    } else {
+        Modifier
+            .background(Color.Black.copy(alpha = baseAlpha), shape)
+            .background(
+                brush = Brush.verticalGradient(
+                    0f to Color.White.copy(alpha = 0.14f),
+                    0.45f to Color.White.copy(alpha = 0.03f),
+                    1f to Color.Transparent,
+                ),
+                shape = shape,
+            )
+    }
+    return this
+        .clip(shape)
+        .then(surface)
+        .border(
+            width = 1.dp,
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.52f),
+                0.5f to Color.White.copy(alpha = 0.16f),
+                1f to Color.White.copy(alpha = 0.08f),
+            ),
+            shape = shape,
+        )
+}
 
 @Composable
 private fun DetailMoreMenu(
@@ -719,6 +799,7 @@ private fun DetailMoreMenu(
     onChangeCover: () -> Unit,
     onAddSongs: () -> Unit,
     onDelete: () -> Unit,
+    backdrop: LayerBackdrop?,
 ) {
     var open by remember { mutableStateOf(false) }
     val density = LocalDensity.current
@@ -743,7 +824,7 @@ private fun DetailMoreMenu(
                 .detailPressable {
                     if (searchOpen) onCloseSearch() else open = true
                 }
-                .detailGlass(CircleShape)
+                .detailGlass(CircleShape, backdrop = backdrop)
                 .semantics {
                     contentDescription = if (searchOpen) "Close search" else "More"
                 },
@@ -900,6 +981,7 @@ private fun PlaylistTopBar(
     onChangeCover: () -> Unit,
     onAddSongs: () -> Unit,
     onDelete: () -> Unit,
+    backdrop: LayerBackdrop?,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -915,7 +997,7 @@ private fun PlaylistTopBar(
                 .padding(horizontal = sidePad),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DetailBackButton(onBack = onBack)
+            DetailBackButton(onBack = onBack, backdrop = backdrop)
             Spacer(Modifier.weight(1f))
             DetailMoreMenu(
                 searchOpen = searchOpen,
@@ -924,18 +1006,22 @@ private fun PlaylistTopBar(
                 onChangeCover = onChangeCover,
                 onAddSongs = onAddSongs,
                 onDelete = onDelete,
+                backdrop = backdrop,
             )
         }
     }
 }
 
 @Composable
-private fun DetailBackButton(onBack: () -> Unit) {
+private fun DetailBackButton(
+    onBack: () -> Unit,
+    backdrop: LayerBackdrop?,
+) {
     Box(
         modifier = Modifier
             .size(40.dp)
             .detailPressable(onClick = onBack)
-            .detailGlass(CircleShape)
+            .detailGlass(CircleShape, backdrop = backdrop)
             .semantics { contentDescription = "Back" },
         contentAlignment = Alignment.Center,
     ) {

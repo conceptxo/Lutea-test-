@@ -96,6 +96,7 @@ internal fun luteaSmoothstep(from: Float, to: Float, x: Float): Float {
  * graphicsLayer / draw phase, so scrolling and the 600 ms colour fade never recompose this.
  *
  * @param scrollProgress 0f..1f = how far the list has scrolled, relative to the cover height.
+ * @param enableBlur    false for the backdrop-capture copy; the glass overlay does the blur.
  */
 @Composable
 fun PlaylistCoverBackground(
@@ -105,6 +106,7 @@ fun PlaylistCoverBackground(
     scrollProgress: () -> Float,
     modifier: Modifier = Modifier,
     placeholderSeed: String = "",
+    enableBlur: Boolean = true,
 ) {
     val context = LocalContext.current
     val request = remember(coverUri) {
@@ -181,7 +183,7 @@ fun PlaylistCoverBackground(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        if (canBlur) {
+                        if (canBlur && enableBlur) {
                             val p = scrollProgress().coerceIn(0f, 1f)
                             val blurAmount = luteaSmoothstep(BLUR_IN_FROM, BLUR_IN_TO, p)
                             if (blurAmount > 0.01f) {
