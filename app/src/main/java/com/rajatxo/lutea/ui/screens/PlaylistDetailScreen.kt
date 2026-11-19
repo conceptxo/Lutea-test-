@@ -657,7 +657,7 @@ private fun DetailSearchCapsule(
             .width(currentWidth)
             .height(currentHeight)
             .then(pressModifier)
-            .detailGlass(CircleShape, baseAlpha = 0.44f, backdrop = backdrop)
+            .detailGlass(CircleShape, backdrop = backdrop)
             .semantics { contentDescription = "Search playlist" },
         contentAlignment = Alignment.Center,
     ) {
