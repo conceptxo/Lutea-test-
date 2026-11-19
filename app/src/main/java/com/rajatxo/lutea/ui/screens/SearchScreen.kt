@@ -685,13 +685,29 @@ private fun SearchResults(
     Box(modifier = modifier) {
         when (style) {
             SearchSurfaceStyle.JELLY -> {
-                JellyfishBackdrop(
-                    searching = query.isNotBlank(),
-                    look = jellyLook,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clipToBounds(),
-                )
+                // Idle keeps the jellyfish; results sit on a plain dark gradient.
+                // The blurred jelly behind text made the result list muddy.
+                if (query.isBlank()) {
+                    JellyfishBackdrop(
+                        searching = false,
+                        look = jellyLook,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds(),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to PageBackground,
+                                    0.55f to Color(0xFF0B0B0B),
+                                    1f to Color.Black,
+                                ),
+                            ),
+                    )
+                }
 
                 if (query.isNotBlank()) {
                     JellySongList(
