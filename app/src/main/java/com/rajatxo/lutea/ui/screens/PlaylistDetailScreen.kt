@@ -480,7 +480,7 @@ private fun PlaylistTopBlur(
     tint: () -> Color,
 ) {
     val density = LocalDensity.current
-    val maxBlurPx = with(density) { 22.dp.toPx() }
+    val maxBlurPx = with(density) { 14.dp.toPx() }
     Box(
         modifier = Modifier
             .fillMaxWidth()
