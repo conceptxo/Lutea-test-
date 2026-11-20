@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -466,11 +468,11 @@ private fun PlaylistPageBackground(
 /**
  * Mochy's top-bar blur, reduced to the one thing the playlist needs: a real
  * backdrop blur of the page, strongest at the status bar and faded to zero by
- * the bottom of the band. The DstOut gradient is what removes the hard edge.
+ * the bottom of the band. Three overlapping radii approximate the variable
+ * radius ramp; the DstIn gradient removes the hard edge.
  *
- * shortcut: one blur radius masked by the fade, not Mochy's variable-radius
- * shader. Upgrade to stacked bands / AGSL if the fade ever reads as a ghosted
- * double image rather than a radius ramp.
+ * shortcut: stacked bands instead of Mochy's single-pass variable-radius
+ * shader. Upgrade to an AGSL effect only if band seams ever become visible.
  */
 @Composable
 private fun PlaylistTopBlur(
@@ -489,25 +491,87 @@ private fun PlaylistTopBlur(
                 alpha = morph()
                 compositingStrategy = CompositingStrategy.Offscreen
             }
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { RectangleShape },
-                effects = {
-                    vibrancy()
-                    colorControls(brightness = 0.02f, contrast = 1f, saturation = 1.3f)
-                    blur(maxBlurPx * morph())
-                },
-                onDrawSurface = {
-                    drawRect(tint().copy(alpha = 0.24f))
+            .drawWithContent {
+                drawContent()
+                // Tint the glass once, then fade blur + tint together.
+                drawRect(tint().copy(alpha = 0.20f))
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.Black,
+                        0.64f to Color.Black,
+                        0.94f to Color.Transparent,
+                        1f to Color.Transparent,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            },
+    ) {
+        // Three overlapping blur radii: 14dp at the status bar, 9dp lower,
+        // 4dp near the fade. The later bands cross-fade over the earlier ones,
+        // so the composite stays opaque and never ghosts against sharp rows.
+        PlaylistBlurBand(
+            backdrop = backdrop,
+            blurPx = maxBlurPx,
+            morph = morph,
+            modifier = Modifier.fillMaxSize(),
+        )
+        PlaylistBlurBand(
+            backdrop = backdrop,
+            blurPx = maxBlurPx * 0.65f,
+            morph = morph,
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.50f)
+                .offset(y = height * 0.25f),
+            fadeIn = 0.35f,
+        )
+        PlaylistBlurBand(
+            backdrop = backdrop,
+            blurPx = maxBlurPx * 0.28f,
+            morph = morph,
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.45f)
+                .offset(y = height * 0.55f),
+            fadeIn = 0.35f,
+        )
+    }
+}
+
+@Composable
+private fun PlaylistBlurBand(
+    backdrop: LayerBackdrop,
+    blurPx: Float,
+    morph: () -> Float,
+    modifier: Modifier = Modifier,
+    fadeIn: Float = 0f,
+) {
+    Box(
+        modifier = modifier
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                if (fadeIn > 0f) {
                     drawRect(
                         brush = Brush.verticalGradient(
                             0f to Color.Transparent,
-                            0.28f to Color.Transparent,
-                            0.94f to Color.White,
-                            1f to Color.White,
+                            fadeIn to Color.Black,
+                            1f to Color.Black,
                         ),
-                        blendMode = BlendMode.DstOut,
+                        blendMode = BlendMode.DstIn,
                     )
+                }
+            }
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { RectangleShape },
+                // A background fade must not inherit the button glass rim/shadow:
+                // that is the dark line that used to show at the band's bottom.
+                highlight = null,
+                shadow = null,
+                innerShadow = null,
+                effects = {
+                    blur(blurPx * morph())
                 },
             ),
     )
