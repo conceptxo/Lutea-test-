@@ -503,6 +503,7 @@ private fun PlaylistTopBlur(
                         brush = Brush.verticalGradient(
                             0f to Color.Transparent,
                             0.28f to Color.Transparent,
+                            0.94f to Color.White,
                             1f to Color.White,
                         ),
                         blendMode = BlendMode.DstOut,
