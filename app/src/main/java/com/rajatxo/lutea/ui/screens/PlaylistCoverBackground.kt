@@ -79,8 +79,8 @@ internal fun luteaSmoothstep(from: Float, to: Float, x: Float): Float {
  * scrolls over it. Constants match Mochy exactly (CoverFollow/CoverZoom/CoverFadeFrom/CoverFadeTo/
  * CoverDim/CoverSoftRadius/CoverSoftBy) so the behaviour is the one the user already likes.
  *
- * There is NO second blur layer on top of this — the kyant top blur that used to sit above the
- * list is gone. The cover's own RenderEffect blur is the only blur.
+ * This composable only blurs the cover itself. The playlist screen adds a separate progressive
+ * top blur as a sibling overlay outside this cover.
  *
  * Layers, bottom to top:
  *  1. placeholder gradient (shown when there is no cover, or while it loads)

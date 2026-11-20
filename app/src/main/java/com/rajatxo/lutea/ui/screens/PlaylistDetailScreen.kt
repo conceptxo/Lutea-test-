@@ -53,15 +53,19 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -87,6 +91,8 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.core.view.WindowCompat
 import coil3.compose.AsyncImage
 import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
@@ -94,7 +100,6 @@ import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.ui.components.CalSansFamily
-import com.rajatxo.lutea.ui.foundation.LuteaBackdrop
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -136,8 +141,9 @@ private val TopBarContentHeight = 56.dp
 /**
  * Playlist detail: cover art that rides up, zooms, dims, dissolves and blurs as the list
  * scrolls over it (Mochy's ScrollAwayCover, exactly), dissolving into a dark hue-tinted
- * background colour taken from the cover, with a song list riding over it. The cover's own
- * RenderEffect blur is the only blur — there is no second blur layer on top.
+ * background colour taken from the cover, with a song list riding over it. Once the header
+ * is mostly gone, a progressive backdrop blur fades in below the status bar and eases back
+ * to zero 96dp down — Mochy's top-bar glass, without a hard edge.
  *
  * Law 7: everything screen-relative is a fraction of BoxWithConstraints.maxWidth/maxHeight.
  * Law 1: pass LocalLuteaWindowInsets.current as [insets].
@@ -285,13 +291,44 @@ fun PlaylistDetailScreen(
             }
         }
 
-        // The cover is the backdrop. The capture copy is the same cover without its
-        // expensive scroll blur, so the glass buttons sample the real artwork.
+        // The cover + song list are captured together so the top glass and the
+        // progressive blur sample what is actually scrolling underneath, not
+        // just the cover art.
         val coverScroll = remember(progress) { { progress.value } }
         val coverColor = remember(themeState) { { themeState.value } }
-        LuteaBackdrop(
-            modifier = Modifier.fillMaxSize(),
-            background = {
+        val pageGraphicsLayer = rememberGraphicsLayer()
+        val pageBackdrop = rememberLayerBackdrop(graphicsLayer = pageGraphicsLayer) {
+            drawContent()
+        }
+
+        // Mochy's playlist bar frosts once the header is more than halfway gone.
+        // Read progress through a derived boolean so scrolling only recomposes
+        // at the threshold, not on every frame.
+        val blurVisible by remember(progress) {
+            derivedStateOf { progress.value > 0.55f }
+        }
+        val blurMorph = animateFloatAsState(
+            targetValue = if (blurVisible) 1f else 0f,
+            animationSpec = spring(
+                dampingRatio = 0.9f,
+                stiffness = Spring.StiffnessMediumLow,
+            ),
+            label = "playlistTopBlur",
+        )
+        // Only compose the blur while it is actually visible; the value itself is
+        // read in the draw phase, so the scroll animation never recomposes the list.
+        val blurActive by remember {
+            derivedStateOf { blurMorph.value > 0.01f }
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Capture layer: the real page behind the top bar. It stays outside
+            // the LazyColumn, per Kyant's scrollable rule.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .layerBackdrop(pageBackdrop),
+            ) {
                 PlaylistPageBackground(
                     coverUri = playlist.coverUri,
                     backgroundColor = coverColor,
@@ -300,19 +337,7 @@ fun PlaylistDetailScreen(
                     placeholderSeed = playlist.id.toString(),
                     enableBlur = true,
                 )
-            },
-            captureBackground = {
-                PlaylistPageBackground(
-                    coverUri = playlist.coverUri,
-                    backgroundColor = coverColor,
-                    coverHeight = coverHeight,
-                    scrollProgress = coverScroll,
-                    placeholderSeed = playlist.id.toString(),
-                    enableBlur = false,
-                )
-            },
-        ) { backdrop ->
-            Box(modifier = Modifier.fillMaxSize()) {
+
                 // Top padding puts the header at the bottom of the cover's fade zone,
                 // so the list "rides over" the blended background.
                 LazyColumn(
@@ -351,8 +376,8 @@ fun PlaylistDetailScreen(
                     }
                 }
 
-                // Title/subtitle/shuffle scroll with the header. Only the search
-                // control detaches and animates into the top bar.
+                // Title/subtitle are part of the captured page, so they soften
+                // under the glass just like the rows do.
                 PlaylistTitleOverlay(
                     name = playlist.name,
                     sidePad = sidePad,
@@ -365,35 +390,49 @@ fun PlaylistDetailScreen(
                     subtitleTop = subtitleTop,
                     onSize = { subtitleSize = it },
                 )
-                PlaylistActionsOverlay(
-                    actionsTop = actionsTop,
-                    searchOpen = searchOpen,
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { searchQuery = it },
-                    onOpenSearch = { searchOpen = true },
-                    searchDockX = searchDockX,
-                    searchDockY = searchDockY,
-                    searchCapsuleWidth = searchCapsuleWidth,
-                    onPlayAll = onPlayAll,
-                    onShuffle = onShuffle,
-                    backdrop = backdrop,
-                )
+            }
 
-                // Back + menu. Transparent bar, so songs pass behind the buttons.
-                PlaylistTopBar(
-                    searchOpen = searchOpen,
-                    onCloseSearch = { searchOpen = false },
-                    topInset = topInset,
-                    sidePad = sidePad,
-                    onBack = onBack,
-                    onRename = onRename,
-                    onChangeCover = onChangeCover,
-                    onAddSongs = onAddSongs,
-                    onDelete = onDelete,
-                    backdrop = backdrop,
-                    modifier = Modifier.align(Alignment.TopStart),
+            // Real backdrop blur, full at the status bar and eased to zero
+            // 96dp below it. Drawn above the captured page, below the controls.
+            if (blurActive) {
+                PlaylistTopBlur(
+                    backdrop = pageBackdrop,
+                    morph = { blurMorph.value },
+                    height = topInset + 96.dp,
+                    tint = coverColor,
                 )
             }
+
+            // Controls stay sharp above the blur. Title/subtitle/shuffle scroll
+            // with the header; only the search control detaches into the top bar.
+            PlaylistActionsOverlay(
+                actionsTop = actionsTop,
+                searchOpen = searchOpen,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                onOpenSearch = { searchOpen = true },
+                searchDockX = searchDockX,
+                searchDockY = searchDockY,
+                searchCapsuleWidth = searchCapsuleWidth,
+                onPlayAll = onPlayAll,
+                onShuffle = onShuffle,
+                backdrop = pageBackdrop,
+            )
+
+            // Back + menu. Transparent bar, so songs pass behind the buttons.
+            PlaylistTopBar(
+                searchOpen = searchOpen,
+                onCloseSearch = { searchOpen = false },
+                topInset = topInset,
+                sidePad = sidePad,
+                onBack = onBack,
+                onRename = onRename,
+                onChangeCover = onChangeCover,
+                onAddSongs = onAddSongs,
+                onDelete = onDelete,
+                backdrop = pageBackdrop,
+                modifier = Modifier.align(Alignment.TopStart),
+            )
         }
     }
 }
@@ -422,6 +461,55 @@ private fun PlaylistPageBackground(
             enableBlur = enableBlur,
         )
     }
+}
+
+/**
+ * Mochy's top-bar blur, reduced to the one thing the playlist needs: a real
+ * backdrop blur of the page, strongest at the status bar and faded to zero by
+ * the bottom of the band. The DstOut gradient is what removes the hard edge.
+ *
+ * shortcut: one blur radius masked by the fade, not Mochy's variable-radius
+ * shader. Upgrade to stacked bands / AGSL if the fade ever reads as a ghosted
+ * double image rather than a radius ramp.
+ */
+@Composable
+private fun PlaylistTopBlur(
+    backdrop: LayerBackdrop,
+    morph: () -> Float,
+    height: Dp,
+    tint: () -> Color,
+) {
+    val density = LocalDensity.current
+    val maxBlurPx = with(density) { 22.dp.toPx() }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(height)
+            .graphicsLayer {
+                alpha = morph()
+                compositingStrategy = CompositingStrategy.Offscreen
+            }
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { RectangleShape },
+                effects = {
+                    vibrancy()
+                    colorControls(brightness = 0.02f, contrast = 1f, saturation = 1.3f)
+                    blur(maxBlurPx * morph())
+                },
+                onDrawSurface = {
+                    drawRect(tint().copy(alpha = 0.24f))
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.28f to Color.Transparent,
+                            1f to Color.White,
+                        ),
+                        blendMode = BlendMode.DstOut,
+                    )
+                },
+            ),
+    )
 }
 
 // ------------------------------------------------------------------ header + action buttons
