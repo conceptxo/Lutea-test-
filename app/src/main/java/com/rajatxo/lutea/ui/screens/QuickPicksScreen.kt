@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -249,7 +250,10 @@ fun QuickPicksScreen(
             onAddSongs = { showAddSongsDialog = true },
             // Shown before LuteaScaffold, so use system bars directly. Add bottom
             // room for the nav capsule + mini player this page now draws itself.
-            insets = WindowInsets.systemBars.add(WindowInsets(bottom = 96.dp)),
+            insets = WindowInsets(
+                top = with(LocalDensity.current) { WindowInsets.systemBars.getTop(this).toDp() },
+                bottom = with(LocalDensity.current) { WindowInsets.systemBars.getBottom(this).toDp() } + 96.dp,
+            ),
             activeTab = activeTab,
             onTabSelected = { tab ->
                 selectedPlaylist = null

@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -106,6 +107,7 @@ import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.foundation.LuteaTabCapsule
 import com.rajatxo.lutea.ui.foundation.fluidNavMetrics
+import com.rajatxo.lutea.ui.foundation.navBarWidthFor
 import com.rajatxo.lutea.ui.player.FullPlayer
 import com.rajatxo.lutea.ui.player.MiniPlayer
 import com.rajatxo.lutea.ui.util.LuteaTab
