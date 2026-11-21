@@ -42,6 +42,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -101,7 +102,13 @@ import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.domain.model.Song
+import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
+import com.rajatxo.lutea.ui.foundation.LuteaTabCapsule
+import com.rajatxo.lutea.ui.foundation.fluidNavMetrics
+import com.rajatxo.lutea.ui.player.FullPlayer
+import com.rajatxo.lutea.ui.player.MiniPlayer
+import com.rajatxo.lutea.ui.util.LuteaTab
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import java.time.Instant
 import java.time.ZoneId
@@ -145,6 +152,8 @@ private const val TITLE_OVERLAP_FRACTION = 0.14f  // big title starts this much 
 private val TopBarContentHeight = 56.dp
 private val ActionButtonSize = 44.dp
 private val PlaylistStatsHeight = 56.dp
+private val CustomOrderHeight = 36.dp
+private val PlayCapsulePadding = 44.dp
 
 /**
  * Playlist detail: cover art that rides up, zooms, dims, dissolves and blurs as the list
@@ -177,15 +186,27 @@ fun PlaylistDetailScreen(
     onCustomOrder: () -> Unit = {},
     songArt: (Song) -> Any? = { null },
     insets: WindowInsets = WindowInsets.systemBars,
+    activeTab: LuteaTab = LuteaTab.Library,
+    onTabSelected: (LuteaTab) -> Unit = {},
 ) {
     DetailLightSystemBarIcons()
-    BackHandler { onBack() }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    // Search mode is an overlay state: back closes it before leaving the playlist.
+    var playerVisible by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(false) }
+    // Back closes the topmost layer first: lyrics, player, search, then the page.
+    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen) { onBack() }
     BackHandler(enabled = searchOpen) { searchOpen = false }
+    BackHandler(enabled = showLyrics) { showLyrics = false }
+    BackHandler(enabled = playerVisible && !showLyrics) { playerVisible = false }
     LaunchedEffect(searchOpen) {
         if (!searchOpen) searchQuery = ""
+    }
+
+    val isPlaying by PlaybackConnection.isPlaying.collectAsState()
+    val onPlayPause = {
+        if (PlaybackConnection.currentSong.value == null) onPlayAll()
+        else PlaybackConnection.playPause()
     }
 
     val themeState = rememberCoverThemeColor(playlist.coverUri, fallbackSeed = playlist.id.toString())
@@ -245,10 +266,10 @@ fun PlaylistDetailScreen(
         // Title and shuffle stay in the header and scroll with it. Only search detaches
         // and animates into the top bar, so no title docking/scale/fade state is needed.
         val topBarContentPx = with(density) { TopBarContentHeight.toPx() }
-        val defaultTitleHeightPx = with(density) { 42.dp.toPx() }
-        val titleToStatsGapPx = with(density) { 6.dp.toPx() }
+        val defaultTitleHeightPx = with(density) { 40.dp.toPx() }
+        val titleToStatsGapPx = with(density) { 2.dp.toPx() }
         val statsHeightPx = with(density) { PlaylistStatsHeight.toPx() }
-        val actionsGapPx = with(density) { 20.dp.toPx() }
+        val actionsGapPx = with(density) { 10.dp.toPx() }
 
         var titleSize by remember { mutableStateOf(IntSize.Zero) }
         val titleHeightPx = if (titleSize.height > 0) {
@@ -422,7 +443,8 @@ fun PlaylistDetailScreen(
                 searchDockX = searchDockX,
                 searchDockY = searchDockY,
                 searchCapsuleWidth = searchCapsuleWidth,
-                onPlayAll = onPlayAll,
+                isPlaying = isPlaying,
+                onPlayPause = onPlayPause,
                 onShuffle = onShuffle,
                 onCustomOrder = onCustomOrder,
                 backdrop = pageBackdrop,
@@ -442,6 +464,60 @@ fun PlaylistDetailScreen(
                 backdrop = pageBackdrop,
                 modifier = Modifier.align(Alignment.TopStart),
             )
+
+            // Bottom chrome, same as the main app: nav capsule + mini player.
+            // The caller adds matching bottom insets so songs can scroll clear.
+            val navBottom = maxOf(bottomInset, 48.dp)
+            val navMetrics = fluidNavMetrics(
+                maxWidth = screenW,
+                maxHeight = screenH,
+                tabCount = LuteaTab.entries.size,
+                fontScale = density.fontScale,
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(navBottom + 112.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.55f to Color.Black.copy(alpha = 0.35f),
+                            1f to Color.Black,
+                        )
+                    ),
+            )
+            MiniPlayer(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = navBottom + 56.dp),
+                onExpand = { playerVisible = true },
+                backdrop = pageBackdrop,
+                navMatchedWidth = navMetrics.navBarWidthFor(LuteaTab.entries.size),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = navBottom),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LuteaTabCapsule(
+                    tabs = LuteaTab.entries.toList(),
+                    activeTab = activeTab,
+                    onTabSelected = onTabSelected,
+                    backdrop = pageBackdrop,
+                )
+            }
+            FullPlayer(
+                visible = playerVisible,
+                onClose = { playerVisible = false; showLyrics = false },
+                onLyricsClick = { showLyrics = true },
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (showLyrics) {
+                LyricsScreen(onClose = { showLyrics = false })
+            }
         }
     }
 }
@@ -599,8 +675,8 @@ private fun PlaylistHeaderSpacer(
     ) {
         DetailText(
             text = name,
-            size = 38.sp,
-            lineHeight = 42.sp,
+            size = 36.sp,
+            lineHeight = 40.sp,
             family = CalSansFamily,
             maxLines = 3,
             textAlign = TextAlign.Center,
@@ -608,12 +684,12 @@ private fun PlaylistHeaderSpacer(
                 .fillMaxWidth()
                 .graphicsLayer { alpha = 0f },
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(2.dp))
         Spacer(Modifier.height(PlaylistStatsHeight))
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(10.dp))
         Spacer(Modifier.height(ActionButtonSize))
-        Spacer(Modifier.height(12.dp))
-        Spacer(Modifier.height(ActionButtonSize))
+        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(CustomOrderHeight))
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -634,8 +710,8 @@ private fun PlaylistTitleOverlay(
     ) {
         DetailText(
             text = name,
-            size = 38.sp,
-            lineHeight = 42.sp,
+            size = 36.sp,
+            lineHeight = 40.sp,
             family = CalSansFamily,
             maxLines = 3,
             textAlign = TextAlign.Center,
@@ -710,7 +786,8 @@ private fun PlaylistActionsOverlay(
     searchDockX: Float,
     searchDockY: Float,
     searchCapsuleWidth: Dp,
-    onPlayAll: () -> Unit,
+    isPlaying: Boolean,
+    onPlayPause: () -> Unit,
     onShuffle: () -> Unit,
     onCustomOrder: () -> Unit,
     backdrop: LayerBackdrop?,
@@ -722,6 +799,7 @@ private fun PlaylistActionsOverlay(
     )
     val density = LocalDensity.current
     val gapPx = with(density) { 12.dp.roundToPx() }
+    val customGapPx = with(density) { 8.dp.roundToPx() }
     val restSizePx = with(density) { ActionButtonSize.roundToPx() }
 
     Layout(
@@ -729,18 +807,23 @@ private fun PlaylistActionsOverlay(
             DetailGlassCircleButton(
                 desc = "Shuffle playlist",
                 onClick = onShuffle,
+                white = true,
                 backdrop = backdrop,
             ) {
-                DetailShuffleGlyph(Color.White, Modifier.size(18.dp))
+                DetailShuffleGlyph(Color.Black, Modifier.size(18.dp))
             }
             DetailPill(
-                label = "Play",
+                label = if (isPlaying) "Pause" else "Play",
                 filled = true,
-                onClick = onPlayAll,
+                onClick = onPlayPause,
                 height = ActionButtonSize,
-                horizontalPadding = 26.dp,
+                horizontalPadding = PlayCapsulePadding,
             ) {
-                DetailPlayGlyph(Color.Black, Modifier.size(18.dp))
+                if (isPlaying) {
+                    DetailPauseGlyph(Color.Black, Modifier.size(18.dp))
+                } else {
+                    DetailPlayGlyph(Color.Black, Modifier.size(18.dp))
+                }
             }
             DetailSearchCapsule(
                 expanded = searchOpen,
@@ -749,13 +832,14 @@ private fun PlaylistActionsOverlay(
                 query = searchQuery,
                 onQueryChange = onSearchQueryChange,
                 onOpen = onOpenSearch,
+                white = true,
                 backdrop = backdrop,
             )
             DetailPill(
                 label = "Custom order",
                 filled = false,
                 onClick = onCustomOrder,
-                height = ActionButtonSize,
+                height = CustomOrderHeight,
                 horizontalPadding = 18.dp,
                 backdrop = backdrop,
             ) {
@@ -786,10 +870,10 @@ private fun PlaylistActionsOverlay(
             val searchY = restY + (searchDockY - restY) * p
             search.placeWithLayer(searchX.roundToInt(), searchY.roundToInt())
 
-            // Directly under the play disc, which is already screen-centred.
+            // Directly under the play capsule, which is already screen-centred.
             customOrder.placeWithLayer(
                 x = ((constraints.maxWidth - customOrder.width) / 2f).roundToInt(),
-                y = (restY + restSizePx + gapPx).roundToInt(),
+                y = (restY + restSizePx + customGapPx).roundToInt(),
             )
         }
     }
@@ -800,14 +884,20 @@ private fun DetailGlassCircleButton(
     desc: String,
     onClick: () -> Unit,
     size: Dp = ActionButtonSize,
+    white: Boolean = false,
     backdrop: LayerBackdrop? = null,
     icon: @Composable () -> Unit,
 ) {
+    val surface = if (white) {
+        Modifier.background(Color.White, CircleShape)
+    } else {
+        Modifier.detailGlass(CircleShape, backdrop = backdrop)
+    }
     Box(
         modifier = Modifier
             .size(size)
             .detailPressable(onClick = onClick)
-            .detailGlass(CircleShape, backdrop = backdrop)
+            .then(surface)
             .semantics { contentDescription = desc },
         contentAlignment = Alignment.Center,
     ) {
@@ -823,6 +913,7 @@ private fun DetailSearchCapsule(
     query: String,
     onQueryChange: (String) -> Unit,
     onOpen: () -> Unit,
+    white: Boolean = false,
     backdrop: LayerBackdrop?,
 ) {
     val density = LocalDensity.current
@@ -842,6 +933,12 @@ private fun DetailSearchCapsule(
     } else {
         Modifier.detailPressable(onClick = onOpen)
     }
+    val ink = if (white) Color.Black else Color.White
+    val surface = if (white) {
+        Modifier.background(Color.White, CircleShape)
+    } else {
+        Modifier.detailGlass(CircleShape, backdrop = backdrop)
+    }
 
     LaunchedEffect(expanded) {
         if (expanded) {
@@ -858,12 +955,12 @@ private fun DetailSearchCapsule(
             .width(currentWidth)
             .height(ActionButtonSize)
             .then(pressModifier)
-            .detailGlass(CircleShape, backdrop = backdrop)
+            .then(surface)
             .semantics { contentDescription = "Search playlist" },
         contentAlignment = Alignment.Center,
     ) {
         DetailSearchGlyph(
-            color = Color.White.copy(alpha = 0.9f),
+            color = ink.copy(alpha = 0.9f),
             modifier = Modifier
                 .size(18.dp)
                 .graphicsLayer {
@@ -876,11 +973,11 @@ private fun DetailSearchCapsule(
                 onValueChange = onQueryChange,
                 singleLine = true,
                 textStyle = TextStyle(
-                    color = Color.White,
+                    color = ink,
                     fontSize = 14.sp,
                     fontFamily = CalSansFamily,
                 ),
-                cursorBrush = SolidColor(Color.White),
+                cursorBrush = SolidColor(ink),
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 40.dp, end = 16.dp)
@@ -898,7 +995,7 @@ private fun DetailSearchCapsule(
                             DetailText(
                                 text = "Search songs",
                                 size = 14.sp,
-                                color = Color.White.copy(alpha = 0.5f),
+                                color = ink.copy(alpha = 0.5f),
                             )
                         }
                         innerTextField()
@@ -1364,6 +1461,27 @@ private fun DetailPlayGlyph(color: Color, modifier: Modifier = Modifier) {
         drawPath(path, color)
         // round the corners a little
         drawPath(path, color, style = Stroke(width = w * 0.12f, join = StrokeJoin.Round))
+    }
+}
+
+@Composable
+private fun DetailPauseGlyph(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val barW = size.width * 0.22f
+        val barH = size.height * 0.72f
+        val y = (size.height - barH) / 2f
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(size.width * 0.22f, y),
+            size = Size(barW, barH),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW * 0.35f, barW * 0.35f),
+        )
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(size.width * 0.56f, y),
+            size = Size(barW, barH),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW * 0.35f, barW * 0.35f),
+        )
     }
 }
 

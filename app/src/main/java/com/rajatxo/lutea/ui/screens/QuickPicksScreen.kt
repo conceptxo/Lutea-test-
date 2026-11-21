@@ -247,9 +247,14 @@ fun QuickPicksScreen(
                 coverPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onAddSongs = { showAddSongsDialog = true },
-            // Use system bars directly — PlaylistDetailScreen is shown before LuteaScaffold,
-            // so LocalLuteaWindowInsets isn't provided yet (that was the crash cause).
-            insets = WindowInsets.systemBars,
+            // Shown before LuteaScaffold, so use system bars directly. Add bottom
+            // room for the nav capsule + mini player this page now draws itself.
+            insets = WindowInsets.systemBars.add(WindowInsets(bottom = 96.dp)),
+            activeTab = activeTab,
+            onTabSelected = { tab ->
+                selectedPlaylist = null
+                activeTab = tab
+            },
         )
         return
     }
