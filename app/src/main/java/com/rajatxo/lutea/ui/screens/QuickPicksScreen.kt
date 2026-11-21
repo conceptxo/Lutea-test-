@@ -248,11 +248,14 @@ fun QuickPicksScreen(
                 coverPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onAddSongs = { showAddSongsDialog = true },
-            // Shown before LuteaScaffold, so use system bars directly. Add bottom
-            // room for the nav capsule + mini player this page now draws itself.
+            // Shown before LuteaScaffold, so use system bars directly. The
+            // playlist screen now derives its own nav placement from the real
+            // navigation-bar inset, so no extra bottom padding is needed here —
+            // the LazyColumn's content padding adds room for the nav + mini
+            // player internally.
             insets = WindowInsets(
                 top = with(LocalDensity.current) { WindowInsets.systemBars.getTop(this).toDp() },
-                bottom = with(LocalDensity.current) { WindowInsets.systemBars.getBottom(this).toDp() } + 96.dp,
+                bottom = with(LocalDensity.current) { WindowInsets.systemBars.getBottom(this).toDp() },
             ),
             activeTab = activeTab,
             onTabSelected = { tab ->

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -153,9 +154,15 @@ private const val COVER_HEIGHT_FRACTION = 0.60f   // square cover side, capped a
 private const val TITLE_OVERLAP_FRACTION = 0.14f  // big title starts this much inside the cover's fade zone
 private val TopBarContentHeight = 56.dp
 private val ActionButtonSize = 44.dp
+private val BackButtonSize = 44.dp   // matches the menu + search circles so all three read equal
 private val PlaylistStatsHeight = 56.dp
-private val CustomOrderHeight = 36.dp
-private val PlayCapsulePadding = 44.dp
+private val CustomOrderHeight = 32.dp                 // thinner custom-order capsule
+private val PlayCapsulePadding = 58.dp                // wider play/pause capsule
+private val TitleToStatsGapDp = 0.dp                  // title sits flush against the stats row
+private val StatsToActionsGapDp = 6.dp                // tighter gap between stats and the 3 buttons
+private val ActionsToCustomOrderGapDp = 4.dp          // tighter gap between buttons and custom order
+private val TitleFontSize = 32.sp                     // slightly smaller playlist name
+private val TitleLineHeight = 36.sp
 
 /**
  * Playlist detail: cover art that rides up, zooms, dims, dissolves and blurs as the list
@@ -233,6 +240,15 @@ fun PlaylistDetailScreen(
         val topInset = with(density) { insets.getTop(this).toDp() }
         val topInsetPx = with(density) { topInset.toPx() }
         val bottomInset = with(density) { insets.getBottom(this).toDp() }
+        // The caller may pad `insets.bottom` with extra room so the song list
+        // can scroll clear of the nav + mini player. But the NAV itself must
+        // sit at the real system bottom (same as the main app), not 96dp up.
+        // So we re-derive the true navigation-bar inset from the system bars
+        // here, and use [bottomInset] only for the LazyColumn's content padding.
+        val systemNavBottom = with(density) {
+            WindowInsets.navigationBars.getBottom(this).toDp()
+        }
+        val navBottom = maxOf(systemNavBottom, 48.dp)
 
         // 0f..1f as the FIRST SONG ROW reaches the top of the screen.
         //
@@ -269,9 +285,9 @@ fun PlaylistDetailScreen(
         // and animates into the top bar, so no title docking/scale/fade state is needed.
         val topBarContentPx = with(density) { TopBarContentHeight.toPx() }
         val defaultTitleHeightPx = with(density) { 40.dp.toPx() }
-        val titleToStatsGapPx = with(density) { 2.dp.toPx() }
+        val titleToStatsGapPx = with(density) { TitleToStatsGapDp.toPx() }
         val statsHeightPx = with(density) { PlaylistStatsHeight.toPx() }
-        val actionsGapPx = with(density) { 10.dp.toPx() }
+        val actionsGapPx = with(density) { StatsToActionsGapDp.toPx() }
 
         var titleSize by remember { mutableStateOf(IntSize.Zero) }
         val titleHeightPx = if (titleSize.height > 0) {
@@ -298,8 +314,8 @@ fun PlaylistDetailScreen(
             statsTop() + statsHeightPx + actionsGapPx
         }
 
-        // Where the search capsule lands: between the 40dp back disc and the menu.
-        val searchDockX = with(density) { (sidePad + 48.dp).toPx() }
+        // Where the search capsule lands: just past the back button (44dp) + an 8dp gap.
+        val searchDockX = with(density) { (sidePad + BackButtonSize + 8.dp).toPx() }
         val searchDockY = topInsetPx +
             (topBarContentPx - with(density) { ActionButtonSize.toPx() }) / 2f
         val searchCapsuleWidth =
@@ -370,12 +386,14 @@ fun PlaylistDetailScreen(
 
                 // Top padding puts the header at the bottom of the cover's fade zone,
                 // so the list "rides over" the blended background.
+                // Bottom padding clears the nav capsule (56dp) + mini player
+                // (56dp) + a little breathing room so the last song scrolls clear.
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         top = coverHeight - titleOverlap,
-                        bottom = bottomInset + screenH * 0.04f,
+                        bottom = navBottom + 112.dp + screenH * 0.04f,
                     ),
                 ) {
                     item(key = "header") {
@@ -469,7 +487,6 @@ fun PlaylistDetailScreen(
 
             // Bottom chrome, same as the main app: nav capsule + mini player.
             // The caller adds matching bottom insets so songs can scroll clear.
-            val navBottom = maxOf(bottomInset, 48.dp)
             val navMetrics = fluidNavMetrics(
                 maxWidth = screenW,
                 maxHeight = screenH,
@@ -712,8 +729,8 @@ private fun PlaylistTitleOverlay(
     ) {
         DetailText(
             text = name,
-            size = 36.sp,
-            lineHeight = 40.sp,
+            size = TitleFontSize,
+            lineHeight = TitleLineHeight,
             family = CalSansFamily,
             maxLines = 3,
             textAlign = TextAlign.Center,
@@ -801,7 +818,7 @@ private fun PlaylistActionsOverlay(
     )
     val density = LocalDensity.current
     val gapPx = with(density) { 12.dp.roundToPx() }
-    val customGapPx = with(density) { 8.dp.roundToPx() }
+    val customGapPx = with(density) { ActionsToCustomOrderGapDp.roundToPx() }
     val restSizePx = with(density) { ActionButtonSize.roundToPx() }
 
     Layout(
@@ -822,9 +839,9 @@ private fun PlaylistActionsOverlay(
                 horizontalPadding = PlayCapsulePadding,
             ) {
                 if (isPlaying) {
-                    DetailPauseGlyph(Color.Black, Modifier.size(18.dp))
+                    DetailPauseGlyph(Color.Black, Modifier.size(22.dp))
                 } else {
-                    DetailPlayGlyph(Color.Black, Modifier.size(18.dp))
+                    DetailPlayGlyph(Color.Black, Modifier.size(22.dp))
                 }
             }
             DetailSearchCapsule(
@@ -1320,7 +1337,7 @@ private fun DetailBackButton(
 ) {
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(BackButtonSize)
             .detailPressable(onClick = onBack)
             .detailGlass(CircleShape, backdrop = backdrop)
             .semantics { contentDescription = "Back" },
