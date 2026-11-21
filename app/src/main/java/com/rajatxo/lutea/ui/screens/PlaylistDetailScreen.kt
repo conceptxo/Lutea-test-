@@ -103,6 +103,10 @@ import com.rajatxo.lutea.data.model.Playlist
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -139,6 +143,8 @@ import kotlin.math.roundToInt
 private const val COVER_HEIGHT_FRACTION = 0.60f   // cover = 60% of the real container height
 private const val TITLE_OVERLAP_FRACTION = 0.14f  // big title starts this much inside the cover's fade zone
 private val TopBarContentHeight = 56.dp
+private val ActionButtonSize = 44.dp
+private val PlaylistStatsHeight = 56.dp
 
 /**
  * Playlist detail: cover art that rides up, zooms, dims, dissolves and blurs as the list
@@ -168,6 +174,7 @@ fun PlaylistDetailScreen(
     onChangeCover: () -> Unit = {},
     onAddSongs: () -> Unit = {},
     onDelete: () -> Unit = {},
+    onCustomOrder: () -> Unit = {},
     songArt: (Song) -> Any? = { null },
     insets: WindowInsets = WindowInsets.systemBars,
 ) {
@@ -237,21 +244,15 @@ fun PlaylistDetailScreen(
         // and animates into the top bar, so no title docking/scale/fade state is needed.
         val topBarContentPx = with(density) { TopBarContentHeight.toPx() }
         val defaultTitleHeightPx = with(density) { 42.dp.toPx() }
-        val defaultSubtitleHeightPx = with(density) { 17.dp.toPx() }
-        val subtitleGapPx = with(density) { 6.dp.toPx() }
+        val titleToStatsGapPx = with(density) { 6.dp.toPx() }
+        val statsHeightPx = with(density) { PlaylistStatsHeight.toPx() }
         val actionsGapPx = with(density) { 20.dp.toPx() }
 
         var titleSize by remember { mutableStateOf(IntSize.Zero) }
-        var subtitleSize by remember { mutableStateOf(IntSize.Zero) }
         val titleHeightPx = if (titleSize.height > 0) {
             titleSize.height.toFloat()
         } else {
             defaultTitleHeightPx
-        }
-        val subtitleHeightPx = if (subtitleSize.height > 0) {
-            subtitleSize.height.toFloat()
-        } else {
-            defaultSubtitleHeightPx
         }
 
         val screenHPx = with(density) { screenH.toPx() }
@@ -267,20 +268,22 @@ fun PlaylistDetailScreen(
             }
         }
         val headerTop: () -> Float = { rawTitleTop.value }
-        val subtitleTop: () -> Float = { headerTop() + titleHeightPx + subtitleGapPx }
+        val statsTop: () -> Float = { headerTop() + titleHeightPx + titleToStatsGapPx }
         val actionsTop: () -> Float = {
-            subtitleTop() + subtitleHeightPx + actionsGapPx
+            statsTop() + statsHeightPx + actionsGapPx
         }
 
         // Where the search capsule lands: between the 40dp back disc and the menu.
         val searchDockX = with(density) { (sidePad + 48.dp).toPx() }
         val searchDockY = topInsetPx +
-            (topBarContentPx - with(density) { 40.dp.toPx() }) / 2f
+            (topBarContentPx - with(density) { ActionButtonSize.toPx() }) / 2f
         val searchCapsuleWidth =
             (screenW - sidePad * 2f - 104.dp).coerceAtLeast(120.dp)
 
         val totalMs = remember(songs) { songs.sumOf { detailDurationMs(it.duration) } }
-        val subtitle = remember(songs, totalMs) { detailSubtitle(songs.size, totalMs) }
+        val statsSongCount = songs.size.toString()
+        val statsDuration = remember(totalMs) { detailStatsDuration(totalMs) }
+        val statsCreated = remember(playlist.createdAtMs) { detailCreatedDate(playlist.createdAtMs) }
         val visibleSongs = remember(songs, searchOpen, searchQuery) {
             val q = searchQuery.trim()
             if (searchOpen && q.isNotEmpty()) {
@@ -353,7 +356,6 @@ fun PlaylistDetailScreen(
                     item(key = "header") {
                         PlaylistHeaderSpacer(
                             name = playlist.name,
-                            subtitle = subtitle,
                             sidePad = sidePad,
                         )
                     }
@@ -378,7 +380,7 @@ fun PlaylistDetailScreen(
                     }
                 }
 
-                // Title/subtitle are part of the captured page, so they soften
+                // Title and stats are part of the captured page, so they soften
                 // under the glass just like the rows do.
                 PlaylistTitleOverlay(
                     name = playlist.name,
@@ -386,11 +388,13 @@ fun PlaylistDetailScreen(
                     headerTop = headerTop,
                     onSize = { titleSize = it },
                 )
-                PlaylistSubtitleOverlay(
-                    subtitle = subtitle,
+                PlaylistStatsOverlay(
+                    songCount = statsSongCount,
+                    duration = statsDuration,
+                    dateDay = statsCreated.first,
+                    dateMonth = statsCreated.second,
                     sidePad = sidePad,
-                    subtitleTop = subtitleTop,
-                    onSize = { subtitleSize = it },
+                    statsTop = statsTop,
                 )
             }
 
@@ -405,7 +409,7 @@ fun PlaylistDetailScreen(
                 )
             }
 
-            // Controls stay sharp above the blur. Title/subtitle/shuffle scroll
+            // Controls stay sharp above the blur. Title/stats/shuffle scroll
             // with the header; only the search control detaches into the top bar.
             PlaylistActionsOverlay(
                 actionsTop = actionsTop,
@@ -418,6 +422,7 @@ fun PlaylistDetailScreen(
                 searchCapsuleWidth = searchCapsuleWidth,
                 onPlayAll = onPlayAll,
                 onShuffle = onShuffle,
+                onCustomOrder = onCustomOrder,
                 backdrop = pageBackdrop,
             )
 
@@ -582,7 +587,6 @@ private fun PlaylistBlurBand(
 @Composable
 private fun PlaylistHeaderSpacer(
     name: String,
-    subtitle: String,
     sidePad: Dp,
 ) {
     Column(
@@ -603,18 +607,12 @@ private fun PlaylistHeaderSpacer(
                 .graphicsLayer { alpha = 0f },
         )
         Spacer(Modifier.height(6.dp))
-        DetailText(
-            text = subtitle,
-            size = 14.sp,
-            color = Color.White.copy(alpha = 0.62f),
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .graphicsLayer { alpha = 0f },
-        )
+        Spacer(Modifier.height(PlaylistStatsHeight))
         Spacer(Modifier.height(20.dp))
-        Spacer(Modifier.height(44.dp))
+        Spacer(Modifier.height(ActionButtonSize))
         Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(ActionButtonSize))
+        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -645,28 +643,59 @@ private fun PlaylistTitleOverlay(
 }
 
 @Composable
-private fun PlaylistSubtitleOverlay(
-    subtitle: String,
+private fun PlaylistStatsOverlay(
+    songCount: String,
+    duration: String,
+    dateDay: String,
+    dateMonth: String,
     sidePad: Dp,
-    subtitleTop: () -> Float,
-    onSize: (IntSize) -> Unit,
+    statsTop: () -> Float,
 ) {
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .offset { IntOffset(0, subtitleTop().roundToInt()) }
-            .padding(horizontal = sidePad),
+            .offset { IntOffset(0, statsTop().roundToInt()) }
+            .padding(horizontal = sidePad)
+            .height(PlaylistStatsHeight),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        DetailStat(value = songCount, label = "Songs", modifier = Modifier.weight(1f))
+        DetailStatDivider()
+        DetailStat(value = duration, label = "Duration", modifier = Modifier.weight(1f))
+        DetailStatDivider()
+        DetailStat(value = dateDay, label = dateMonth, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun DetailStat(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        DetailText(text = value, size = 22.sp, color = Color.White)
+        Spacer(Modifier.height(4.dp))
         DetailText(
-            text = subtitle,
-            size = 14.sp,
-            color = Color.White.copy(alpha = 0.62f),
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .onSizeChanged(onSize),
+            text = label,
+            size = 11.sp,
+            color = Color.White.copy(alpha = 0.55f),
         )
     }
+}
+
+@Composable
+private fun DetailStatDivider() {
+    Box(
+        Modifier
+            .width(1.dp)
+            .height(28.dp)
+            .background(Color.White.copy(alpha = 0.16f)),
+    )
 }
 
 @Composable
@@ -681,6 +710,7 @@ private fun PlaylistActionsOverlay(
     searchCapsuleWidth: Dp,
     onPlayAll: () -> Unit,
     onShuffle: () -> Unit,
+    onCustomOrder: () -> Unit,
     backdrop: LayerBackdrop?,
 ) {
     val searchProgress by animateFloatAsState(
@@ -690,7 +720,7 @@ private fun PlaylistActionsOverlay(
     )
     val density = LocalDensity.current
     val gapPx = with(density) { 12.dp.roundToPx() }
-    val restSizePx = with(density) { 44.dp.roundToPx() }
+    val restSizePx = with(density) { ActionButtonSize.roundToPx() }
 
     Layout(
         content = {
@@ -705,7 +735,7 @@ private fun PlaylistActionsOverlay(
                 label = "Play",
                 filled = true,
                 onClick = onPlayAll,
-                height = 44.dp,
+                height = ActionButtonSize,
                 horizontalPadding = 26.dp,
             ) {
                 DetailPlayGlyph(Color.Black, Modifier.size(18.dp))
@@ -719,12 +749,23 @@ private fun PlaylistActionsOverlay(
                 onOpen = onOpenSearch,
                 backdrop = backdrop,
             )
+            DetailPill(
+                label = "Custom order",
+                filled = false,
+                onClick = onCustomOrder,
+                height = ActionButtonSize,
+                horizontalPadding = 18.dp,
+                backdrop = backdrop,
+            ) {
+                DetailReorderGlyph(Color.White, Modifier.size(16.dp))
+            }
         },
         modifier = Modifier.fillMaxSize(),
     ) { measurables, constraints ->
         val shuffle = measurables[0].measure(Constraints())
         val play = measurables[1].measure(Constraints())
         val search = measurables[2].measure(Constraints())
+        val customOrder = measurables[3].measure(Constraints())
         val total = shuffle.width + gapPx + play.width + gapPx + restSizePx
         val startX = ((constraints.maxWidth - total) / 2).coerceAtLeast(0)
         val shuffleRestX = startX
@@ -742,6 +783,12 @@ private fun PlaylistActionsOverlay(
             val searchX = searchRestX + (searchDockX - searchRestX) * p
             val searchY = restY + (searchDockY - restY) * p
             search.placeWithLayer(searchX.roundToInt(), searchY.roundToInt())
+
+            // Directly under the play disc, which is already screen-centred.
+            customOrder.placeWithLayer(
+                x = ((constraints.maxWidth - customOrder.width) / 2f).roundToInt(),
+                y = (restY + restSizePx + gapPx).roundToInt(),
+            )
         }
     }
 }
@@ -750,7 +797,7 @@ private fun PlaylistActionsOverlay(
 private fun DetailGlassCircleButton(
     desc: String,
     onClick: () -> Unit,
-    size: Dp = 44.dp,
+    size: Dp = ActionButtonSize,
     backdrop: LayerBackdrop? = null,
     icon: @Composable () -> Unit,
 ) {
@@ -780,11 +827,10 @@ private fun DetailSearchCapsule(
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val interaction = remember { MutableInteractionSource() }
-    val currentWidth = 44.dp + (width - 44.dp) * progress
-    val currentHeight = 44.dp + (40.dp - 44.dp) * progress
+    val currentWidth = ActionButtonSize + (width - ActionButtonSize) * progress
     // Keep the glyph at the left of the growing capsule instead of letting the
     // expanding centre drag it across the text field.
-    val iconShiftDp = 22.dp - currentWidth * 0.5f
+    val iconShiftDp = ActionButtonSize * 0.5f - currentWidth * 0.5f
     val pressModifier = if (expanded) {
         Modifier.clickable(
             interactionSource = interaction,
@@ -808,7 +854,7 @@ private fun DetailSearchCapsule(
     Box(
         modifier = Modifier
             .width(currentWidth)
-            .height(currentHeight)
+            .height(ActionButtonSize)
             .then(pressModifier)
             .detailGlass(CircleShape, backdrop = backdrop)
             .semantics { contentDescription = "Search playlist" },
@@ -867,15 +913,16 @@ private fun DetailPill(
     filled: Boolean,
     onClick: () -> Unit,
     enabled: Boolean = true,
-    height: Dp = 44.dp,
+    height: Dp = ActionButtonSize,
     horizontalPadding: Dp = 26.dp,
+    backdrop: LayerBackdrop? = null,
     icon: @Composable () -> Unit,
 ) {
     val fg = if (filled) Color.Black else Color.White
     val surface = if (filled) {
         Modifier.background(Color.White)
     } else {
-        Modifier.detailGlass(CircleShape)
+        Modifier.detailGlass(CircleShape, backdrop = backdrop)
     }
     Row(
         modifier = Modifier
@@ -973,7 +1020,7 @@ private fun DetailMoreMenu(
     Box {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(ActionButtonSize)
                 .detailPressable {
                     if (searchOpen) onCloseSearch() else open = true
                 }
@@ -1006,7 +1053,7 @@ private fun DetailMoreMenu(
         if (open && !searchOpen) {
             Popup(
                 alignment = Alignment.TopEnd,
-                offset = IntOffset(0, with(density) { 52.dp.roundToPx() }),
+                offset = IntOffset(0, with(density) { 48.dp.roundToPx() }),
                 onDismissRequest = { open = false },
                 properties = PopupProperties(focusable = true),
             ) {
@@ -1285,14 +1332,18 @@ private fun detailClock(ms: Long): String {
     }
 }
 
-private fun detailSubtitle(count: Int, totalMs: Long): String {
-    if (count == 0) return "No songs yet"
-    val totalMin = totalMs / 60_000L
+private fun detailStatsDuration(totalMs: Long): String {
+    val totalMin = (totalMs / 60_000L).coerceAtLeast(0L)
     val hours = totalMin / 60L
     val mins = totalMin % 60L
-    val length = if (hours > 0L) "$hours hr $mins min" else "$mins min"
-    val noun = if (count == 1) "song" else "songs"
-    return "$count $noun \u00B7 $length"
+    return if (hours > 0L) "${hours}h ${mins}m" else "${mins}m"
+}
+
+private fun detailCreatedDate(ms: Long): Pair<String, String> {
+    if (ms <= 0L) return "\u2014" to "Created"
+    val date = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDate()
+    val month = date.format(DateTimeFormatter.ofPattern("MMMM", Locale.getDefault()))
+    return date.dayOfMonth.toString() to month
 }
 
 // ---- glyphs, drawn with Canvas so no icon library is needed ----
@@ -1344,6 +1395,20 @@ private fun DetailShuffleGlyph(color: Color, modifier: Modifier = Modifier) {
             color,
             style = Stroke(width = w * 0.09f, cap = StrokeCap.Round, join = StrokeJoin.Round),
         )
+    }
+}
+
+@Composable
+private fun DetailReorderGlyph(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val r = size.minDimension * 0.07f
+        val xs = floatArrayOf(size.width * 0.34f, size.width * 0.66f)
+        val ys = floatArrayOf(size.height * 0.24f, size.height * 0.50f, size.height * 0.76f)
+        for (x in xs) {
+            for (y in ys) {
+                drawCircle(color, radius = r, center = Offset(x, y))
+            }
+        }
     }
 }
 
