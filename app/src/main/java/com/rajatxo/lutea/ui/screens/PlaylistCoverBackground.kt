@@ -4,8 +4,8 @@ import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -72,7 +72,9 @@ internal fun luteaSmoothstep(from: Float, to: Float, x: Float): Float {
 }
 
 /**
- * The cover image at the top of the playlist screen.
+ * The cover image at the top of the playlist screen — always a 1:1 square. A
+ * gallery image is shown at its real square ratio; non-square art is centre
+ * cropped to square rather than zoomed to fill a tall backdrop.
  *
  * This mirrors Mochy's [ScrollAwayCover] for the playlist backdrop: the cover rides up, zooms,
  * dims, dissolves from the bottom, fades out, and softens from sharp to a 30px blur as the list
@@ -121,7 +123,7 @@ fun PlaylistCoverBackground(
 
     Box(
         modifier = modifier
-            .fillMaxWidth()
+            .width(coverHeight)
             .height(coverHeight)
             .graphicsLayer {
                 val p = scrollProgress().coerceIn(0f, 1f)

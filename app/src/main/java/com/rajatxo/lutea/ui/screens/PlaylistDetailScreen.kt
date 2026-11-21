@@ -140,7 +140,7 @@ import kotlin.math.roundToInt
 
 // ------------------------------------------------------------------ tunables
 
-private const val COVER_HEIGHT_FRACTION = 0.60f   // cover = 60% of the real container height
+private const val COVER_HEIGHT_FRACTION = 0.60f   // square cover side, capped at 60% of height
 private const val TITLE_OVERLAP_FRACTION = 0.14f  // big title starts this much inside the cover's fade zone
 private val TopBarContentHeight = 56.dp
 private val ActionButtonSize = 44.dp
@@ -197,7 +197,9 @@ fun PlaylistDetailScreen(
     ) {
         val screenW = maxWidth
         val screenH = maxHeight
-        val coverHeight = screenH * COVER_HEIGHT_FRACTION
+        // Playlist covers are always shown 1:1. Use the full width on a phone,
+        // but never taller than 60% of the screen (landscape / large displays).
+        val coverHeight = minOf(screenW, screenH * COVER_HEIGHT_FRACTION)
         val coverHeightPx = with(density) { coverHeight.toPx() }.coerceAtLeast(1f)
         val titleOverlap = screenH * TITLE_OVERLAP_FRACTION
         val titleOverlapPx = with(density) { titleOverlap.toPx() }
@@ -463,7 +465,7 @@ private fun PlaylistPageBackground(
             backgroundColor = backgroundColor,
             coverHeight = coverHeight,
             scrollProgress = scrollProgress,
-            modifier = Modifier.align(Alignment.TopStart),
+            modifier = Modifier.align(Alignment.TopCenter),
             placeholderSeed = placeholderSeed,
             enableBlur = enableBlur,
         )
