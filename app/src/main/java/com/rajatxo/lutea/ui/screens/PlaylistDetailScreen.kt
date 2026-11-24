@@ -362,9 +362,10 @@ fun PlaylistDetailScreen(
 
         // Mochy's playlist bar frosts once the header is more than halfway gone.
         // Read progress through a derived boolean so scrolling only recomposes
-        // at the threshold, not on every frame.
-        val blurVisible by remember(progress) {
-            derivedStateOf { progress.value > 0.55f }
+        // at the threshold, not on every frame. No frost while search is open,
+        // so the docked search field stays sharp and readable.
+        val blurVisible by remember(progress, searchOpen) {
+            derivedStateOf { progress.value > 0.55f && !searchOpen }
         }
         val blurMorph = animateFloatAsState(
             targetValue = if (blurVisible) 1f else 0f,
