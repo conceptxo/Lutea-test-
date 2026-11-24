@@ -151,10 +151,19 @@ fun QuickPicksScreen(
 
     selectedPlaylist?.let { playlist ->
         var songs by remember(playlist) { mutableStateOf<List<Song>>(emptyList()) }
-        // Key on id + songIds so rename / cover change don't trigger a full MediaStore re-scan.
+        // Re-scan when the playlist's song set changes. Also re-apply when an
+        // edit override changes (cover / title / album) so the list reflects the
+        // user's edits without a full MediaStore re-scan.
+        val editOverrides by com.rajatxo.lutea.data.store.SongEditStore.overrides.collectAsState()
         LaunchedEffect(playlist.id, playlist.songIds) {
             val allSongs = withContext(Dispatchers.IO) { MusicScanner.scanMusic(context) }
             songs = allSongs.filter { it.id in playlist.songIds }
+                .map { com.rajatxo.lutea.data.store.SongEditStore.applyTo(it) }
+        }
+        // Re-map overrides onto the cached list whenever an override changes
+        // (e.g. the user just saved a new cover in the editor) without rescanning.
+        val displaySongs = remember(songs, editOverrides) {
+            songs.map { com.rajatxo.lutea.data.store.SongEditStore.applyTo(it) }
         }
 
         // ── Rename dialog ──
@@ -212,17 +221,21 @@ fun QuickPicksScreen(
 
         PlaylistDetailScreen(
             playlist = playlist,
-            songs = songs,
+            songs = displaySongs,
             onBack = { selectedPlaylist = null },
             onPlayAll = {
-                songs.firstOrNull()?.let { PlaybackConnection.playSong(it, songs) }
+                displaySongs.firstOrNull()?.let { PlaybackConnection.playSong(it, displaySongs) }
             },
             onShuffle = {
-                val shuffled = songs.shuffled()
+                val shuffled = displaySongs.shuffled()
                 shuffled.firstOrNull()?.let { PlaybackConnection.playSong(it, shuffled) }
             },
-            onSongClick = { _, song -> PlaybackConnection.playSong(song, songs) },
-            songArt = { it.albumArtUri },
+            onSongClick = { _, song -> PlaybackConnection.playSong(song, displaySongs) },
+            // Show the edited cover if one was set in the song editor, else the
+            // song's own album art.
+            songArt = { song ->
+                com.rajatxo.lutea.data.store.SongEditStore.coverUriFor(song)?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() }
+            },
             onRename = {
                 renameValue = playlist.name  // pre-fill with current name
                 showRenameDialog = true

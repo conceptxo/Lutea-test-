@@ -215,11 +215,29 @@ fun PlaylistDetailScreen(
     // Custom-order (sort) menu + its current mode.
     var customOrderOpen by remember { mutableStateOf(false) }
     var sortMode by remember(playlist.id) { mutableStateOf(PlaylistSortMode.POSITION) }
+    // Ascending/descending toggle for the current sort. Most-played-first means
+    // descending for listening-time; A→Z means ascending for title. The toggle
+    // just flips whichever order the active mode produced.
+    var sortDescending by remember { mutableStateOf(false) }
     // Per-song three-dot menu + which song it targets.
     var songMenuSong by remember { mutableStateOf<Song?>(null) }
     // Per-song editor (opened from the song menu's "Edit" option).
     var editingSong by remember { mutableStateOf<Song?>(null) }
     val favourites by FavouriteStore.favourites.collectAsState()
+
+    // Glass-capsule notification for remove-from-playlist / favourite, with an
+    // undo action. `undoableMessage` is what the capsule shows; `undoAction`
+    // runs when Undo is tapped (restores the removed song or unfavourites).
+    var undoableMessage by remember { mutableStateOf<String?>(null) }
+    var undoAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // Auto-dismiss the capsule after a short delay.
+    LaunchedEffect(undoableMessage) {
+        if (undoableMessage != null) {
+            kotlinx.coroutines.delay(3200)
+            undoableMessage = null
+            undoAction = null
+        }
+    }
     // Back closes the topmost layer first: lyrics, player, editor, song menu,
     // custom order, playlist menu, search, then the page.
     BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen && !menuOpen && !customOrderOpen && songMenuSong == null && editingSong == null) { onBack() }
@@ -420,24 +438,28 @@ fun PlaylistDetailScreen(
         // POSITION keeps the playlist's stored order; the rest re-derive a
         // display-only order (the underlying playlist order is untouched unless
         // the user picks POSITION after a manual reorder, which persists).
-        val visibleSongs = remember(songs, sortMode) {
-            val indexed = songs.withIndex().toList()
-            when (sortMode) {
-                PlaylistSortMode.TITLE -> indexed.sortedBy { it.value.title.lowercase() }
-                PlaylistSortMode.ARTIST -> indexed.sortedBy { it.value.artist.lowercase() }
-                PlaylistSortMode.ALBUM -> indexed.sortedBy { it.value.album.lowercase() }
-                PlaylistSortMode.ARTIST_ALBUM -> indexed
-                    .sortedWith(compareBy({ it.value.artist.lowercase() }, { it.value.album.lowercase() }))
-                PlaylistSortMode.ALBUM_YEAR -> indexed.sortedBy { it.value.album }
-                PlaylistSortMode.DATE_ADDED -> indexed.sortedByDescending { it.value.dateAdded }
-                PlaylistSortMode.DURATION -> indexed.sortedBy { detailDurationMs(it.value.duration) }
+        val visibleSongs = remember(songs, sortMode, sortDescending) {
+            // POSITION = the playlist's stored order, which `songs` already
+            // preserves (it was filtered in that order). Descending just reverses.
+            val ordered: List<Song> = when (sortMode) {
+                PlaylistSortMode.TITLE -> songs.sortedBy { it.title.lowercase() }
+                PlaylistSortMode.ARTIST -> songs.sortedBy { it.artist.lowercase() }
+                PlaylistSortMode.ALBUM -> songs.sortedBy { it.album.lowercase() }
+                PlaylistSortMode.ARTIST_ALBUM ->
+                    songs.sortedWith(compareBy({ it.artist.lowercase() }, { it.album.lowercase() }))
+                PlaylistSortMode.ALBUM_YEAR -> songs.sortedBy { it.album.lowercase() }
+                PlaylistSortMode.DATE_ADDED -> songs.sortedByDescending { it.dateAdded }
+                PlaylistSortMode.DURATION -> songs.sortedBy { detailDurationMs(it.duration) }
+                // Play-history-backed modes are stubs until a stats store exists;
+                // fall back to stored order so the list never goes blank.
                 PlaylistSortMode.DATE_PLAYED,
                 PlaylistSortMode.DATE_LIKED,
                 PlaylistSortMode.LISTENING_TIME,
                 PlaylistSortMode.RELATIVE_LISTENING_TIME,
-                PlaylistSortMode.POSITION,
-                PlaylistSortMode.PIN -> indexed // stored / manual order (no play-history data yet)
+                PlaylistSortMode.PIN,
+                PlaylistSortMode.POSITION -> songs
             }
+            if (sortDescending) ordered.reversed() else ordered
         }
 
         // The cover + song list are captured together so the top glass and the
@@ -675,6 +697,7 @@ fun PlaylistDetailScreen(
                     anchorY = topInset + TopBarContentHeight + 4.dp,
                     endPad = sidePad,
                     current = sortMode,
+                    descending = sortDescending,
                     backdrop = pageBackdrop,
                     onDismiss = { customOrderOpen = false },
                     onSelect = { mode ->
@@ -686,10 +709,11 @@ fun PlaylistDetailScreen(
                         if (mode == PlaylistSortMode.POSITION) {
                             PlaylistStore.reorderPlaylistSongs(
                                 playlist.id,
-                                visibleSongs.map { it.value.id },
+                                visibleSongs.map { it.id },
                             )
                         }
                     },
+                    onToggleDirection = { sortDescending = !sortDescending },
                 )
             }
             // Per-song three-dot menu — Mochy-style action set.
@@ -701,7 +725,12 @@ fun PlaylistDetailScreen(
                     endPad = sidePad,
                     backdrop = pageBackdrop,
                     onDismiss = { songMenuSong = null },
-                    onFavourite = { FavouriteStore.toggle(song.id) },
+                    onFavourite = {
+                        val wasFav = song.id in favourites
+                        FavouriteStore.toggle(song.id)
+                        undoableMessage = if (wasFav) "Removed from favourites" else "Added to favourites"
+                        undoAction = { FavouriteStore.toggle(song.id) }
+                    },
                     onAddToPlaylist = onAddSongs,          // reuse the add-songs flow
                     onViewAlbum = {},                      // album page: later pass
                     onViewArtist = {},                     // artist page: later pass
@@ -710,6 +739,8 @@ fun PlaylistDetailScreen(
                     onPinToHome = {},                      // pin to home: later pass
                     onRemoveFromPlaylist = {
                         PlaylistStore.removeSongFromPlaylist(playlist.id, song.id)
+                        undoableMessage = "Removed from playlist"
+                        undoAction = { PlaylistStore.addSongToPlaylist(playlist.id, song.id) }
                     },
                     onDetails = {},                        // details sheet: later pass
                 )
@@ -748,6 +779,22 @@ fun PlaylistDetailScreen(
             )
             if (showLyrics) {
                 LyricsScreen(onClose = { showLyrics = false })
+            }
+            // Glass-morphism notification capsule (remove-from-playlist /
+            // favourite) with an Undo button. Sits above everything, anchored
+            // just above the mini player / nav.
+            undoableMessage?.let { msg ->
+                DetailUndoCapsule(
+                    message = msg,
+                    onUndo = {
+                        undoAction?.invoke()
+                        undoableMessage = null
+                        undoAction = null
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 124.dp, start = 24.dp, end = 24.dp),
+                )
             }
         }
     }
@@ -959,6 +1006,53 @@ private fun DetailStatDivider() {
 // rise with the header. The search circle is part of this row and scrolls away
 // with it — tapping it opens the separate search page (no in-place morph). A
 // different, top-layer capsule slides in on scroll (PlaylistScrollSearchCapsule).
+
+/**
+ * Glass-morphism capsule for transient notifications (removed from playlist,
+ * added/removed from favourites) with an Undo button. Dark translucent glass,
+ * white text, a hairline border, an Undo label on the right.
+ */
+@Composable
+private fun DetailUndoCapsule(
+    message: String,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        DetailText(
+            text = message,
+            size = 14.sp,
+            color = Color.White,
+            maxLines = 1,
+        )
+        Box(
+            modifier = Modifier
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onUndo,
+                )
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+        ) {
+            DetailText(
+                text = "Undo",
+                size = 14.sp,
+                color = Color.White,
+                weight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
 @Composable
 private fun PlaylistHeaderActionsOverlay(
     actionsTop: () -> Float,

@@ -266,6 +266,33 @@ fun MenuInfoGlyph(color: Color, modifier: Modifier = Modifier) {
     }
 }
 
+/** Ascending/descending arrow for the sort-direction toggle. */
+@Composable
+fun MenuSortDirectionGlyph(color: Color, descending: Boolean, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.11f
+        // Two stacked arrows. Descending points both down; ascending points up.
+        val dir = if (descending) 1f else -1f
+        val cy = h * 0.5f
+        // Upper chevron.
+        val path1 = Path().apply {
+            moveTo(w * 0.25f, cy - h * 0.12f * dir)
+            lineTo(w * 0.5f, cy + h * 0.12f * dir)
+            lineTo(w * 0.75f, cy - h * 0.12f * dir)
+        }
+        drawPath(path1, color, style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        // Lower chevron.
+        val path2 = Path().apply {
+            moveTo(w * 0.25f, cy + h * 0.12f - h * 0.12f * dir)
+            lineTo(w * 0.5f, cy + h * 0.12f + h * 0.12f * dir)
+            lineTo(w * 0.75f, cy + h * 0.12f - h * 0.12f * dir)
+        }
+        drawPath(path2, color, style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
 @Composable
 private fun MenuText(text: String, size: Int = 15, destructive: Boolean = false) {
     Text(
@@ -353,17 +380,22 @@ private fun MenuCard(
 // ── Custom-order (sort) menu. ────────────────────────────────────────────────
 
 /**
- * A dropdown listing every sort mode (RiPlay's set) plus a leading "Pin" row.
- * The active mode is marked. Selecting a mode dismisses and reports it.
+ * A dropdown listing every sort mode plus a leading "Favourite" row (replaces
+ * the old Pin) and a top ascending/descending toggle. The active mode is marked.
+ * Selecting a mode dismisses and reports it; the toggle flips direction without
+ * dismissing so the user can try both orders quickly.
  */
 @Composable
 fun PlaylistCustomOrderMenu(
     anchorY: Dp,
     endPad: Dp,
     current: PlaylistSortMode,
+    descending: Boolean,
     backdrop: LayerBackdrop?,
     onDismiss: () -> Unit,
     onSelect: (PlaylistSortMode) -> Unit,
+    onToggleDirection: () -> Unit,
+    onFavourite: () -> Unit = {},
 ) {
     val interaction = remember { MutableInteractionSource() }
     Box(
@@ -378,6 +410,18 @@ fun PlaylistCustomOrderMenu(
             width = 232.dp,
             backdrop = backdrop,
         ) {
+            // ── Ascending / Descending toggle (very top) ──
+            MenuActionRow(
+                label = if (descending) "Descending" else "Ascending",
+                icon = { MenuSortDirectionGlyph(Color.White.copy(alpha = 0.85f), descending, Modifier.size(16.dp)) },
+                onClick = onToggleDirection,
+            )
+            // ── Favourite row (replaces Pin): same action as the song-menu favourite. ──
+            MenuActionRow(
+                label = "Favourite",
+                icon = { MenuHeartGlyph(Color.White.copy(alpha = 0.85f), filled = false, Modifier.size(16.dp)) },
+                onClick = { onDismiss(); onFavourite() },
+            )
             PlaylistSortMode.entries.forEach { mode ->
                 MenuActionRow(
                     label = mode.label,
