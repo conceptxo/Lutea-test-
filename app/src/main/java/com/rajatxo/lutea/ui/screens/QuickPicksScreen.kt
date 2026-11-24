@@ -222,6 +222,45 @@ fun QuickPicksScreen(
 
         // ── Add songs dialog ──
         var showAddSongsDialog by remember { mutableStateOf(false) }
+        // ── Delete-playlist confirmation ──
+        var showDeleteDialog by remember { mutableStateOf(false) }
+        // ── Add-a-song-to-other-playlists (from a song's three-dot menu) ──
+        var addSongToPlaylistsTarget by remember { mutableStateOf<Song?>(null) }
+        addSongToPlaylistsTarget?.let { target ->
+            AddSongToPlaylistsDialog(
+                song = target,
+                currentPlaylistId = playlist.id,
+                onDismiss = { addSongToPlaylistsTarget = null },
+            )
+        }
+        if (showDeleteDialog) {
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = false },
+                title = {
+                    Text(
+                        "Delete \"${playlist.name}\"?",
+                        color = Color.White,
+                        fontFamily = CalSansFamily,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                },
+                text = {
+                    Text(
+                        "This playlist and its ${playlist.songIds.size} song${if (playlist.songIds.size != 1) "s" else ""} will be removed. The songs themselves stay in your library.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showDeleteDialog = false
+                        PlaylistStore.deletePlaylist(playlist.id)
+                        selectedPlaylist = null
+                    }) { Text("Delete", color = Color(0xFFFF6B6B)) }
+                },
+                dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") } },
+            )
+        }
         if (showAddSongsDialog) {
             AddSongsToPlaylistDialog(
                 playlist = playlist,
@@ -264,6 +303,10 @@ fun QuickPicksScreen(
                 coverPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onAddSongs = { showAddSongsDialog = true },
+            onDelete = { showDeleteDialog = true },
+            onAddSongToPlaylists = { song ->
+                addSongToPlaylistsTarget = song
+            },
             // Shown before LuteaScaffold, so use system bars directly. The
             // playlist screen now derives its own nav placement from the real
             // navigation-bar inset, so no extra bottom padding is needed here —
@@ -821,6 +864,143 @@ private fun AddSongsToPlaylistDialog(
                 },
                 enabled = loaded && selected.isNotEmpty(),
             ) { Text("Add ${selected.size} song${if (selected.size != 1) "s" else ""}") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/**
+ * Add ONE specific song to one or more OTHER existing playlists — the action
+ * behind a song row's three-dot "Add to other playlist". Lists every playlist
+ * except the one the song is being opened from, as multi-select checkboxes;
+ * the song is added to all selected playlists at once.
+ */
+@Composable
+private fun AddSongToPlaylistsDialog(
+    song: Song,
+    currentPlaylistId: Long,
+    onDismiss: () -> Unit,
+) {
+    val allPlaylists by PlaylistStore.playlists.collectAsState()
+    // The song's own playlists are pre-checked; the current playlist is hidden
+    // (it already contains the song).
+    val candidates = allPlaylists.filter { it.id != currentPlaylistId }
+    val selected = remember { androidx.compose.runtime.mutableStateListOf<Long>() }
+    LaunchedEffect(song.id) {
+        selected.clear()
+        // Pre-check playlists that already contain the song so the user can
+        // see where it lives and uncheck if they want.
+        candidates.forEach { if (song.id in it.songIds) selected.add(it.id) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                "Add \"${song.title}\" to",
+                color = Color.White,
+                fontFamily = CalSansFamily,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        },
+        text = {
+            if (candidates.isEmpty()) {
+                Text(
+                    "No other playlists yet. Create one from the Library tab first.",
+                    color = Color.White.copy(alpha = 0.5f),
+                    fontSize = 13.sp,
+                )
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth().height(360.dp),
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp),
+                ) {
+                    items(candidates) { pl ->
+                        val isChecked = pl.id in selected
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isChecked) Color.White.copy(alpha = 0.10f) else Color.Transparent)
+                                .clickable {
+                                    if (isChecked) selected.remove(pl.id)
+                                    else selected.add(pl.id)
+                                }
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // Playlist cover thumb (custom cover or first-song art fallback).
+                            val thumb = pl.coverUri
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color.White.copy(alpha = 0.08f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (thumb != null) {
+                                    AsyncImage(
+                                        model = runCatching { android.net.Uri.parse(thumb) }.getOrNull(),
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                } else {
+                                    Text("♫", color = Color.White.copy(alpha = 0.5f), fontSize = 16.sp)
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    pl.name,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    "${pl.songIds.size} song${if (pl.songIds.size != 1) "s" else ""}",
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isChecked) Color.White else Color.Transparent)
+                                    .border(
+                                        width = 1.5.dp,
+                                        color = if (isChecked) Color.Transparent else Color.White.copy(alpha = 0.4f),
+                                        shape = CircleShape,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (isChecked) {
+                                    Text("✓", color = Color.Black, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    candidates.forEach { pl ->
+                        if (pl.id in selected && song.id !in pl.songIds) {
+                            PlaylistStore.addSongToPlaylist(pl.id, song.id)
+                        } else if (pl.id !in selected && song.id in pl.songIds) {
+                            // Unchecking a playlist that had the song removes it.
+                            PlaylistStore.removeSongFromPlaylist(pl.id, song.id)
+                        }
+                    }
+                    onDismiss()
+                },
+                enabled = candidates.isNotEmpty(),
+            ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

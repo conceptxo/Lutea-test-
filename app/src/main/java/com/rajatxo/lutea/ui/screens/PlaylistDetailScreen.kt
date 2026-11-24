@@ -213,6 +213,12 @@ fun PlaylistDetailScreen(
     onAddSongs: () -> Unit = {},
     onDelete: () -> Unit = {},
     onCustomOrder: () -> Unit = {},
+    /**
+     * Add a SPECIFIC song (from its three-dot menu) to one or more OTHER
+     * existing playlists. Distinct from [onAddSongs] (which picks songs to
+     * add to THIS playlist from the top menu).
+     */
+    onAddSongToPlaylists: (Song) -> Unit = {},
     songArt: (Song) -> Any? = { null },
     insets: WindowInsets = WindowInsets.systemBars,
     activeTab: LuteaTab = LuteaTab.Library,
@@ -629,6 +635,11 @@ fun PlaylistDetailScreen(
                             val isDragged = reorderState.draggedItemId == song.id
                             Column(
                                 modifier = Modifier
+                                    // Smooth glide when the list re-sorts (e.g. the
+                                    // listening-time mode bumps a song up the list
+                                    // as it plays) — disabled mid-drag so the held
+                                    // row follows the finger with no animation lag.
+                                    .then(if (!isDragged) Modifier.animateItem() else Modifier)
                                     .zIndex(if (isDragged) 1f else 0f)
                                     .graphicsLayer {
                                         translationY = if (isDragged) reorderState.dragOffset else 0f
@@ -819,7 +830,7 @@ fun PlaylistDetailScreen(
                         undoableMessage = if (wasFav) "Removed from favourites" else "Added to favourites"
                         undoAction = { FavouriteStore.toggle(song.id) }
                     },
-                    onAddToPlaylist = onAddSongs,          // reuse the add-songs flow
+                    onAddToPlaylist = { onAddSongToPlaylists(song) },  // pick OTHER playlists for THIS song
                     onViewAlbum = {},                      // album page: later pass
                     onViewArtist = {},                     // artist page: later pass
                     onEdit = { editingSong = song },       // opens the song editor
@@ -895,10 +906,13 @@ fun PlaylistDetailScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Tracks a long-press drag-reorder of the song list. Only active when the
- * custom-order lock is unlocked. The dragged row lifts as an elevated card
- * (scale + shadow) and the others slide aside in real time; on drop the new
- * order is reported so it can be persisted.
+ * Tracks a long-press drag-reorder of the song list, Mochi/Calvin-style:
+ * the held row stays GLUED to the finger (its offset = raw drag delta),
+ * and other rows only slide aside when the held row's centre crosses a
+ * neighbour's midpoint — each swap is a single step, so nothing jumps
+ * erratically. On drop the final order is reported for persistence.
+ *
+ * Only active when the custom-order lock is unlocked.
  */
 class DragDropListState(
     private val listState: LazyListState,
@@ -914,7 +928,7 @@ class DragDropListState(
     var dragOffset by mutableFloatStateOf(0f)
         private set
 
-    private var draggedIndex = -1   // LazyColumn item index (header = 0)
+    private var draggedLazyIndex = -1   // LazyColumn item index (header = 0)
 
     fun onDragStart(offset: Offset): Boolean {
         // Only song rows participate (their key is the song id, a Long; the
@@ -922,7 +936,7 @@ class DragDropListState(
         val info = listState.layoutInfo.visibleItemsInfo
             .firstOrNull { offset.y >= it.offset && offset.y <= it.offset + it.size } ?: return false
         val itemId = info.key as? Long ?: return false
-        draggedIndex = info.index
+        draggedLazyIndex = info.index
         draggedItemId = itemId
         dragging = true
         return true
@@ -932,37 +946,49 @@ class DragDropListState(
         dragOffset += offset.y
         val info = listState.layoutInfo.visibleItemsInfo
             .firstOrNull { it.key == draggedItemId } ?: return
-        val startOfDraggedItem = info.offset + dragOffset
-        val middle = startOfDraggedItem + info.size / 2f
-        val hovered = info
-        for (other in listState.layoutInfo.visibleItemsInfo) {
+        // The held row's visual centre, in viewport coordinates.
+        val draggedCentre = info.offset + info.size / 2f + dragOffset
+        val draggedSongIndex = draggedLazyIndex - 1
+        // Walk the visible rows top→bottom; swap exactly one neighbour per
+        // crossing so nothing jumps.
+        for (other in listState.layoutInfo.visibleItemsInfo.sortedBy { it.offset }) {
             if (other.key == draggedItemId) continue
-            val otherMiddle = other.offset + other.size / 2f
-            val isBelow = other.offset > hovered.offset
-            if ((isBelow && middle > otherMiddle) || (!isBelow && middle < otherMiddle)) {
-                // Convert LazyColumn indices (header at 0) to song indices.
-                onReorder(draggedIndex - 1, other.index - 1)
-                draggedIndex = other.index
-                // Keep the dragged item visually under the finger: compensate
-                // for the slot displacement caused by the swap.
-                dragOffset += (hovered.offset - other.offset)
+            val otherCentre = other.offset + other.size / 2f
+            val otherSongIndex = other.index - 1
+            if (otherSongIndex < 0) continue  // header
+            if (otherSongIndex > draggedSongIndex && draggedCentre > otherCentre) {
+                // Dragged moved BELOW this neighbour — swap down one.
+                onReorder(draggedSongIndex, otherSongIndex)
+                draggedLazyIndex = other.index
+                // Keep the held item visually under the finger: compensate for
+                // the slot displacement the swap caused.
+                dragOffset += (info.offset - other.offset)
+                break
+            }
+            if (otherSongIndex < draggedSongIndex && draggedCentre < otherCentre) {
+                // Dragged moved ABOVE this neighbour — swap up one.
+                onReorder(draggedSongIndex, otherSongIndex)
+                draggedLazyIndex = other.index
+                dragOffset += (info.offset - other.offset)
                 break
             }
         }
-        // Auto-scroll near the edges of the viewport.
+        // Edge auto-scroll keeps the dragged item reachable at the list ends.
         val bottom = listState.layoutInfo.viewportEndOffset
         val top = listState.layoutInfo.viewportStartOffset
-        if (bottom - (info.offset + info.size + dragOffset) < 100f) {
-            scope.launch { listState.scrollBy(12f) }
-        } else if (info.offset + dragOffset - top < 100f) {
-            scope.launch { listState.scrollBy(-12f) }
+        val draggedTop = info.offset + dragOffset
+        val draggedBottom = draggedTop + info.size
+        if (bottom - draggedBottom < 80f) {
+            scope.launch { listState.scrollBy(14f) }
+        } else if (draggedTop - top < 80f) {
+            scope.launch { listState.scrollBy(-14f) }
         }
     }
 
     fun onDragCancel() {
         dragging = false
         draggedItemId = null
-        draggedIndex = -1
+        draggedLazyIndex = -1
         dragOffset = 0f
     }
 

@@ -315,10 +315,9 @@ object PlaybackConnection {
         controller?.let { c ->
             _positionMs.value = c.currentPosition.coerceAtLeast(0L)
             _durationMs.value = c.duration.coerceAtLeast(0L)
-            // Listening-time accounting: if currently playing, make sure a
-            // segment is open for the current song; if paused, flush any open
-            // segment. This runs on the same 500ms tick as the position poll,
-            // so granularity is ~0.5s — plenty for a per-song badge.
+            // Listening-time accounting: while playing, flush the open segment
+            // EVERY tick (~500ms) so the per-song badge ticks up live — not
+            // only on pause/skip. The segment timer restarts after each flush.
             val id = _currentSong.value?.id
             if (c.isPlaying && id != null) {
                 if (playingSongId != id) {
@@ -327,6 +326,10 @@ object PlaybackConnection {
                     playingSongId = id
                 }
                 if (playingSinceMs == 0L) playingSinceMs = System.currentTimeMillis()
+                // Live flush: write whatever has accumulated this segment and
+                // restart the clock so the next tick adds the next ~500ms.
+                flushPlayTime()
+                playingSinceMs = System.currentTimeMillis()
             } else {
                 // Paused or no song: close the open segment.
                 if (playingSinceMs != 0L) flushPlayTime()
