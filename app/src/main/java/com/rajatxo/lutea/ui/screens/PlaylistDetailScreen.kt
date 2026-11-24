@@ -49,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -359,6 +360,14 @@ fun PlaylistDetailScreen(
                 (rise / scrollDockSpanPx).coerceIn(0f, 1f)
             }
         }
+        // SNAP: the search button rides the header up as a plain circle the whole
+        // way. The INSTANT its row crosses the chevron/menu baseline (progress → 1)
+        // it transforms into the docked capsule — no interpolated position or width
+        // animation during scroll. Tap-open also snaps (the auto-scroll below
+        // carries it to the baseline first).
+        val searchDocked by remember(progress, searchOpen) {
+            derivedStateOf { scrollDockProgress >= 0.999f || searchOpen }
+        }
 
         // ★ Direct-click open: when the user taps search while the header is at
         //    rest (or not yet docked), auto-scroll the list up just far enough for
@@ -367,14 +376,44 @@ fun PlaylistDetailScreen(
         //    buttons ABOVE the capsule, leaving the song list visible below it —
         //    the Mochy layout. We don't fight the user: if they've already docked,
         //    we don't move.
+        //    After the auto-scroll we record the locked offset so the search page
+        //    can't be scrolled back down to reveal the cover — only the song list
+        //    scrolls within the search view.
+        var lockedScrollOffset by remember { mutableStateOf(Int.MIN_VALUE) }
         LaunchedEffect(searchOpen) {
-            if (searchOpen && scrollDockProgress < 0.985f) {
-                // Scroll content UP by the remaining rise needed to fully dock.
-                val remainingRise = scrollDockSpanPx * (1f - scrollDockProgress)
-                listState.animateScrollBy(
-                    remainingRise,
-                    spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
-                )
+            if (searchOpen) {
+                if (scrollDockProgress < 0.985f) {
+                    // Scroll content UP by the remaining rise needed to fully dock.
+                    val remainingRise = scrollDockSpanPx * (1f - scrollDockProgress)
+                    listState.animateScrollBy(
+                        remainingRise,
+                        spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
+                    )
+                }
+                // Snapshot the locked position: the first visible item + its
+                // offset. While search is open we clamp scroll to never go below
+                // this (i.e. the cover can't come back into view).
+                lockedScrollOffset = listState.firstVisibleItemIndex * 1_000_000 +
+                    listState.firstVisibleItemScrollOffset
+            } else {
+                lockedScrollOffset = Int.MIN_VALUE
+            }
+        }
+        // Scroll lock: while search is open, if the user drags down past the
+        // locked position, snap back instantly so the cover stays hidden.
+        LaunchedEffect(lockedScrollOffset) {
+            if (lockedScrollOffset == Int.MIN_VALUE) return@LaunchedEffect
+            snapshotFlow {
+                listState.firstVisibleItemIndex * 1_000_000 +
+                    listState.firstVisibleItemScrollOffset
+            }.collect { current ->
+                if (current < lockedScrollOffset) {
+                    // They scrolled too far down (cover would show) — snap back.
+                    listState.scrollToItem(
+                        index = lockedScrollOffset / 1_000_000,
+                        scrollOffset = lockedScrollOffset % 1_000_000,
+                    )
+                }
             }
         }
         val searchCapsuleWidth =
@@ -511,38 +550,48 @@ fun PlaylistDetailScreen(
                     sidePad = sidePad,
                     statsTop = statsTop,
                 )
+                // Header actions (shuffle / play / custom-order) live INSIDE the
+                // captured page so the top frost blurs them as they rise. Custom
+                // order is hidden once search is open (everything above the song
+                // list is gone on the search page). The search capsule is NOT here
+                // — it has its own top-layer dock above the frost.
+                PlaylistHeaderActionsOverlay(
+                    actionsTop = actionsTop,
+                    isPlaying = showPause,
+                    onPlayPause = onPlayPause,
+                    onShuffle = onShuffleHere,
+                    onCustomOrder = onCustomOrder,
+                    hideCustomOrder = searchOpen,
+                )
             }
 
             // Real backdrop blur, full at the status bar and eased to zero
-            // 96dp below it. Drawn above the captured page, below the chrome.
-            if (blurActive) {
+            // 96dp below it. Drawn above the captured page (so it frosts the
+            // shuffle/play/custom-order + title + stats + songs), below the chrome.
+            if (blurActive || searchOpen) {
                 PlaylistTopBlur(
                     backdrop = pageBackdrop,
-                    morph = { blurMorph },
+                    morph = { if (searchOpen) 1f else blurMorph },
                     height = topInset + 96.dp,
                     tint = coverColor,
                 )
             }
 
-            // Controls (shuffle / play / custom-order / search) are drawn ABOVE
-            // the top blur so the scroll-docked glass search capsule sits on top
-            // of the frost — like the back + menu discs do. The shuffle / play /
-            // custom-order buttons scroll with the header and are gone by the
-            // time the frost is strong, so not frosting them is invisible.
-            PlaylistActionsOverlay(
-                actionsTop = actionsTop,
+            // ★ Search capsule — TOP LAYER. Above the frost, above the header
+            //    actions, so it never blurs and always sits on top. It renders as
+            //    a plain circle riding the header at rest, and SNAPS to the docked
+            //    capsule the instant the search row crosses the chevron/menu
+            //    baseline (or on tap-open). No position animation during scroll.
+            PlaylistSearchDockOverlay(
+                searchDocked = searchDocked,
                 searchOpen = searchOpen,
                 searchQuery = searchQuery,
                 onSearchQueryChange = { searchQuery = it },
                 onOpenSearch = { searchOpen = true },
+                actionsTop = actionsTop,
                 searchDockX = searchDockX,
                 searchDockY = searchDockY,
                 searchCapsuleWidth = searchCapsuleWidth,
-                isPlaying = showPause,
-                onPlayPause = onPlayPause,
-                onShuffle = onShuffleHere,
-                onCustomOrder = onCustomOrder,
-                scrollDockProgress = scrollDockProgress,
                 backdrop = pageBackdrop,
             )
 
@@ -828,30 +877,19 @@ private fun DetailStatDivider() {
     )
 }
 
+// ── Header actions: shuffle / play / custom-order. ──────────────────────────
+// Lives INSIDE the captured page so the top frost blurs these buttons as they
+// rise with the header. The search capsule is deliberately NOT here — it has
+// its own top-layer dock (PlaylistSearchDockOverlay) so it never blurs.
 @Composable
-private fun PlaylistActionsOverlay(
+private fun PlaylistHeaderActionsOverlay(
     actionsTop: () -> Float,
-    searchOpen: Boolean,
-    searchQuery: String,
-    onSearchQueryChange: (String) -> Unit,
-    onOpenSearch: () -> Unit,
-    searchDockX: Float,
-    searchDockY: Float,
-    searchCapsuleWidth: Dp,
     isPlaying: Boolean,
     onPlayPause: () -> Unit,
     onShuffle: () -> Unit,
     onCustomOrder: () -> Unit,
-    // Driven by scroll (0 = at rest, 1 = docked). Read as a value so the layout
-    // re-measures as the header rises.
-    scrollDockProgress: Float,
-    backdrop: LayerBackdrop?,
+    hideCustomOrder: Boolean,
 ) {
-    val searchProgress by animateFloatAsState(
-        targetValue = if (searchOpen) 1f else 0f,
-        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-        label = "playlistSearchExpand",
-    )
     val density = LocalDensity.current
     val gapPx = with(density) { 12.dp.roundToPx() }
     val customGapPx = with(density) { ActionsToCustomOrderGapDp.roundToPx() }
@@ -880,64 +918,147 @@ private fun PlaylistActionsOverlay(
                     DetailPlayGlyph(Color.Black, Modifier.size(22.dp))
                 }
             }
-            // The search capsule's SURFACE crossfades between white (when opened
-            // by a tap) and glass morphism (when docked purely by scroll). Its
-            // position + width morph is driven by the layout below, which uses
-            // max(searchProgress, scrollDockProgress) so either route can dock it.
-            DetailSearchCapsule(
-                expanded = searchOpen,
-                progress = searchProgress,
-                width = searchCapsuleWidth,
-                query = searchQuery,
-                onQueryChange = onSearchQueryChange,
-                onOpen = onOpenSearch,
-                // whiteAmount: 1 = solid white (click-opened), 0 = glass (scroll-docked).
-                whiteAmount = { searchProgress },
-                // Width also follows the combined dock so a scroll-docked circle
-                // grows into the capsule shape even without a tap.
-                dockProgress = { maxOf(searchProgress, scrollDockProgress) },
-                backdrop = backdrop,
-            )
-            DetailPill(
-                label = "Custom order",
-                filled = false,
-                onClick = onCustomOrder,
-                height = CustomOrderHeight,
-                horizontalPadding = 18.dp,
-            ) {
-                DetailReorderGlyph(Color.White, Modifier.size(16.dp))
+            // A spacer occupies the search button's rest slot so the row stays
+            // centred (shuffle / play / [search slot] / ...). The real search
+            // button lives in the top-layer dock overlay.
+            Spacer(Modifier.size(ActionButtonSize))
+            if (!hideCustomOrder) {
+                DetailPill(
+                    label = "Custom order",
+                    filled = false,
+                    onClick = onCustomOrder,
+                    height = CustomOrderHeight,
+                    horizontalPadding = 18.dp,
+                ) {
+                    DetailReorderGlyph(Color.White, Modifier.size(16.dp))
+                }
+            } else {
+                // Keep measurable indices stable across the hide/show toggle.
+                Spacer(Modifier.size(CustomOrderHeight, CustomOrderHeight))
             }
         },
         modifier = Modifier.fillMaxSize(),
     ) { measurables, constraints ->
         val shuffle = measurables[0].measure(Constraints())
         val play = measurables[1].measure(Constraints())
-        val search = measurables[2].measure(Constraints())
+        // measurables[2] is the search spacer — not placed.
         val customOrder = measurables[3].measure(Constraints())
         val total = shuffle.width + gapPx + play.width + gapPx + restSizePx
         val startX = ((constraints.maxWidth - total) / 2).coerceAtLeast(0)
         val shuffleRestX = startX
         val playRestX = startX + shuffle.width + gapPx
-        val searchRestX = playRestX + play.width + gapPx
 
         layout(constraints.maxWidth, constraints.maxHeight) {
-            // Combined dock: scroll OR tap can each fully dock the search button.
-            val p = maxOf(searchProgress, scrollDockProgress).coerceIn(0f, 1f)
             val restY = actionsTop()
             val shuffleY = restY + (restSizePx - shuffle.height) / 2f
             val playY = restY + (restSizePx - play.height) / 2f
             shuffle.placeWithLayer(shuffleRestX, shuffleY.roundToInt())
             play.placeWithLayer(playRestX, playY.roundToInt())
 
-            val searchX = searchRestX + (searchDockX - searchRestX) * p
-            val searchY = restY + (searchDockY - restY) * p
-            search.placeWithLayer(searchX.roundToInt(), searchY.roundToInt())
+            // Custom order sits directly under the play capsule (screen-centred).
+            // Hidden (alpha 0) once search is open — the whole header is gone.
+            if (!hideCustomOrder) {
+                customOrder.placeWithLayer(
+                    x = ((constraints.maxWidth - customOrder.width) / 2f).roundToInt(),
+                    y = (restY + restSizePx + customGapPx).roundToInt(),
+                )
+            }
+        }
+    }
+}
 
-            // Directly under the play capsule, which is already screen-centred.
-            customOrder.placeWithLayer(
-                x = ((constraints.maxWidth - customOrder.width) / 2f).roundToInt(),
-                y = (restY + restSizePx + customGapPx).roundToInt(),
+// ── Search capsule dock — TOP LAYER. ────────────────────────────────────────
+// Renders the search button ABOVE the frost so it never blurs. Behaviour:
+//   • NOT docked  → a plain circle riding the header at its rest position
+//     (no movement during scroll — it just scrolls up with the header).
+//   • Docked      → SNAPS to the docked capsule at the chevron/menu baseline.
+//     The snap is instant (no interpolated position/width animation); the only
+//     animation is the click-open expand (searchProgress) for the text field.
+@Composable
+private fun PlaylistSearchDockOverlay(
+    searchDocked: Boolean,
+    searchOpen: Boolean,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onOpenSearch: () -> Unit,
+    actionsTop: () -> Float,
+    searchDockX: Float,
+    searchDockY: Float,
+    searchCapsuleWidth: Dp,
+    backdrop: LayerBackdrop?,
+) {
+    val searchProgress by animateFloatAsState(
+        targetValue = if (searchOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "playlistSearchExpand",
+    )
+    val density = LocalDensity.current
+    val gapPx = with(density) { 12.dp.roundToPx() }
+    val restSizePx = with(density) { ActionButtonSize.roundToPx() }
+    // Combined docked state: snapped-on by scroll crossing the baseline, OR by
+    // a tap (the tap also auto-scrolls to the baseline first). Once docked the
+    // capsule sits at the dock X/Y at full width — no in-between.
+    val docked = searchDocked || searchOpen
+
+    Layout(
+        content = {
+            // Hidden shuffle + play pills, measured ONLY so the undocked search
+            // circle lines up exactly with the header's search slot (the real
+            // pills live in the header-actions overlay). They are never placed.
+            DetailGlassCircleButton(
+                desc = "",
+                onClick = {},
+                white = true,
+            ) { DetailShuffleGlyph(Color.Black, Modifier.size(18.dp)) }
+            DetailPill(
+                label = "Pause",
+                filled = true,
+                onClick = {},
+                height = ActionButtonSize,
+                horizontalPadding = PlayCapsulePadding,
+                reserveLabel = "Pause",
+            ) { DetailPauseGlyph(Color.Black, Modifier.size(22.dp)) }
+            // The real search capsule — the only child that gets placed.
+            DetailSearchCapsule(
+                expanded = searchOpen,
+                // Width/expand follows the click-open progress only; the snap to
+                // the dock position itself is instant (driven by [docked] below).
+                progress = searchProgress,
+                width = searchCapsuleWidth,
+                query = searchQuery,
+                onQueryChange = onSearchQueryChange,
+                onOpen = onOpenSearch,
+                // White when click-opened, glass when scroll-docked. A tap-open
+                // shows white; a pure scroll-dock shows glass morphism.
+                whiteAmount = { searchProgress },
+                // While docked the capsule is always at full width (1f); before
+                // docking it is a 44dp circle (0f).
+                dockProgress = { if (docked) 1f else 0f },
+                // Show the "Search songs" placeholder as soon as the capsule
+                // shape appears (docked), not only when fully expanded.
+                showPlaceholder = docked,
+                backdrop = backdrop,
             )
+        },
+        modifier = Modifier.fillMaxSize(),
+    ) { measurables, constraints ->
+        val shuffle = measurables[0].measure(Constraints())  // hidden, for alignment
+        val play = measurables[1].measure(Constraints())      // hidden, for alignment
+        val search = measurables[2].measure(Constraints())
+        // Rest X mirrors the header row centring exactly: shuffle + gap + play + gap.
+        val total = shuffle.width + gapPx + play.width + gapPx + restSizePx
+        val startX = ((constraints.maxWidth - total) / 2).coerceAtLeast(0)
+        val searchRestX = startX + shuffle.width + gapPx + play.width + gapPx
+
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            val restY = actionsTop()
+            // SNAP: docked → dock position; not docked → rest position. No lerp.
+            val (x, y) = if (docked) {
+                searchDockX to searchDockY
+            } else {
+                searchRestX to restY
+            }
+            search.placeWithLayer(x.roundToInt(), y.roundToInt())
         }
     }
 }
@@ -980,6 +1101,9 @@ private fun DetailSearchCapsule(
     whiteAmount: () -> Float,
     // Combined dock amount (max of click-open and scroll-dock) — drives width.
     dockProgress: () -> Float,
+    // Show the "Search songs" placeholder as soon as the capsule shape appears
+    // (docked), not only once fully expanded.
+    showPlaceholder: Boolean,
     backdrop: LayerBackdrop?,
 ) {
     val density = LocalDensity.current
@@ -1047,7 +1171,8 @@ private fun DetailSearchCapsule(
                     translationX = with(density) { iconShiftDp.toPx() }
                 },
         )
-        if (expanded || progress > 0.02f) {
+        if (expanded) {
+            // Fully opened by a tap: the real text field with focus + cursor.
             BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
@@ -1062,10 +1187,7 @@ private fun DetailSearchCapsule(
                     .align(Alignment.CenterStart)
                     .padding(start = 40.dp, end = 16.dp)
                     .fillMaxWidth()
-                    .focusRequester(focusRequester)
-                    .graphicsLayer {
-                        alpha = ((progress - 0.25f) / 0.75f).coerceIn(0f, 1f)
-                    },
+                    .focusRequester(focusRequester),
                 decorationBox = { innerTextField ->
                     Box(
                         modifier = Modifier.fillMaxWidth(),
@@ -1081,6 +1203,17 @@ private fun DetailSearchCapsule(
                         innerTextField()
                     }
                 },
+            )
+        } else if (showPlaceholder) {
+            // Docked but not opened by a tap (scroll-docked glass capsule): show
+            // the "Search songs" hint as a plain label. Tapping opens it.
+            DetailText(
+                text = "Search songs",
+                size = 14.sp,
+                color = ink.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 40.dp, end = 16.dp),
             )
         }
     }
