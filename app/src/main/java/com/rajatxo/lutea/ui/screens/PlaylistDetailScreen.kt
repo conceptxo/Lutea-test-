@@ -967,7 +967,7 @@ private fun PlaylistScrollSearchCapsule(
     // and slides down to its settled Y as reveal → 1.
     val heightPx = with(density) { ActionButtonSize.toPx() }
     val slideFromY = -heightPx * 1.2f
-    val translationY = slideFromY * (1f - reveal)
+    val slideTranslationY = slideFromY * (1f - reveal)
 
     Layout(
         content = {
@@ -991,12 +991,15 @@ private fun PlaylistScrollSearchCapsule(
         val search = measurables[0].measure(Constraints())
         layout(constraints.maxWidth, constraints.maxHeight) {
             val x = (dockCenterX() - search.width / 2f).roundToInt()
-            // Layer-level: alpha + slide. Y is the settled dock row.
+            // Layer-level: alpha + slide. Y is the settled dock row; the slide is
+            // applied as a translationY inside the layer block.
             search.placeWithLayer(
                 x = x,
                 y = dockY.roundToInt(),
-                alpha = reveal,
-                layerBlock = { translationY = this@PlaylistScrollSearchCapsule.translationY },
+                layerBlock = {
+                    alpha = reveal
+                    translationY = slideTranslationY
+                },
             )
         }
     }
