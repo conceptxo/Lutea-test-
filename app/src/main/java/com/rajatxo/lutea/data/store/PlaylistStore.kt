@@ -93,4 +93,15 @@ object PlaylistStore {
         }
         persistPlaylists()
     }
+
+    /**
+     * Replace a playlist's song order with [songIds] (must contain the same ids,
+     * just reordered). Used by the custom-order "Position" / manual-reorder mode.
+     */
+    fun reorderPlaylistSongs(playlistId: Long, songIds: List<Long>) {
+        _playlists.value = _playlists.value.map { p ->
+            if (p.id == playlistId) p.copy(songIds = songIds) else p
+        }
+        persistPlaylists()
+    }
 }

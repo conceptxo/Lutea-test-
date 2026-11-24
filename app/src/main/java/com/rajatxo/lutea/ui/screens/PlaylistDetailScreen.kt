@@ -102,6 +102,8 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.vibrancy
 import com.rajatxo.lutea.data.model.Playlist
+import com.rajatxo.lutea.data.store.FavouriteStore
+import com.rajatxo.lutea.data.store.PlaylistStore
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
@@ -162,7 +164,7 @@ private val CustomOrderHeight = 32.dp                 // thinner custom-order ca
 private val PlayCapsulePadding = 58.dp                // wider play/pause capsule
 private val TitleToStatsGapDp = 0.dp                  // title sits flush against the stats row
 private val StatsToActionsGapDp = 6.dp                // tighter gap between stats and the 3 buttons
-private val ActionsToCustomOrderGapDp = 4.dp          // tighter gap between buttons and custom order
+private val ActionsToCustomOrderGapDp = 10.dp          // gap between buttons and custom order
 private val TitleFontSize = 32.sp                     // slightly smaller playlist name
 private val TitleLineHeight = 36.sp
 // Top-blur mask: full strength down to this fraction of the band, then a
@@ -210,14 +212,29 @@ fun PlaylistDetailScreen(
     var playerVisible by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
-    // Back closes the topmost layer first: lyrics, player, menu, search, then the page.
-    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen && !menuOpen) { onBack() }
+    // Custom-order (sort) menu + its current mode.
+    var customOrderOpen by remember { mutableStateOf(false) }
+    var sortMode by remember(playlist.id) { mutableStateOf(PlaylistSortMode.POSITION) }
+    // Per-song three-dot menu + which song it targets.
+    var songMenuSong by remember { mutableStateOf<Song?>(null) }
+    val favourites by FavouriteStore.favourites.collectAsState()
+    // Back closes the topmost layer first: lyrics, player, song menu, custom
+    // order, playlist menu, search, then the page.
+    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen && !menuOpen && !customOrderOpen && songMenuSong == null) { onBack() }
     BackHandler(enabled = searchOpen) { searchOpen = false }
     BackHandler(enabled = menuOpen) { menuOpen = false }
+    BackHandler(enabled = customOrderOpen) { customOrderOpen = false }
+    BackHandler(enabled = songMenuSong != null) { songMenuSong = null }
     BackHandler(enabled = showLyrics) { showLyrics = false }
     BackHandler(enabled = playerVisible && !showLyrics) { playerVisible = false }
     LaunchedEffect(searchOpen) {
-        if (searchOpen) menuOpen = false else searchQuery = ""
+        if (searchOpen) {
+            menuOpen = false
+            customOrderOpen = false
+            songMenuSong = null
+        } else {
+            searchQuery = ""
+        }
     }
 
     // Only this screen's own play/shuffle/song taps count as this playlist playing.
@@ -235,6 +252,10 @@ fun PlaylistDetailScreen(
     }
     val onShuffleHere = { startedHere = true; onShuffle() }
     val onSongHere: (Int, Song) -> Unit = { i, song -> startedHere = true; onSongClick(i, song) }
+    // Custom order opens the sort menu (the param default {} is overridden here
+    // so the screen owns the menu state). Selecting a mode just re-sorts the
+    // display; POSITION keeps the stored order.
+    val onCustomOrderHere = { customOrderOpen = true }
 
     val themeState = rememberCoverThemeColor(playlist.coverUri, fallbackSeed = playlist.id.toString())
     val listState = rememberLazyListState()
@@ -375,10 +396,12 @@ fun PlaylistDetailScreen(
                 ((scrollDockProgress - 0.62f) / 0.24f).coerceIn(0f, 1f)
             }
         }
-        // Eased for a soft fade-in; read in the layout/draw phase.
+        // Eased for a soft fade-in; read in the layout/draw phase. A longer
+        // spring-free tween gives a buttery slide-down AND slide-up (the same
+        // spec drives both directions since the target is the derived reveal).
         val scrollCapsuleAlpha by animateFloatAsState(
             targetValue = scrollCapsuleReveal,
-            animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+            animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
             label = "playlistScrollCapsule",
         )
 
@@ -389,9 +412,29 @@ fun PlaylistDetailScreen(
         val statsSongCount = songs.size.toString()
         val statsDuration = remember(totalMs) { detailStatsDuration(totalMs) }
         val statsCreated = remember(playlist.createdAtMs) { detailCreatedDate(playlist.createdAtMs) }
-        // The main list always shows every song — filtering happens on the
-        // separate search page now, not in place.
-        val visibleSongs = remember(songs) { songs.withIndex().toList() }
+        // The main list shows every song, ordered by the current sort mode.
+        // POSITION keeps the playlist's stored order; the rest re-derive a
+        // display-only order (the underlying playlist order is untouched unless
+        // the user picks POSITION after a manual reorder, which persists).
+        val visibleSongs = remember(songs, sortMode) {
+            val indexed = songs.withIndex().toList()
+            when (sortMode) {
+                PlaylistSortMode.TITLE -> indexed.sortedBy { it.value.title.lowercase() }
+                PlaylistSortMode.ARTIST -> indexed.sortedBy { it.value.artist.lowercase() }
+                PlaylistSortMode.ALBUM -> indexed.sortedBy { it.value.album.lowercase() }
+                PlaylistSortMode.ARTIST_ALBUM -> indexed
+                    .sortedWith(compareBy({ it.value.artist.lowercase() }, { it.value.album.lowercase() }))
+                PlaylistSortMode.ALBUM_YEAR -> indexed.sortedBy { it.value.album }
+                PlaylistSortMode.DATE_ADDED -> indexed.sortedByDescending { it.value.dateAdded }
+                PlaylistSortMode.DURATION -> indexed.sortedBy { detailDurationMs(it.value.duration) }
+                PlaylistSortMode.DATE_PLAYED,
+                PlaylistSortMode.DATE_LIKED,
+                PlaylistSortMode.LISTENING_TIME,
+                PlaylistSortMode.RELATIVE_LISTENING_TIME,
+                PlaylistSortMode.POSITION,
+                PlaylistSortMode.PIN -> indexed // stored / manual order (no play-history data yet)
+            }
+        }
 
         // The cover + song list are captured together so the top glass and the
         // progressive blur sample what is actually scrolling underneath, not
@@ -479,10 +522,7 @@ fun PlaylistDetailScreen(
                                     thumbSize = thumbSize,
                                     sidePad = sidePad,
                                     onClick = { onSongHere(indexed.index, song) },
-                                    // Per-song menu: wired to nothing for now. The
-                                    // behaviour (favourite / add to playlist / etc.)
-                                    // comes in a later pass.
-                                    onMore = {},
+                                    onMore = { songMenuSong = song },
                                 )
                                 if (i < visibleSongs.lastIndex) {
                                     DetailRowDivider(sidePad = sidePad, thumbSize = thumbSize)
@@ -518,8 +558,9 @@ fun PlaylistDetailScreen(
                     isPlaying = showPause,
                     onPlayPause = onPlayPause,
                     onShuffle = onShuffleHere,
-                    onCustomOrder = onCustomOrder,
+                    onCustomOrder = onCustomOrderHere,
                     onOpenSearch = { searchOpen = true },
+                    backdrop = pageBackdrop,
                 )
             }
 
@@ -620,6 +661,51 @@ fun PlaylistDetailScreen(
                     onChangeCover = onChangeCover,
                     onAddSongs = onAddSongs,
                     onDelete = onDelete,
+                )
+            }
+            // Custom-order (sort) menu — RiPlay's full sort set + a leading Pin.
+            if (customOrderOpen) {
+                PlaylistCustomOrderMenu(
+                    anchorY = topInset + TopBarContentHeight + 4.dp,
+                    endPad = sidePad,
+                    current = sortMode,
+                    backdrop = pageBackdrop,
+                    onDismiss = { customOrderOpen = false },
+                    onSelect = { mode ->
+                        sortMode = mode
+                        // POSITION is the manual/stored order; picking it after a
+                        // sort persists the current display order as the new stored
+                        // order so a future "Position" returns to what the user
+                        // sees now. (Other modes are display-only.)
+                        if (mode == PlaylistSortMode.POSITION) {
+                            PlaylistStore.reorderPlaylistSongs(
+                                playlist.id,
+                                visibleSongs.map { it.value.id },
+                            )
+                        }
+                    },
+                )
+            }
+            // Per-song three-dot menu — Mochy-style action set.
+            songMenuSong?.let { song ->
+                PlaylistSongMenu(
+                    song = song,
+                    isFavourite = song.id in favourites,
+                    anchorY = topInset + TopBarContentHeight + 4.dp,
+                    endPad = sidePad,
+                    backdrop = pageBackdrop,
+                    onDismiss = { songMenuSong = null },
+                    onFavourite = { FavouriteStore.toggle(song.id) },
+                    onAddToPlaylist = onAddSongs,          // reuse the add-songs flow
+                    onViewAlbum = {},                      // album page: later pass
+                    onViewArtist = {},                     // artist page: later pass
+                    onEdit = {},                            // edit: later pass (add only)
+                    onAddToQueue = { PlaybackConnection.addToQueue(song) },
+                    onPinToHome = {},                      // pin to home: later pass
+                    onRemoveFromPlaylist = {
+                        PlaylistStore.removeSongFromPlaylist(playlist.id, song.id)
+                    },
+                    onDetails = {},                        // details sheet: later pass
                 )
             }
             // ★ Search page — a separate full-screen overlay with its own field
@@ -868,6 +954,7 @@ private fun PlaylistHeaderActionsOverlay(
     onShuffle: () -> Unit,
     onCustomOrder: () -> Unit,
     onOpenSearch: () -> Unit,
+    backdrop: LayerBackdrop? = null,
 ) {
     val density = LocalDensity.current
     val gapPx = with(density) { 12.dp.roundToPx() }
@@ -912,6 +999,7 @@ private fun PlaylistHeaderActionsOverlay(
                 onClick = onCustomOrder,
                 height = CustomOrderHeight,
                 horizontalPadding = 18.dp,
+                backdrop = backdrop,
             ) {
                 DetailReorderGlyph(Color.White, Modifier.size(16.dp))
             }
@@ -1059,7 +1147,48 @@ private fun PlaylistSearchPage(
                 translationY = slidePx
             },
     ) {
-        // Top row: close disc + search field capsule.
+        // Filtered song list — laid out FIRST so the top row (drawn after it)
+        // sits above it and always receives touches. The list's content padding
+        // keeps its first item below the top row.
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                top = topInset + ActionButtonSize + 20.dp,
+                bottom = navBottom + 112.dp,
+            ),
+        ) {
+            if (filtered.isEmpty()) {
+                item(key = "empty") {
+                    DetailEmptyHint(sidePad = sidePad, searching = q.isNotEmpty())
+                }
+            } else {
+                itemsIndexed(filtered) { i, indexed ->
+                    val song = indexed.value
+                    Column {
+                        PlaylistSongRow(
+                            song = song,
+                            art = songArt(song),
+                            thumbSize = thumbSize,
+                            sidePad = sidePad,
+                            onClick = {
+                                focusManager.clearFocus()
+                                onSongClick(indexed.index, song)
+                                onClose()
+                            },
+                            onMore = {},
+                        )
+                        if (i < filtered.lastIndex) {
+                            DetailRowDivider(sidePad = sidePad, thumbSize = thumbSize)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Top row: close disc + search field capsule. Drawn AFTER the list so it
+        // is on top of the touch stack — the close button and clear-text button
+        // are always tappable.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1131,53 +1260,21 @@ private fun PlaylistSearchPage(
                         },
                     )
                     if (query.isNotEmpty()) {
+                        // Clear-text button: clickable comes AFTER clip/background so
+                        // the hit area is the full circle and is never blocked.
                         Box(
                             modifier = Modifier
-                                .padding(end = 12.dp)
-                                .size(20.dp)
+                                .padding(end = 10.dp)
+                                .size(24.dp)
                                 .clip(CircleShape)
-                                .detailPressable(pressedScale = 0.9f) { onQueryChange("") }
-                                .background(Color.Black.copy(alpha = 0.12f), CircleShape),
+                                .background(Color.Black.copy(alpha = 0.12f), CircleShape)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { onQueryChange("") },
                             contentAlignment = Alignment.Center,
                         ) {
                             DetailCloseGlyph(Color.Black.copy(alpha = 0.7f), Modifier.size(12.dp))
-                        }
-                    }
-                }
-            }
-        }
-
-        // Filtered song list.
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                top = topInset + ActionButtonSize + 20.dp,
-                bottom = navBottom + 112.dp,
-            ),
-        ) {
-            if (filtered.isEmpty()) {
-                item(key = "empty") {
-                    DetailEmptyHint(sidePad = sidePad, searching = q.isNotEmpty())
-                }
-            } else {
-                itemsIndexed(filtered) { i, indexed ->
-                    val song = indexed.value
-                    Column {
-                        PlaylistSongRow(
-                            song = song,
-                            art = songArt(song),
-                            thumbSize = thumbSize,
-                            sidePad = sidePad,
-                            onClick = {
-                                focusManager.clearFocus()
-                                onSongClick(indexed.index, song)
-                                onClose()
-                            },
-                            onMore = {},
-                        )
-                        if (i < filtered.lastIndex) {
-                            DetailRowDivider(sidePad = sidePad, thumbSize = thumbSize)
                         }
                     }
                 }
@@ -1320,7 +1417,7 @@ private fun DetailSearchCapsule(
                             DetailText(
                                 text = "Search songs",
                                 size = 14.sp,
-                                color = ink.copy(alpha = 0.5f),
+                                color = ink.copy(alpha = 0.75f),
                             )
                         }
                         innerTextField()
@@ -1333,7 +1430,7 @@ private fun DetailSearchCapsule(
             DetailText(
                 text = "Search songs",
                 size = 14.sp,
-                color = ink.copy(alpha = 0.5f),
+                color = ink.copy(alpha = 0.75f),
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 40.dp, end = 16.dp),
@@ -1655,9 +1752,10 @@ private fun DetailRowDivider(sidePad: Dp, thumbSize: Dp) {
     Box(
         Modifier
             .fillMaxWidth()
-            // Start after the thumbnail; end before the 32dp per-song menu button
-            // so the divider lines up with the text block, not under the dots.
-            .padding(start = sidePad + thumbSize + 14.dp, end = sidePad + 32.dp + 8.dp)
+            // Start after the thumbnail; run all the way to the side margin so
+            // the line passes under the three-dot menu icon too — a single
+            // continuous divider per row pair.
+            .padding(start = sidePad + thumbSize + 14.dp, end = sidePad)
             .height(1.dp)
             .background(Color.White.copy(alpha = 0.07f)),
     )

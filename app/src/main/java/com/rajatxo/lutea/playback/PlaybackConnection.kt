@@ -310,6 +310,27 @@ object PlaybackConnection {
         }
     }
 
+    /**
+     * Append a single song to the bottom of the current queue without
+     * interrupting playback. If nothing is playing, it starts the song.
+     */
+    fun addToQueue(song: Song) {
+        val c = controller ?: run {
+            Log.e(TAG, "addToQueue: controller is null")
+            return
+        }
+        try {
+            if (queue.isEmpty() && c.mediaItemCount == 0) {
+                playSong(song, listOf(song))
+                return
+            }
+            queue = queue + song
+            c.addMediaItem(buildMediaItem(song.uri, song))
+        } catch (e: Exception) {
+            Log.e(TAG, "addToQueue failed", e)
+        }
+    }
+
     fun playPause() {
         try { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
         catch (e: Exception) { Log.e(TAG, "playPause failed", e) }

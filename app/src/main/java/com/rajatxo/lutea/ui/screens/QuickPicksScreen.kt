@@ -161,10 +161,6 @@ fun QuickPicksScreen(
         var showRenameDialog by remember { mutableStateOf(false) }
         var renameValue by remember { mutableStateOf(playlist.name) }
         if (showRenameDialog) {
-            val MAX_LETTERS = 10
-            fun letterCount(s: String): Int = s.count { it.isLetter() }
-            val remainingLetters = MAX_LETTERS - letterCount(renameValue)
-            val isOverLimit = remainingLetters < 0
             AlertDialog(
                 onDismissRequest = { showRenameDialog = false },
                 title = {
@@ -174,34 +170,24 @@ fun QuickPicksScreen(
                     OutlinedTextField(
                         value = renameValue,
                         onValueChange = { newValue ->
-                            val filtered = newValue.filter { it.isLetter() || it.isWhitespace() }
-                            if (filtered.count { it.isLetter() } <= MAX_LETTERS) {
-                                renameValue = filtered
-                            }
+                            // No length or character limit — the user can use any name.
+                            renameValue = newValue
                         },
-                        placeholder = { Text("Playlist name (max 10 letters)") },
+                        placeholder = { Text("Playlist name") },
                         singleLine = true,
-                        isError = isOverLimit,
-                        supportingText = {
-                            Text(
-                                "$remainingLetters letters left",
-                                color = if (remainingLetters <= 2) Color(0xFFFF6B6B) else Color.White.copy(alpha = 0.5f),
-                                fontSize = 12.sp,
-                            )
-                        },
                     )
                 },
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            if (renameValue.isNotBlank() && !isOverLimit) {
+                            if (renameValue.isNotBlank()) {
                                 PlaylistStore.renamePlaylist(playlist.id, renameValue.trim())
                                 // Refresh the snapshot so the title + blend update immediately.
                                 selectedPlaylist = PlaylistStore.playlists.value.firstOrNull { it.id == playlist.id }
                             }
                             showRenameDialog = false
                         },
-                        enabled = renameValue.isNotBlank() && !isOverLimit && renameValue.trim() != playlist.name,
+                        enabled = renameValue.isNotBlank() && renameValue.trim() != playlist.name,
                     ) { Text("Save") }
                 },
                 dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") } },
@@ -269,10 +255,6 @@ fun QuickPicksScreen(
     // ★ Create Playlist dialog (triggered from the 3-dot menu)
     if (showCreateDialog) {
         var playlistName by remember { mutableStateOf("") }
-        val MAX_LETTERS = 10
-        fun letterCount(s: String): Int = s.count { it.isLetter() }
-        val remainingLetters = MAX_LETTERS - letterCount(playlistName)
-        val isOverLimit = remainingLetters < 0
 
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
@@ -283,32 +265,22 @@ fun QuickPicksScreen(
                 OutlinedTextField(
                     value = playlistName,
                     onValueChange = { newValue ->
-                        val filtered = newValue.filter { it.isLetter() || it.isWhitespace() }
-                        if (filtered.count { it.isLetter() } <= MAX_LETTERS) {
-                            playlistName = filtered
-                        }
+                        // No length or character limit — the user can use any name.
+                        playlistName = newValue.trimStart()
                     },
-                    placeholder = { Text("Playlist name (max 10 letters)") },
+                    placeholder = { Text("Playlist name") },
                     singleLine = true,
-                    isError = isOverLimit,
-                    supportingText = {
-                        Text(
-                            "$remainingLetters letters left",
-                            color = if (remainingLetters <= 2) Color(0xFFFF6B6B) else Color.White.copy(alpha = 0.5f),
-                            fontSize = 12.sp,
-                        )
-                    },
                 )
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        if (playlistName.isNotBlank() && !isOverLimit) {
+                        if (playlistName.isNotBlank()) {
                             PlaylistStore.createPlaylist(playlistName.trim())
                         }
                         showCreateDialog = false
                     },
-                    enabled = playlistName.isNotBlank() && !isOverLimit,
+                    enabled = playlistName.isNotBlank(),
                 ) { Text("Create") }
             },
             dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("Cancel") } },
