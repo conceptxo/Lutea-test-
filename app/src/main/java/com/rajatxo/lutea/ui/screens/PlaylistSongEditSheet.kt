@@ -43,7 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.rajatxo.lutea.data.store.SongEditStore
 import com.rajatxo.lutea.domain.model.Song
 import com.rajatxo.lutea.ui.components.CalSansFamily
@@ -89,6 +89,8 @@ fun PlaylistSongEditSheet(
         mutableStateOf(existing.lyrics?.count { it == '\n' }?.plus(1) ?: 0)
     }
     var lyricsError by remember { mutableStateOf<String?>(null) }
+    // The lyrics file read happens in a LaunchedEffect keyed off this URI.
+    var pendingLyricsUri by remember { mutableStateOf<Uri?>(null) }
 
     // Image picker for a custom cover.
     val coverPicker = rememberLauncherForActivityResult(
@@ -110,7 +112,6 @@ fun PlaylistSongEditSheet(
             pendingLyricsUri = uri
         }
     }
-    var pendingLyricsUri by remember { mutableStateOf<Uri?>(null) }
     LaunchedEffect(pendingLyricsUri) {
         val u = pendingLyricsUri ?: return@LaunchedEffect
         try {

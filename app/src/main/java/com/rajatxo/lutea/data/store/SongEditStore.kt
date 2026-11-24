@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.LongSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -52,7 +51,7 @@ object SongEditStore {
         _overrides.value = try {
             if (file.exists()) {
                 json.decodeFromString(
-                    MapSerializer(LongSerializer, serializer<SongOverride>()),
+                    MapSerializer(Long.serializer(), serializer<SongOverride>()),
                     file.readText(),
                 )
             } else emptyMap()
@@ -65,7 +64,7 @@ object SongEditStore {
         try {
             file.writeText(
                 json.encodeToString(
-                    MapSerializer(LongSerializer, serializer<SongOverride>()),
+                    MapSerializer(Long.serializer(), serializer<SongOverride>()),
                     _overrides.value,
                 ),
             )
