@@ -13,6 +13,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -65,6 +66,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -148,7 +150,10 @@ import kotlin.math.roundToInt
 // ------------------------------------------------------------------ tunables
 
 private const val COVER_HEIGHT_FRACTION = 0.60f   // square cover side, capped at 60% of height
-private const val TITLE_OVERLAP_FRACTION = 0.14f  // big title starts this much inside the cover's fade zone
+// The header used to start 14% of screen-height INSIDE the cover's fade zone, so the
+// playlist name overlapped the cover art. Now the header starts flush at the cover's
+// bottom edge (0 overlap) plus a small breathing gap below the cover.
+private const val TITLE_OVERLAP_FRACTION = -0.04f
 private val TopBarContentHeight = 56.dp
 private val ActionButtonSize = 44.dp
 private val BackButtonSize = 44.dp   // matches the menu + search circles so all three read equal
@@ -327,10 +332,51 @@ fun PlaylistDetailScreen(
             statsTop() + statsHeightPx + actionsGapPx
         }
 
-        // Where the search capsule lands: just past the back button (44dp) + an 8dp gap.
+        // ★ Scroll-driven search docking (Mochy pattern).
+        // As the header rises, the search button's natural rest position rises
+        // with it. Once that rest position meets the top-bar dock row, the
+        // button morphs into the docked capsule shape — purely from scroll, no
+        // tap. Songs then scroll BEHIND the docked capsule.
+        //
+        // scrollDockProgress in [0,1]:
+        //   0 = header at rest (search button still in its actions row)
+        //   1 = search rest position has risen to the dock row
+        // The window over which this happens is [actionsTop at rest, dockY].
         val searchDockX = with(density) { (sidePad + BackButtonSize + 8.dp).toPx() }
         val searchDockY = topInsetPx +
             (topBarContentPx - with(density) { ActionButtonSize.toPx() }) / 2f
+        // At-rest Y positions (header top = contentTopPx, before any scroll):
+        //   statsTop_rest  = contentTopPx + titleHeightPx + titleToStatsGapPx
+        //   actionsTop_rest = statsTop_rest + statsHeightPx + actionsGapPx
+        val actionsTopAtRestPx = contentTopPx + titleHeightPx + titleToStatsGapPx +
+            statsHeightPx + actionsGapPx
+        val scrollDockSpanPx = (actionsTopAtRestPx - searchDockY).coerceAtLeast(1f)
+        val scrollDockProgress by remember(progress, actionsTopAtRestPx) {
+            derivedStateOf {
+                // How far the header's actions row has RISEN from rest = the
+                // difference between at-rest and current actionsTop().
+                val rise = (actionsTopAtRestPx - actionsTop()).coerceAtLeast(0f)
+                (rise / scrollDockSpanPx).coerceIn(0f, 1f)
+            }
+        }
+
+        // ★ Direct-click open: when the user taps search while the header is at
+        //    rest (or not yet docked), auto-scroll the list up just far enough for
+        //    the search button's rest position to reach the dock row
+        //    (scrollDockProgress → 1). That hides the cover / name / numbers /
+        //    buttons ABOVE the capsule, leaving the song list visible below it —
+        //    the Mochy layout. We don't fight the user: if they've already docked,
+        //    we don't move.
+        LaunchedEffect(searchOpen) {
+            if (searchOpen && scrollDockProgress < 0.985f) {
+                // Scroll content UP by the remaining rise needed to fully dock.
+                val remainingRise = scrollDockSpanPx * (1f - scrollDockProgress)
+                listState.animateScrollBy(
+                    remainingRise,
+                    spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
+                )
+            }
+        }
         val searchCapsuleWidth =
             (screenW - sidePad * 2f - 104.dp).coerceAtLeast(120.dp)
 
@@ -360,25 +406,28 @@ fun PlaylistDetailScreen(
             drawContent()
         }
 
-        // Mochy's playlist bar frosts once the header is more than halfway gone.
-        // Read progress through a derived boolean so scrolling only recomposes
-        // at the threshold, not on every frame. No frost while search is open,
-        // so the docked search field stays sharp and readable.
+        // The top-bar frost used to snap on at a hard threshold (progress > 0.55)
+        // which made the playlist name "suddenly blur" the moment you crossed it.
+        // Instead the frost is ALWAYS present and eases in continuously across the
+        // whole scroll: 0 at rest, full by progress 0.55. So the title passes
+        // THROUGH an already-existing gradient instead of hitting a wall. Disabled
+        // (fully transparent) while search is open so the docked field stays sharp.
         val blurVisible by remember(progress, searchOpen) {
-            derivedStateOf { progress.value > 0.55f && !searchOpen }
+            derivedStateOf { progress.value > 0.001f && !searchOpen }
         }
-        val blurMorph = animateFloatAsState(
-            targetValue = if (blurVisible) 1f else 0f,
-            animationSpec = spring(
-                dampingRatio = 0.9f,
-                stiffness = Spring.StiffnessMediumLow,
-            ),
+        // Continuous eased morph in [0,1] — no spring, no threshold. A fast-out
+        // curve makes the frost grow with the scroll, not pop.
+        val blurMorph by animateFloatAsState(
+            targetValue = if (!searchOpen) {
+                ((progress.value - 0.001f) / 0.55f).coerceIn(0f, 1f)
+            } else 0f,
+            animationSpec = tween(durationMillis = 120, easing = FastOutSlowInEasing),
             label = "playlistTopBlur",
         )
         // Only compose the blur while it is actually visible; the value itself is
         // read in the draw phase, so the scroll animation never recomposes the list.
         val blurActive by remember {
-            derivedStateOf { blurMorph.value > 0.01f }
+            derivedStateOf { blurVisible && blurMorph > 0.01f }
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -433,6 +482,10 @@ fun PlaylistDetailScreen(
                                     thumbSize = thumbSize,
                                     sidePad = sidePad,
                                     onClick = { onSongHere(indexed.index, song) },
+                                    // Per-song menu: wired to nothing for now. The
+                                    // behaviour (favourite / add to playlist / etc.)
+                                    // comes in a later pass.
+                                    onMore = {},
                                 )
                                 if (i < visibleSongs.lastIndex) {
                                     DetailRowDivider(sidePad = sidePad, thumbSize = thumbSize)
@@ -458,23 +511,6 @@ fun PlaylistDetailScreen(
                     sidePad = sidePad,
                     statsTop = statsTop,
                 )
-
-                // Controls scroll with the header and are part of the captured
-                // page too, so the top glass frosts them as they pass under it.
-                PlaylistActionsOverlay(
-                    actionsTop = actionsTop,
-                    searchOpen = searchOpen,
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { searchQuery = it },
-                    onOpenSearch = { searchOpen = true },
-                    searchDockX = searchDockX,
-                    searchDockY = searchDockY,
-                    searchCapsuleWidth = searchCapsuleWidth,
-                    isPlaying = showPause,
-                    onPlayPause = onPlayPause,
-                    onShuffle = onShuffleHere,
-                    onCustomOrder = onCustomOrder,
-                )
             }
 
             // Real backdrop blur, full at the status bar and eased to zero
@@ -482,11 +518,33 @@ fun PlaylistDetailScreen(
             if (blurActive) {
                 PlaylistTopBlur(
                     backdrop = pageBackdrop,
-                    morph = { blurMorph.value },
+                    morph = { blurMorph },
                     height = topInset + 96.dp,
                     tint = coverColor,
                 )
             }
+
+            // Controls (shuffle / play / custom-order / search) are drawn ABOVE
+            // the top blur so the scroll-docked glass search capsule sits on top
+            // of the frost — like the back + menu discs do. The shuffle / play /
+            // custom-order buttons scroll with the header and are gone by the
+            // time the frost is strong, so not frosting them is invisible.
+            PlaylistActionsOverlay(
+                actionsTop = actionsTop,
+                searchOpen = searchOpen,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                onOpenSearch = { searchOpen = true },
+                searchDockX = searchDockX,
+                searchDockY = searchDockY,
+                searchCapsuleWidth = searchCapsuleWidth,
+                isPlaying = showPause,
+                onPlayPause = onPlayPause,
+                onShuffle = onShuffleHere,
+                onCustomOrder = onCustomOrder,
+                scrollDockProgress = scrollDockProgress,
+                backdrop = pageBackdrop,
+            )
 
             // Back + menu. Transparent bar, so songs pass behind the buttons.
             PlaylistTopBar(
@@ -784,6 +842,10 @@ private fun PlaylistActionsOverlay(
     onPlayPause: () -> Unit,
     onShuffle: () -> Unit,
     onCustomOrder: () -> Unit,
+    // Driven by scroll (0 = at rest, 1 = docked). Read as a value so the layout
+    // re-measures as the header rises.
+    scrollDockProgress: Float,
+    backdrop: LayerBackdrop?,
 ) {
     val searchProgress by animateFloatAsState(
         targetValue = if (searchOpen) 1f else 0f,
@@ -818,6 +880,10 @@ private fun PlaylistActionsOverlay(
                     DetailPlayGlyph(Color.Black, Modifier.size(22.dp))
                 }
             }
+            // The search capsule's SURFACE crossfades between white (when opened
+            // by a tap) and glass morphism (when docked purely by scroll). Its
+            // position + width morph is driven by the layout below, which uses
+            // max(searchProgress, scrollDockProgress) so either route can dock it.
             DetailSearchCapsule(
                 expanded = searchOpen,
                 progress = searchProgress,
@@ -825,8 +891,12 @@ private fun PlaylistActionsOverlay(
                 query = searchQuery,
                 onQueryChange = onSearchQueryChange,
                 onOpen = onOpenSearch,
-                white = true,
-                backdrop = null,
+                // whiteAmount: 1 = solid white (click-opened), 0 = glass (scroll-docked).
+                whiteAmount = { searchProgress },
+                // Width also follows the combined dock so a scroll-docked circle
+                // grows into the capsule shape even without a tap.
+                dockProgress = { maxOf(searchProgress, scrollDockProgress) },
+                backdrop = backdrop,
             )
             DetailPill(
                 label = "Custom order",
@@ -851,7 +921,8 @@ private fun PlaylistActionsOverlay(
         val searchRestX = playRestX + play.width + gapPx
 
         layout(constraints.maxWidth, constraints.maxHeight) {
-            val p = searchProgress.coerceIn(0f, 1f)
+            // Combined dock: scroll OR tap can each fully dock the search button.
+            val p = maxOf(searchProgress, scrollDockProgress).coerceIn(0f, 1f)
             val restY = actionsTop()
             val shuffleY = restY + (restSizePx - shuffle.height) / 2f
             val playY = restY + (restSizePx - play.height) / 2f
@@ -905,16 +976,20 @@ private fun DetailSearchCapsule(
     query: String,
     onQueryChange: (String) -> Unit,
     onOpen: () -> Unit,
-    white: Boolean = false,
+    // 1 = solid white (click-opened), 0 = glass morphism (scroll-docked). Crossfaded.
+    whiteAmount: () -> Float,
+    // Combined dock amount (max of click-open and scroll-dock) — drives width.
+    dockProgress: () -> Float,
     backdrop: LayerBackdrop?,
 ) {
     val density = LocalDensity.current
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val interaction = remember { MutableInteractionSource() }
-    val currentWidth = ActionButtonSize + (width - ActionButtonSize) * progress
-    // Keep the glyph at the left of the growing capsule instead of letting the
-    // expanding centre drag it across the text field.
+    // Width follows the COMBINED dock so a scroll-docked circle grows into the
+    // capsule shape even without a tap.
+    val dockP = dockProgress().coerceIn(0f, 1f)
+    val currentWidth = ActionButtonSize + (width - ActionButtonSize) * dockP
     val iconShiftDp = ActionButtonSize * 0.5f - currentWidth * 0.5f
     val pressModifier = if (expanded) {
         Modifier.clickable(
@@ -925,12 +1000,9 @@ private fun DetailSearchCapsule(
     } else {
         Modifier.detailPressable(onClick = onOpen)
     }
-    val ink = if (white) Color.Black else Color.White
-    val surface = if (white) {
-        Modifier.background(Color.White, CircleShape)
-    } else {
-        Modifier.detailGlass(CircleShape, backdrop = backdrop)
-    }
+    val wa = whiteAmount().coerceIn(0f, 1f)
+    // Ink: black on white, white on glass — crossfade between the two.
+    val ink = lerp(Color.White, Color.Black, wa)
 
     LaunchedEffect(expanded) {
         if (expanded) {
@@ -947,10 +1019,26 @@ private fun DetailSearchCapsule(
             .width(currentWidth)
             .height(ActionButtonSize)
             .then(pressModifier)
-            .then(surface)
+            .clip(CircleShape)
             .semantics { contentDescription = "Search playlist" },
         contentAlignment = Alignment.Center,
     ) {
+        // Two stacked surfaces, alpha-crossfaded by [wa]:
+        //  - glass morphism (backdrop blur) when scroll-docked  [alpha = 1 - wa]
+        //  - solid white when click-opened                      [alpha = wa]
+        // Stacking two boxes lets each surface own its draw phase cleanly.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = 1f - wa }
+                .detailGlass(CircleShape, backdrop = backdrop)
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = wa }
+                .background(Color.White, CircleShape)
+        )
         DetailSearchGlyph(
             color = ink.copy(alpha = 0.9f),
             modifier = Modifier
@@ -1225,6 +1313,7 @@ private fun PlaylistSongRow(
     thumbSize: Dp,
     sidePad: Dp,
     onClick: () -> Unit,
+    onMore: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier
@@ -1238,18 +1327,49 @@ private fun PlaylistSongRow(
         Column(modifier = Modifier.weight(1f)) {
             DetailText(text = song.title.orEmpty(), size = 16.sp)
             Spacer(Modifier.height(2.dp))
-            DetailText(
-                text = song.artist.orEmpty(),
-                size = 13.sp,
-                color = Color.White.copy(alpha = 0.58f),
+            // Artist and duration now sit on the same line — duration as a muted
+            // suffix after the artist, separated by a small dot. The right-side
+            // slot that duration used to occupy now holds the per-song menu.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DetailText(
+                    text = song.artist.orEmpty(),
+                    size = 13.sp,
+                    color = Color.White.copy(alpha = 0.58f),
+                    maxLines = 1,
+                )
+                Spacer(Modifier.width(6.dp))
+                DetailText(
+                    text = "•",
+                    size = 13.sp,
+                    color = Color.White.copy(alpha = 0.30f),
+                )
+                Spacer(Modifier.width(6.dp))
+                DetailText(
+                    text = detailClock(detailDurationMs(song.duration)),
+                    size = 13.sp,
+                    color = Color.White.copy(alpha = 0.45f),
+                    maxLines = 1,
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        // Per-song menu (3-dot). Tapping the row still plays; tapping the dots
+        // opens the song's own menu (favourite / add to playlist / etc.).
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .detailPressable(
+                    pressedScale = 0.90f,
+                    onClick = onMore,
+                )
+                .semantics { contentDescription = "More options for ${song.title}" },
+            contentAlignment = Alignment.Center,
+        ) {
+            DetailDotsGlyph(
+                color = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp),
             )
         }
-        Spacer(Modifier.width(12.dp))
-        DetailText(
-            text = detailClock(detailDurationMs(song.duration)),
-            size = 12.sp,
-            color = Color.White.copy(alpha = 0.45f),
-        )
     }
 }
 
@@ -1279,7 +1399,9 @@ private fun DetailRowDivider(sidePad: Dp, thumbSize: Dp) {
     Box(
         Modifier
             .fillMaxWidth()
-            .padding(start = sidePad + thumbSize + 14.dp, end = sidePad)
+            // Start after the thumbnail; end before the 32dp per-song menu button
+            // so the divider lines up with the text block, not under the dots.
+            .padding(start = sidePad + thumbSize + 14.dp, end = sidePad + 32.dp + 8.dp)
             .height(1.dp)
             .background(Color.White.copy(alpha = 0.07f)),
     )
