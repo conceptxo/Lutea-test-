@@ -51,7 +51,7 @@ object SongEditStore {
         _overrides.value = try {
             if (file.exists()) {
                 json.decodeFromString(
-                    MapSerializer(Long.serializer(), serializer<SongOverride>()),
+                    MapSerializer(Long.serializer(), SongOverride.serializer()),
                     file.readText(),
                 )
             } else emptyMap()
@@ -64,7 +64,7 @@ object SongEditStore {
         try {
             file.writeText(
                 json.encodeToString(
-                    MapSerializer(Long.serializer(), serializer<SongOverride>()),
+                    MapSerializer(Long.serializer(), SongOverride.serializer()),
                     _overrides.value,
                 ),
             )
