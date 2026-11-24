@@ -542,15 +542,14 @@ fun PlaylistDetailScreen(
                             )
                         }
                     } else {
-                        itemsIndexed(visibleSongs) { i, indexed ->
-                            val song = indexed.value
+                        itemsIndexed(visibleSongs) { i, song ->
                             Column {
                                 PlaylistSongRow(
                                     song = song,
                                     art = songArt(song),
                                     thumbSize = thumbSize,
                                     sidePad = sidePad,
-                                    onClick = { onSongHere(indexed.index, song) },
+                                    onClick = { onSongHere(i, song) },
                                     onMore = { songMenuSong = song },
                                 )
                                 if (i < visibleSongs.lastIndex) {
