@@ -835,11 +835,18 @@ private fun AddSongsToPlaylistDialog(
 private fun copyCoverToInternal(context: Context, source: android.net.Uri, playlistId: Long): String? {
     return try {
         val dir = java.io.File(context.filesDir, "playlist_covers").apply { mkdirs() }
-        val target = java.io.File(dir, "$playlistId.jpg")
+        // Unique name per change. A stable path is served from Coil's memory cache,
+        // so the new cover only showed up after the app restarted.
+        val target = java.io.File(dir, "$playlistId-${System.currentTimeMillis()}.jpg")
         context.contentResolver.openInputStream(source)?.use { input ->
             target.outputStream().use { output -> input.copyTo(output) }
         } ?: return null
-        target.toURI().toString()  // "file:///data/user/0/.../playlist_covers/123.jpg"
+        dir.listFiles()?.forEach { old ->
+            if (old != target && (old.name == "$playlistId.jpg" || old.name.startsWith("$playlistId-"))) {
+                old.delete()
+            }
+        }
+        target.toURI().toString()  // "file:///data/user/0/.../playlist_covers/123-1712...jpg"
     } catch (e: Exception) {
         null
     }

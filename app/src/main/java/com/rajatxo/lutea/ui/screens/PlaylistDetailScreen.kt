@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -91,8 +90,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import androidx.core.view.WindowCompat
 import coil3.compose.AsyncImage
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -163,6 +160,10 @@ private val StatsToActionsGapDp = 6.dp                // tighter gap between sta
 private val ActionsToCustomOrderGapDp = 4.dp          // tighter gap between buttons and custom order
 private val TitleFontSize = 32.sp                     // slightly smaller playlist name
 private val TitleLineHeight = 36.sp
+// Top-blur mask: full strength down to this fraction of the band, then a
+// smoothstep fade to zero. Many stops keep the fade free of visible steps.
+private const val BLUR_MASK_START = 0.28f
+private const val BLUR_MASK_STEPS = 24
 
 /**
  * Playlist detail: cover art that rides up, zooms, dims, dissolves and blurs as the list
@@ -203,20 +204,32 @@ fun PlaylistDetailScreen(
     var searchQuery by remember { mutableStateOf("") }
     var playerVisible by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
-    // Back closes the topmost layer first: lyrics, player, search, then the page.
-    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen) { onBack() }
+    var menuOpen by remember { mutableStateOf(false) }
+    // Back closes the topmost layer first: lyrics, player, menu, search, then the page.
+    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen && !menuOpen) { onBack() }
     BackHandler(enabled = searchOpen) { searchOpen = false }
+    BackHandler(enabled = menuOpen) { menuOpen = false }
     BackHandler(enabled = showLyrics) { showLyrics = false }
     BackHandler(enabled = playerVisible && !showLyrics) { playerVisible = false }
     LaunchedEffect(searchOpen) {
-        if (!searchOpen) searchQuery = ""
+        if (searchOpen) menuOpen = false else searchQuery = ""
     }
 
-    val isPlaying by PlaybackConnection.isPlaying.collectAsState()
+    // Only this screen's own play/shuffle/song taps count as this playlist playing.
+    // Playback started elsewhere (mini player, Quick Picks) must leave the capsule on Play.
+    val playing by PlaybackConnection.isPlaying.collectAsState()
+    var startedHere by remember(playlist.id) { mutableStateOf(false) }
+    val showPause = startedHere && playing
     val onPlayPause = {
-        if (PlaybackConnection.currentSong.value == null) onPlayAll()
-        else PlaybackConnection.playPause()
+        if (startedHere && PlaybackConnection.currentSong.value != null) {
+            PlaybackConnection.playPause()
+        } else {
+            startedHere = true
+            onPlayAll()
+        }
     }
+    val onShuffleHere = { startedHere = true; onShuffle() }
+    val onSongHere: (Int, Song) -> Unit = { i, song -> startedHere = true; onSongClick(i, song) }
 
     val themeState = rememberCoverThemeColor(playlist.coverUri, fallbackSeed = playlist.id.toString())
     val listState = rememberLazyListState()
@@ -410,15 +423,20 @@ fun PlaylistDetailScreen(
                             )
                         }
                     } else {
-                        itemsIndexed(visibleSongs) { _, indexed ->
+                        itemsIndexed(visibleSongs) { i, indexed ->
                             val song = indexed.value
-                            PlaylistSongRow(
-                                song = song,
-                                art = songArt(song),
-                                thumbSize = thumbSize,
-                                sidePad = sidePad,
-                                onClick = { onSongClick(indexed.index, song) },
-                            )
+                            Column {
+                                PlaylistSongRow(
+                                    song = song,
+                                    art = songArt(song),
+                                    thumbSize = thumbSize,
+                                    sidePad = sidePad,
+                                    onClick = { onSongHere(indexed.index, song) },
+                                )
+                                if (i < visibleSongs.lastIndex) {
+                                    DetailRowDivider(sidePad = sidePad, thumbSize = thumbSize)
+                                }
+                            }
                         }
                     }
                 }
@@ -439,10 +457,27 @@ fun PlaylistDetailScreen(
                     sidePad = sidePad,
                     statsTop = statsTop,
                 )
+
+                // Controls scroll with the header and are part of the captured
+                // page too, so the top glass frosts them as they pass under it.
+                PlaylistActionsOverlay(
+                    actionsTop = actionsTop,
+                    searchOpen = searchOpen,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    onOpenSearch = { searchOpen = true },
+                    searchDockX = searchDockX,
+                    searchDockY = searchDockY,
+                    searchCapsuleWidth = searchCapsuleWidth,
+                    isPlaying = showPause,
+                    onPlayPause = onPlayPause,
+                    onShuffle = onShuffleHere,
+                    onCustomOrder = onCustomOrder,
+                )
             }
 
             // Real backdrop blur, full at the status bar and eased to zero
-            // 96dp below it. Drawn above the captured page, below the controls.
+            // 96dp below it. Drawn above the captured page, below the chrome.
             if (blurActive) {
                 PlaylistTopBlur(
                     backdrop = pageBackdrop,
@@ -452,35 +487,14 @@ fun PlaylistDetailScreen(
                 )
             }
 
-            // Controls stay sharp above the blur. Title/stats/shuffle scroll
-            // with the header; only the search control detaches into the top bar.
-            PlaylistActionsOverlay(
-                actionsTop = actionsTop,
-                searchOpen = searchOpen,
-                searchQuery = searchQuery,
-                onSearchQueryChange = { searchQuery = it },
-                onOpenSearch = { searchOpen = true },
-                searchDockX = searchDockX,
-                searchDockY = searchDockY,
-                searchCapsuleWidth = searchCapsuleWidth,
-                isPlaying = isPlaying,
-                onPlayPause = onPlayPause,
-                onShuffle = onShuffle,
-                onCustomOrder = onCustomOrder,
-                backdrop = pageBackdrop,
-            )
-
             // Back + menu. Transparent bar, so songs pass behind the buttons.
             PlaylistTopBar(
                 searchOpen = searchOpen,
                 onCloseSearch = { searchOpen = false },
+                onMenuToggle = { menuOpen = true },
                 topInset = topInset,
                 sidePad = sidePad,
                 onBack = onBack,
-                onRename = onRename,
-                onChangeCover = onChangeCover,
-                onAddSongs = onAddSongs,
-                onDelete = onDelete,
                 backdrop = pageBackdrop,
                 modifier = Modifier.align(Alignment.TopStart),
             )
@@ -528,6 +542,19 @@ fun PlaylistDetailScreen(
                     backdrop = pageBackdrop,
                 )
             }
+            // Glass playlist menu, drawn over the page so it can sample the cover.
+            if (menuOpen) {
+                PlaylistMenuOverlay(
+                    top = topInset + TopBarContentHeight + 4.dp,
+                    endPad = sidePad,
+                    backdrop = pageBackdrop,
+                    onDismiss = { menuOpen = false },
+                    onRename = onRename,
+                    onChangeCover = onChangeCover,
+                    onAddSongs = onAddSongs,
+                    onDelete = onDelete,
+                )
+            }
             FullPlayer(
                 visible = playerVisible,
                 onClose = { playerVisible = false; showLyrics = false },
@@ -569,12 +596,9 @@ private fun PlaylistPageBackground(
 
 /**
  * Mochy's top-bar blur, reduced to the one thing the playlist needs: a real
- * backdrop blur of the page, strongest at the status bar and faded to zero by
- * the bottom of the band. Three overlapping radii approximate the variable
- * radius ramp; the DstIn gradient removes the hard edge.
- *
- * shortcut: stacked bands instead of Mochy's single-pass variable-radius
- * shader. Upgrade to an AGSL effect only if band seams ever become visible.
+ * backdrop blur of the page, full strength at the status bar and melted into
+ * the list below. One blur pass with a smoothstep mask: no stacked bands, so
+ * the downward fade has no seam and the top stays uniform.
  */
 @Composable
 private fun PlaylistTopBlur(
@@ -584,7 +608,15 @@ private fun PlaylistTopBlur(
     tint: () -> Color,
 ) {
     val density = LocalDensity.current
-    val maxBlurPx = with(density) { 14.dp.toPx() }
+    val blurPx = with(density) { 16.dp.toPx() }
+    val mask = remember {
+        Array(BLUR_MASK_STEPS + 1) { i ->
+            val t = i / BLUR_MASK_STEPS.toFloat()
+            val eased = t * t * (3f - 2f * t)
+            (BLUR_MASK_START + (1f - BLUR_MASK_START) * t) to
+                Color.Black.copy(alpha = 1f - eased)
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -598,85 +630,27 @@ private fun PlaylistTopBlur(
                 // Tint the glass once, then fade blur + tint together.
                 drawRect(tint().copy(alpha = 0.20f))
                 drawRect(
-                    brush = Brush.verticalGradient(
-                        0f to Color.Black,
-                        0.64f to Color.Black,
-                        0.94f to Color.Transparent,
-                        1f to Color.Transparent,
-                    ),
+                    brush = Brush.verticalGradient(*mask),
                     blendMode = BlendMode.DstIn,
                 )
             },
     ) {
-        // Three overlapping blur radii: 14dp at the status bar, 9dp lower,
-        // 4dp near the fade. The later bands cross-fade over the earlier ones,
-        // so the composite stays opaque and never ghosts against sharp rows.
-        PlaylistBlurBand(
-            backdrop = backdrop,
-            blurPx = maxBlurPx,
-            morph = morph,
-            modifier = Modifier.fillMaxSize(),
-        )
-        PlaylistBlurBand(
-            backdrop = backdrop,
-            blurPx = maxBlurPx * 0.65f,
-            morph = morph,
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.50f)
-                .offset(y = height * 0.25f),
-            fadeIn = 0.35f,
-        )
-        PlaylistBlurBand(
-            backdrop = backdrop,
-            blurPx = maxBlurPx * 0.28f,
-            morph = morph,
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.45f)
-                .offset(y = height * 0.55f),
-            fadeIn = 0.35f,
+                .fillMaxSize()
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { RectangleShape },
+                    // A background fade must not inherit the button glass rim/shadow.
+                    highlight = null,
+                    shadow = null,
+                    innerShadow = null,
+                    effects = {
+                        blur(blurPx * morph())
+                    },
+                ),
         )
     }
-}
-
-@Composable
-private fun PlaylistBlurBand(
-    backdrop: LayerBackdrop,
-    blurPx: Float,
-    morph: () -> Float,
-    modifier: Modifier = Modifier,
-    fadeIn: Float = 0f,
-) {
-    Box(
-        modifier = modifier
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithContent {
-                drawContent()
-                if (fadeIn > 0f) {
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            fadeIn to Color.Black,
-                            1f to Color.Black,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
-                }
-            }
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { RectangleShape },
-                // A background fade must not inherit the button glass rim/shadow:
-                // that is the dark line that used to show at the band's bottom.
-                highlight = null,
-                shadow = null,
-                innerShadow = null,
-                effects = {
-                    blur(blurPx * morph())
-                },
-            ),
-    )
 }
 
 // ------------------------------------------------------------------ header + action buttons
@@ -694,8 +668,8 @@ private fun PlaylistHeaderSpacer(
     ) {
         DetailText(
             text = name,
-            size = 36.sp,
-            lineHeight = 40.sp,
+            size = TitleFontSize,
+            lineHeight = TitleLineHeight,
             family = CalSansFamily,
             maxLines = 3,
             textAlign = TextAlign.Center,
@@ -703,11 +677,11 @@ private fun PlaylistHeaderSpacer(
                 .fillMaxWidth()
                 .graphicsLayer { alpha = 0f },
         )
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(TitleToStatsGapDp))
         Spacer(Modifier.height(PlaylistStatsHeight))
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(StatsToActionsGapDp))
         Spacer(Modifier.height(ActionButtonSize))
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(ActionsToCustomOrderGapDp))
         Spacer(Modifier.height(CustomOrderHeight))
         Spacer(Modifier.height(16.dp))
     }
@@ -809,7 +783,6 @@ private fun PlaylistActionsOverlay(
     onPlayPause: () -> Unit,
     onShuffle: () -> Unit,
     onCustomOrder: () -> Unit,
-    backdrop: LayerBackdrop?,
 ) {
     val searchProgress by animateFloatAsState(
         targetValue = if (searchOpen) 1f else 0f,
@@ -827,7 +800,6 @@ private fun PlaylistActionsOverlay(
                 desc = "Shuffle playlist",
                 onClick = onShuffle,
                 white = true,
-                backdrop = backdrop,
             ) {
                 DetailShuffleGlyph(Color.Black, Modifier.size(18.dp))
             }
@@ -837,6 +809,7 @@ private fun PlaylistActionsOverlay(
                 onClick = onPlayPause,
                 height = ActionButtonSize,
                 horizontalPadding = PlayCapsulePadding,
+                reserveLabel = "Pause",
             ) {
                 if (isPlaying) {
                     DetailPauseGlyph(Color.Black, Modifier.size(22.dp))
@@ -852,7 +825,7 @@ private fun PlaylistActionsOverlay(
                 onQueryChange = onSearchQueryChange,
                 onOpen = onOpenSearch,
                 white = true,
-                backdrop = backdrop,
+                backdrop = null,
             )
             DetailPill(
                 label = "Custom order",
@@ -860,7 +833,6 @@ private fun PlaylistActionsOverlay(
                 onClick = onCustomOrder,
                 height = CustomOrderHeight,
                 horizontalPadding = 18.dp,
-                backdrop = backdrop,
             ) {
                 DetailReorderGlyph(Color.White, Modifier.size(16.dp))
             }
@@ -1033,6 +1005,8 @@ private fun DetailPill(
     enabled: Boolean = true,
     height: Dp = ActionButtonSize,
     horizontalPadding: Dp = 26.dp,
+    // Widest label this pill can show, so Play <-> Pause keeps one width.
+    reserveLabel: String? = null,
     backdrop: LayerBackdrop? = null,
     icon: @Composable () -> Unit,
 ) {
@@ -1053,7 +1027,12 @@ private fun DetailPill(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         icon()
-        DetailText(text = label, size = 15.sp, color = fg)
+        Box {
+            if (reserveLabel != null) {
+                DetailText(text = reserveLabel, size = 15.sp, color = Color.Transparent)
+            }
+            DetailText(text = label, size = 15.sp, color = fg)
+        }
     }
 }
 
@@ -1113,14 +1092,9 @@ private fun Modifier.detailGlass(
 private fun DetailMoreMenu(
     searchOpen: Boolean,
     onCloseSearch: () -> Unit,
-    onRename: () -> Unit,
-    onChangeCover: () -> Unit,
-    onAddSongs: () -> Unit,
-    onDelete: () -> Unit,
+    onToggle: () -> Unit,
     backdrop: LayerBackdrop?,
 ) {
-    var open by remember { mutableStateOf(false) }
-    val density = LocalDensity.current
     val dotsAlpha by animateFloatAsState(
         targetValue = if (searchOpen) 0f else 1f,
         animationSpec = tween(durationMillis = 220),
@@ -1131,63 +1105,95 @@ private fun DetailMoreMenu(
         animationSpec = tween(durationMillis = 220),
         label = "playlistMenuCross",
     )
-    LaunchedEffect(searchOpen) {
-        if (searchOpen) open = false
-    }
 
-    Box {
-        Box(
-            modifier = Modifier
-                .size(ActionButtonSize)
-                .detailPressable {
-                    if (searchOpen) onCloseSearch() else open = true
-                }
-                .detailGlass(CircleShape, backdrop = backdrop)
-                .semantics {
-                    contentDescription = if (searchOpen) "Close search" else "More"
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            DetailDotsGlyph(
-                color = Color.White,
-                modifier = Modifier
-                    .size(20.dp)
-                    .graphicsLayer {
-                        alpha = dotsAlpha
-                        rotationZ = 90f * (1f - dotsAlpha)
-                    },
-            )
-            DetailCloseGlyph(
-                color = Color.White,
-                modifier = Modifier
-                    .size(20.dp)
-                    .graphicsLayer {
-                        alpha = crossAlpha
-                        rotationZ = -90f * (1f - crossAlpha)
-                    },
-            )
-        }
-
-        if (open && !searchOpen) {
-            Popup(
-                alignment = Alignment.TopEnd,
-                offset = IntOffset(0, with(density) { 48.dp.roundToPx() }),
-                onDismissRequest = { open = false },
-                properties = PopupProperties(focusable = true),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .width(208.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0xFF1F1F24))
-                        .padding(vertical = 6.dp),
-                ) {
-                    DetailMenuRow("Rename") { open = false; onRename() }
-                    DetailMenuRow("Change cover") { open = false; onChangeCover() }
-                    DetailMenuRow("Add songs") { open = false; onAddSongs() }
-                    DetailMenuRow("Delete", destructive = true) { open = false; onDelete() }
-                }
+    Box(
+        modifier = Modifier
+            .size(ActionButtonSize)
+            .detailPressable {
+                if (searchOpen) onCloseSearch() else onToggle()
             }
+            .detailGlass(CircleShape, backdrop = backdrop)
+            .semantics {
+                contentDescription = if (searchOpen) "Close search" else "More"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        DetailDotsGlyph(
+            color = Color.White,
+            modifier = Modifier
+                .size(20.dp)
+                .graphicsLayer {
+                    alpha = dotsAlpha
+                    rotationZ = 90f * (1f - dotsAlpha)
+                },
+        )
+        DetailCloseGlyph(
+            color = Color.White,
+            modifier = Modifier
+                .size(20.dp)
+                .graphicsLayer {
+                    alpha = crossAlpha
+                    rotationZ = -90f * (1f - crossAlpha)
+                },
+        )
+    }
+}
+
+/**
+ * Coral's glass playlist menu: a real backdrop blur of the cover behind the
+ * card. Drawn inline (not in a Popup) so it can sample the page backdrop.
+ */
+@Composable
+private fun PlaylistMenuOverlay(
+    top: Dp,
+    endPad: Dp,
+    backdrop: LayerBackdrop?,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit,
+    onChangeCover: () -> Unit,
+    onAddSongs: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onDismiss,
+            ),
+    ) {
+        val cardShape = RoundedCornerShape(18.dp)
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = top, end = endPad)
+                .width(208.dp)
+                .clip(cardShape)
+                .then(
+                    if (backdrop != null) {
+                        Modifier.drawBackdrop(
+                            backdrop = backdrop,
+                            shape = { cardShape },
+                            effects = {
+                                vibrancy()
+                                colorControls(brightness = 0.05f, contrast = 1f, saturation = 1.2f)
+                                blur(20.dp.toPx())
+                            },
+                            onDrawSurface = { drawRect(Color.Black.copy(alpha = 0.42f)) },
+                        )
+                    } else {
+                        Modifier.background(Color.Black.copy(alpha = 0.55f))
+                    }
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.15f), cardShape)
+                .padding(vertical = 6.dp),
+        ) {
+            DetailMenuRow("Rename") { onDismiss(); onRename() }
+            DetailMenuRow("Change cover") { onDismiss(); onChangeCover() }
+            DetailMenuRow("Add songs") { onDismiss(); onAddSongs() }
+            DetailMenuRow("Delete", destructive = true) { onDismiss(); onDelete() }
         }
     }
 }
@@ -1251,7 +1257,7 @@ private fun DetailSongThumb(art: Any?, size: Dp) {
     Box(
         modifier = Modifier
             .size(size)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(6.dp))
             .background(Color.White.copy(alpha = 0.08f)),
         contentAlignment = Alignment.Center,
     ) {
@@ -1265,6 +1271,17 @@ private fun DetailSongThumb(art: Any?, size: Dp) {
             )
         }
     }
+}
+
+@Composable
+private fun DetailRowDivider(sidePad: Dp, thumbSize: Dp) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = sidePad + thumbSize + 14.dp, end = sidePad)
+            .height(1.dp)
+            .background(Color.White.copy(alpha = 0.07f)),
+    )
 }
 
 @Composable
@@ -1292,13 +1309,10 @@ private fun DetailEmptyHint(sidePad: Dp, searching: Boolean) {
 private fun PlaylistTopBar(
     searchOpen: Boolean,
     onCloseSearch: () -> Unit,
+    onMenuToggle: () -> Unit,
     topInset: Dp,
     sidePad: Dp,
     onBack: () -> Unit,
-    onRename: () -> Unit,
-    onChangeCover: () -> Unit,
-    onAddSongs: () -> Unit,
-    onDelete: () -> Unit,
     backdrop: LayerBackdrop?,
     modifier: Modifier = Modifier,
 ) {
@@ -1320,10 +1334,7 @@ private fun PlaylistTopBar(
             DetailMoreMenu(
                 searchOpen = searchOpen,
                 onCloseSearch = onCloseSearch,
-                onRename = onRename,
-                onChangeCover = onChangeCover,
-                onAddSongs = onAddSongs,
-                onDelete = onDelete,
+                onToggle = onMenuToggle,
                 backdrop = backdrop,
             )
         }
