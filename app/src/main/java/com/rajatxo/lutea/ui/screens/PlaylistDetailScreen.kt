@@ -1567,9 +1567,11 @@ private fun DetailPill(
     // Widest label this pill can show, so Play <-> Pause keeps one width.
     reserveLabel: String? = null,
     backdrop: LayerBackdrop? = null,
-    icon: @Composable () -> Unit,
     // Optional trailing slot (e.g. the lock circle on the custom-order pill).
+    // Must come before `icon` so the trailing-lambda call syntax still binds to
+    // `icon` (the required, last parameter).
     trailing: (@Composable () -> Unit)? = null,
+    icon: @Composable () -> Unit,
 ) {
     val fg = if (filled) Color.Black else Color.White
     val surface = if (filled) {
@@ -2206,15 +2208,14 @@ private fun DetailLockGlyph(color: Color, modifier: Modifier = Modifier) {
         // Shackle (arch) — stroked.
         val shacklePath = Path().apply {
             addArc(
-                rect = androidx.compose.ui.geometry.Rect(
+                oval = androidx.compose.ui.geometry.Rect(
                     left = w * 0.36f,
                     top = h * 0.18f,
                     right = w * 0.64f,
                     bottom = h * 0.52f,
                 ),
-                startAngleDegrees = 180f,
-                sweepAngleDegrees = 180f,
-                forceMoveTo = true,
+                startAngle = 180f,
+                sweepAngle = 180f,
             )
         }
         drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
@@ -2243,15 +2244,14 @@ private fun DetailUnlockGlyph(color: Color, modifier: Modifier = Modifier) {
         // Shackle — open: an arc on the right side lifted off the body.
         val shacklePath = Path().apply {
             addArc(
-                rect = androidx.compose.ui.geometry.Rect(
+                oval = androidx.compose.ui.geometry.Rect(
                     left = w * 0.44f,
                     top = h * 0.06f,
                     right = w * 0.72f,
                     bottom = h * 0.40f,
                 ),
-                startAngleDegrees = 200f,
-                sweepAngleDegrees = 160f,
-                forceMoveTo = true,
+                startAngle = 200f,
+                sweepAngle = 160f,
             )
         }
         drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
