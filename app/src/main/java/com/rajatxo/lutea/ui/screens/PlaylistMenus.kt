@@ -55,19 +55,12 @@ import com.rajatxo.lutea.ui.components.CalSansFamily
 
 /** Sort modes for the custom-order menu. */
 enum class PlaylistSortMode(val label: String) {
-    PIN("Pin"),
     TITLE("Title"),
-    DATE_PLAYED("Date played"),
-    DATE_LIKED("Date liked"),
-    LISTENING_TIME("Listening time"),
-    RELATIVE_LISTENING_TIME("Relative listening time"),
-    POSITION("Position"),
-    ARTIST("Artist"),
-    ALBUM("Album"),
-    ARTIST_ALBUM("Artist, Album"),
-    ALBUM_YEAR("Album year"),
     DATE_ADDED("Date added"),
     DURATION("Duration"),
+    LISTENING_TIME("Listening time"),
+    ARTIST("Artist"),
+    ALBUM("Album"),
 }
 
 // ── Glyphs for the menus. Drawn on Canvas to match the rest of the detail UI. ──
@@ -438,18 +431,11 @@ fun PlaylistCustomOrderMenu(
 private fun sortIcon(mode: PlaylistSortMode, color: Color) {
     val m = Modifier.size(16.dp)
     when (mode) {
-        PlaylistSortMode.PIN -> MenuPinGlyph(color, m)
         PlaylistSortMode.TITLE,
         PlaylistSortMode.ARTIST,
-        PlaylistSortMode.ALBUM,
-        PlaylistSortMode.ARTIST_ALBUM,
-        PlaylistSortMode.ALBUM_YEAR,
-        PlaylistSortMode.POSITION -> MenuArtistGlyph(color, m)
-        PlaylistSortMode.DATE_PLAYED,
-        PlaylistSortMode.DATE_LIKED,
+        PlaylistSortMode.ALBUM -> MenuArtistGlyph(color, m)
         PlaylistSortMode.DATE_ADDED -> MenuInfoGlyph(color, m)
         PlaylistSortMode.LISTENING_TIME,
-        PlaylistSortMode.RELATIVE_LISTENING_TIME,
         PlaylistSortMode.DURATION -> MenuQueueGlyph(color, m)
     }
 }

@@ -3,6 +3,7 @@ package com.rajatxo.lutea.playback
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
+import com.rajatxo.lutea.data.store.PlaybackStatsStore
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -155,6 +156,9 @@ object PlaybackConnection {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     val songId = mediaItem?.mediaId?.toLongOrNull()
                     val queued = songId?.let { id -> queue.firstOrNull { it.id == id } }
+                    // Flush the outgoing song's play segment before swapping.
+                    flushPlayTime()
+                    playingSongId = songId
                     // After the activity (and sometimes the whole UI process) is
                     // recreated, the controller can reconnect to a service that
                     // already has a song loaded without replaying the transition
@@ -285,10 +289,49 @@ object PlaybackConnection {
     // Playback controls
     // ─────────────────────────────────────────────────────────────────────────
 
+    // ── Per-song listening-time accounting ──
+    // Tracks wall-clock time actually spent playing the current song, so it can
+    // be flushed into PlaybackStatsStore. We sample in pollPosition() (called
+    // every 500ms by FullPlayer/LyricsScreen) and reset/flush whenever the
+    // current song changes.
+    private var playingSongId: Long? = null
+    private var playingSinceMs: Long = 0L   // wall-clock ms when current play segment started
+
+    /** Flush any accumulated play time for the current segment into the stats store. */
+    private fun flushPlayTime() {
+        val id = playingSongId ?: return
+        if (playingSinceMs == 0L) return
+        val now = System.currentTimeMillis()
+        val delta = now - playingSinceMs
+        if (delta > 0L) {
+            // Cap a single segment at 10 minutes so a paused-but-not-detected
+            // state can't inflate a song's count by hours.
+            PlaybackStatsStore.addPlayedMs(id, delta.coerceAtMost(600_000L))
+        }
+        playingSinceMs = 0L
+    }
+
     fun pollPosition() {
         controller?.let { c ->
             _positionMs.value = c.currentPosition.coerceAtLeast(0L)
             _durationMs.value = c.duration.coerceAtLeast(0L)
+            // Listening-time accounting: if currently playing, make sure a
+            // segment is open for the current song; if paused, flush any open
+            // segment. This runs on the same 500ms tick as the position poll,
+            // so granularity is ~0.5s — plenty for a per-song badge.
+            val id = _currentSong.value?.id
+            if (c.isPlaying && id != null) {
+                if (playingSongId != id) {
+                    // Song changed since last tick — flush the previous one.
+                    flushPlayTime()
+                    playingSongId = id
+                }
+                if (playingSinceMs == 0L) playingSinceMs = System.currentTimeMillis()
+            } else {
+                // Paused or no song: close the open segment.
+                if (playingSinceMs != 0L) flushPlayTime()
+                playingSongId = id
+            }
         }
     }
 

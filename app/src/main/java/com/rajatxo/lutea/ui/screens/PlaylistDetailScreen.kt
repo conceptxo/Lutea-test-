@@ -214,11 +214,15 @@ fun PlaylistDetailScreen(
     var menuOpen by remember { mutableStateOf(false) }
     // Custom-order (sort) menu + its current mode.
     var customOrderOpen by remember { mutableStateOf(false) }
-    var sortMode by remember(playlist.id) { mutableStateOf(PlaylistSortMode.POSITION) }
+    var sortMode by remember(playlist.id) { mutableStateOf(PlaylistSortMode.TITLE) }
     // Ascending/descending toggle for the current sort. Most-played-first means
     // descending for listening-time; A→Z means ascending for title. The toggle
     // just flips whichever order the active mode produced.
     var sortDescending by remember { mutableStateOf(false) }
+    // Lock on the custom-order capsule: locked (default) = sort menu only;
+    // unlocked = manual drag-reorder is enabled. The lock circle on the right
+    // of the capsule toggles it.
+    var manualOrderUnlocked by remember(playlist.id) { mutableStateOf(false) }
     // Per-song three-dot menu + which song it targets.
     var songMenuSong by remember { mutableStateOf<Song?>(null) }
     // Per-song editor (opened from the song menu's "Edit" option).
@@ -438,26 +442,19 @@ fun PlaylistDetailScreen(
         // POSITION keeps the playlist's stored order; the rest re-derive a
         // display-only order (the underlying playlist order is untouched unless
         // the user picks POSITION after a manual reorder, which persists).
-        val visibleSongs = remember(songs, sortMode, sortDescending) {
+        val stats by com.rajatxo.lutea.data.store.PlaybackStatsStore.stats.collectAsState()
+        val visibleSongs = remember(songs, sortMode, sortDescending, stats) {
             // POSITION = the playlist's stored order, which `songs` already
             // preserves (it was filtered in that order). Descending just reverses.
             val ordered: List<Song> = when (sortMode) {
                 PlaylistSortMode.TITLE -> songs.sortedBy { it.title.lowercase() }
                 PlaylistSortMode.ARTIST -> songs.sortedBy { it.artist.lowercase() }
                 PlaylistSortMode.ALBUM -> songs.sortedBy { it.album.lowercase() }
-                PlaylistSortMode.ARTIST_ALBUM ->
-                    songs.sortedWith(compareBy({ it.artist.lowercase() }, { it.album.lowercase() }))
-                PlaylistSortMode.ALBUM_YEAR -> songs.sortedBy { it.album.lowercase() }
                 PlaylistSortMode.DATE_ADDED -> songs.sortedByDescending { it.dateAdded }
                 PlaylistSortMode.DURATION -> songs.sortedBy { detailDurationMs(it.duration) }
-                // Play-history-backed modes are stubs until a stats store exists;
-                // fall back to stored order so the list never goes blank.
-                PlaylistSortMode.DATE_PLAYED,
-                PlaylistSortMode.DATE_LIKED,
-                PlaylistSortMode.LISTENING_TIME,
-                PlaylistSortMode.RELATIVE_LISTENING_TIME,
-                PlaylistSortMode.PIN,
-                PlaylistSortMode.POSITION -> songs
+                // Listening time = real accumulated play time per song.
+                PlaylistSortMode.LISTENING_TIME ->
+                    songs.sortedByDescending { stats[it.id] ?: 0L }
             }
             if (sortDescending) ordered.reversed() else ordered
         }
@@ -588,6 +585,8 @@ fun PlaylistDetailScreen(
                     onShuffle = onShuffleHere,
                     onCustomOrder = onCustomOrderHere,
                     onOpenSearch = { searchOpen = true },
+                    locked = !manualOrderUnlocked,
+                    onToggleLock = { manualOrderUnlocked = !manualOrderUnlocked },
                 )
             }
 
@@ -701,16 +700,6 @@ fun PlaylistDetailScreen(
                     onDismiss = { customOrderOpen = false },
                     onSelect = { mode ->
                         sortMode = mode
-                        // POSITION is the manual/stored order; picking it after a
-                        // sort persists the current display order as the new stored
-                        // order so a future "Position" returns to what the user
-                        // sees now. (Other modes are display-only.)
-                        if (mode == PlaylistSortMode.POSITION) {
-                            PlaylistStore.reorderPlaylistSongs(
-                                playlist.id,
-                                visibleSongs.map { it.id },
-                            )
-                        }
                     },
                     onToggleDirection = { sortDescending = !sortDescending },
                 )
@@ -1060,6 +1049,8 @@ private fun PlaylistHeaderActionsOverlay(
     onShuffle: () -> Unit,
     onCustomOrder: () -> Unit,
     onOpenSearch: () -> Unit,
+    locked: Boolean = true,
+    onToggleLock: () -> Unit = {},
 ) {
     val density = LocalDensity.current
     val gapPx = with(density) { 12.dp.roundToPx() }
@@ -1104,6 +1095,28 @@ private fun PlaylistHeaderActionsOverlay(
                 onClick = onCustomOrder,
                 height = CustomOrderHeight,
                 horizontalPadding = 18.dp,
+                trailing = {
+                    // Small glass circle on the right holding the lock/unlock
+                    // glyph. Locked = sort menu only; unlocked = manual reorder.
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onToggleLock,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (locked) {
+                            DetailLockGlyph(Color.White, Modifier.size(12.dp))
+                        } else {
+                            DetailUnlockGlyph(Color.White, Modifier.size(12.dp))
+                        }
+                    }
+                },
             ) {
                 DetailReorderGlyph(Color.White, Modifier.size(16.dp))
             }
@@ -1555,6 +1568,8 @@ private fun DetailPill(
     reserveLabel: String? = null,
     backdrop: LayerBackdrop? = null,
     icon: @Composable () -> Unit,
+    // Optional trailing slot (e.g. the lock circle on the custom-order pill).
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val fg = if (filled) Color.Black else Color.White
     val surface = if (filled) {
@@ -1579,6 +1594,7 @@ private fun DetailPill(
             }
             DetailText(text = label, size = 15.sp, color = fg)
         }
+        if (trailing != null) trailing()
     }
 }
 
@@ -1779,7 +1795,7 @@ private fun PlaylistSongRow(
             .padding(horizontal = sidePad, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        DetailSongThumb(art = art, size = thumbSize)
+        DetailSongThumb(art = art, size = thumbSize, songId = song.id)
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             DetailText(text = song.title.orEmpty(), size = 16.sp)
@@ -1831,7 +1847,13 @@ private fun PlaylistSongRow(
 }
 
 @Composable
-private fun DetailSongThumb(art: Any?, size: Dp) {
+private fun DetailSongThumb(art: Any?, size: Dp, songId: Long? = null) {
+    // Per-song listening-time badge: actual played time accumulated across
+    // sessions, shown as 1m / 1h / 12h / 1d on top of the thumbnail. Hides
+    // entirely for songs never played (0m reads as nothing worth showing).
+    val stats by com.rajatxo.lutea.data.store.PlaybackStatsStore.stats.collectAsState()
+    val playedMs = songId?.let { stats[it] } ?: 0L
+    val showBadge = playedMs >= 60_000L  // >= 1 minute
     Box(
         modifier = Modifier
             .size(size)
@@ -1847,6 +1869,24 @@ private fun DetailSongThumb(art: Any?, size: Dp) {
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+        // Listening-time badge — bottom-right, dark glass capsule.
+        if (showBadge) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
+            ) {
+                DetailText(
+                    text = com.rajatxo.lutea.data.store.formatPlayedMs(playedMs),
+                    size = 10.sp,
+                    color = Color.White,
+                )
+            }
         }
     }
 }
@@ -2140,6 +2180,81 @@ private fun DetailReorderGlyph(color: Color, modifier: Modifier = Modifier) {
                 drawCircle(color, radius = r, center = Offset(x, y))
             }
         }
+    }
+}
+
+/** Closed padlock — manual reorder is disabled. Body + shackle. */
+@Composable
+private fun DetailLockGlyph(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.13f
+        // Body (rounded rect).
+        val bodyLeft = w * 0.28f
+        val bodyTop = h * 0.45f
+        val bodyW = w * 0.44f
+        val bodyH = h * 0.42f
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(bodyLeft, bodyTop),
+            size = androidx.compose.ui.geometry.Size(bodyW, bodyH),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f),
+        )
+        // Keyhole dot.
+        drawCircle(color, w * 0.05f, Offset(w * 0.5f, h * 0.62f))
+        // Shackle (arch) — stroked.
+        val shacklePath = Path().apply {
+            addArc(
+                rect = androidx.compose.ui.geometry.Rect(
+                    left = w * 0.36f,
+                    top = h * 0.18f,
+                    right = w * 0.64f,
+                    bottom = h * 0.52f,
+                ),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = 180f,
+                forceMoveTo = true,
+            )
+        }
+        drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
+    }
+}
+
+/** Open padlock — manual reorder is enabled. Body + lifted shackle. */
+@Composable
+private fun DetailUnlockGlyph(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.13f
+        // Body.
+        val bodyLeft = w * 0.28f
+        val bodyTop = h * 0.45f
+        val bodyW = w * 0.44f
+        val bodyH = h * 0.42f
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(bodyLeft, bodyTop),
+            size = androidx.compose.ui.geometry.Size(bodyW, bodyH),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f),
+        )
+        drawCircle(color, w * 0.05f, Offset(w * 0.5f, h * 0.62f))
+        // Shackle — open: an arc on the right side lifted off the body.
+        val shacklePath = Path().apply {
+            addArc(
+                rect = androidx.compose.ui.geometry.Rect(
+                    left = w * 0.44f,
+                    top = h * 0.06f,
+                    right = w * 0.72f,
+                    bottom = h * 0.40f,
+                ),
+                startAngleDegrees = 200f,
+                sweepAngleDegrees = 160f,
+                forceMoveTo = true,
+            )
+        }
+        drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
     }
 }
 

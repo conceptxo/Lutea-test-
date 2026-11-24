@@ -14,6 +14,7 @@ class LuteaApplication : Application() {
         PlaylistStore.init(this)
         FavouriteStore.init(this)
         SongEditStore.init(this)
+        com.rajatxo.lutea.data.store.PlaybackStatsStore.init(this)
         PlaylistStyleManager.init(this)
         UserNameManager.init(this)
         TypewriterSound.init(this)
