@@ -33,8 +33,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -46,6 +49,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,6 +77,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -92,6 +101,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import coil3.compose.AsyncImage
 import com.kyant.backdrop.backdrops.LayerBackdrop
@@ -118,9 +129,10 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-
 /*
  * ===================================================================================
  *  WIRING (adjust to the real PlaylistStore / PlaybackConnection API)
@@ -223,6 +235,10 @@ fun PlaylistDetailScreen(
     // unlocked = manual drag-reorder is enabled. The lock circle on the right
     // of the capsule toggles it.
     var manualOrderUnlocked by remember(playlist.id) { mutableStateOf(false) }
+    // Manual-order working copy: while unlocked, the list shows this order and
+    // drag-reorder mutates it directly. Re-locking (or leaving) keeps whatever
+    // was last dropped — each drop already persists to the store.
+    var manualOrder by remember(playlist.id) { mutableStateOf<List<Song>?>(null) }
     // Per-song three-dot menu + which song it targets.
     var songMenuSong by remember { mutableStateOf<Song?>(null) }
     // Per-song editor (opened from the song menu's "Edit" option).
@@ -285,6 +301,26 @@ fun PlaylistDetailScreen(
 
     val themeState = rememberCoverThemeColor(playlist.coverUri, fallbackSeed = playlist.id.toString())
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    // Manual drag-reorder controller. While the lock is unlocked, long-press
+    // any song row to lift it and drag; the others slide aside live. Each drop
+    // persists the new order to the playlist store.
+    val reorderState = rememberDragDropListState(
+        listState = listState,
+        scope = scope,
+        songIds = { (manualOrder ?: songs).map { it.id } },
+        onReorder = { from, to ->
+            val base = manualOrder ?: songs
+            val mut = base.toMutableList().apply {
+                val item = removeAt(from)
+                add(to.coerceIn(0, size), item)
+            }
+            manualOrder = mut
+        },
+        onDragEnd = { orderedIds ->
+            PlaylistStore.reorderPlaylistSongs(playlist.id, orderedIds)
+        },
+    )
     val density = LocalDensity.current
 
     BoxWithConstraints(
@@ -443,20 +479,45 @@ fun PlaylistDetailScreen(
         // display-only order (the underlying playlist order is untouched unless
         // the user picks POSITION after a manual reorder, which persists).
         val stats by com.rajatxo.lutea.data.store.PlaybackStatsStore.stats.collectAsState()
-        val visibleSongs = remember(songs, sortMode, sortDescending, stats) {
-            // POSITION = the playlist's stored order, which `songs` already
-            // preserves (it was filtered in that order). Descending just reverses.
-            val ordered: List<Song> = when (sortMode) {
-                PlaylistSortMode.TITLE -> songs.sortedBy { it.title.lowercase() }
-                PlaylistSortMode.ARTIST -> songs.sortedBy { it.artist.lowercase() }
-                PlaylistSortMode.ALBUM -> songs.sortedBy { it.album.lowercase() }
-                PlaylistSortMode.DATE_ADDED -> songs.sortedByDescending { it.dateAdded }
-                PlaylistSortMode.DURATION -> songs.sortedBy { detailDurationMs(it.duration) }
-                // Listening time = real accumulated play time per song.
-                PlaylistSortMode.LISTENING_TIME ->
-                    songs.sortedByDescending { stats[it.id] ?: 0L }
+        // While the lock is UNLOCKED the list shows the manual working order
+        // (drag-reorder mutates it live); while locked it shows the sorted view.
+        val visibleSongs = if (manualOrderUnlocked && manualOrder != null) {
+            manualOrder!!
+        } else {
+            remember(songs, sortMode, sortDescending, stats) {
+                val ordered: List<Song> = when (sortMode) {
+                    PlaylistSortMode.TITLE -> songs.sortedBy { it.title.lowercase() }
+                    PlaylistSortMode.ARTIST -> songs.sortedBy { it.artist.lowercase() }
+                    PlaylistSortMode.ALBUM -> songs.sortedBy { it.album.lowercase() }
+                    PlaylistSortMode.DATE_ADDED -> songs.sortedByDescending { it.dateAdded }
+                    PlaylistSortMode.DURATION -> songs.sortedBy { detailDurationMs(it.duration) }
+                    // Listening time = real accumulated play time per song.
+                    PlaylistSortMode.LISTENING_TIME ->
+                        songs.sortedByDescending { stats[it.id] ?: 0L }
+                }
+                if (sortDescending) ordered.reversed() else ordered
             }
-            if (sortDescending) ordered.reversed() else ordered
+        }
+        // Seeding / reconciling the manual working order:
+        // - Unlock or a new sort selection: seed from the displayed (sorted)
+        //   order so dragging starts from what the user sees.
+        // - Songs added/removed while unlocked: keep the manual order for the
+        //   songs still present, append new ones at the end.
+        var lastSortKey by remember(playlist.id) { mutableStateOf<Any?>(null) }
+        val sortKey = Triple(sortMode, sortDescending, songs)
+        LaunchedEffect(manualOrderUnlocked, sortKey) {
+            if (!manualOrderUnlocked) return@LaunchedEffect
+            val sortChanged = lastSortKey != null && lastSortKey != sortKey
+            lastSortKey = sortKey
+            val prev = manualOrder
+            manualOrder = when {
+                prev == null || sortChanged -> visibleSongs
+                else -> {
+                    val byId = songs.associateBy { it.id }
+                    val prevIds = prev.map { it.id }.toHashSet()
+                    prev.mapNotNull { byId[it.id] } + songs.filter { it.id !in prevIds }
+                }
+            }
         }
 
         // The cover + song list are captured together so the top glass and the
@@ -517,9 +578,34 @@ fun PlaylistDetailScreen(
                 // so the list "rides over" the blended background.
                 // Bottom padding clears the nav capsule (56dp) + mini player
                 // (56dp) + a little breathing room so the last song scrolls clear.
+                // While the custom-order lock is UNLOCKED, long-press starts a
+                // drag-reorder (RiMusic style: the row lifts as an elevated
+                // card and the others slide aside).
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (manualOrderUnlocked) {
+                                Modifier.pointerInput(Unit) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { offset ->
+                                            if (!reorderState.onDragStart(offset)) {
+                                                // Not on a song row — ignore.
+                                            }
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            reorderState.onDrag(dragAmount)
+                                        },
+                                        onDragEnd = { reorderState.onDrop() },
+                                        onDragCancel = { reorderState.onDragCancel() },
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
                     contentPadding = PaddingValues(
                         top = coverHeight - titleOverlap,
                         bottom = navBottom + 112.dp + screenH * 0.04f,
@@ -539,13 +625,27 @@ fun PlaylistDetailScreen(
                             )
                         }
                     } else {
-                        itemsIndexed(visibleSongs) { i, song ->
-                            Column {
+                        itemsIndexed(visibleSongs, key = { _, song -> song.id }) { i, song ->
+                            val isDragged = reorderState.draggedItemId == song.id
+                            Column(
+                                modifier = Modifier
+                                    .zIndex(if (isDragged) 1f else 0f)
+                                    .graphicsLayer {
+                                        translationY = if (isDragged) reorderState.dragOffset else 0f
+                                        val scale = if (isDragged) 1.04f else 1f
+                                        scaleX = scale
+                                        scaleY = scale
+                                        shadowElevation = if (isDragged) 24.dp.toPx() else 0f
+                                        shape = RoundedCornerShape(14.dp)
+                                        clip = false
+                                    },
+                            ) {
                                 PlaylistSongRow(
                                     song = song,
                                     art = songArt(song),
                                     thumbSize = thumbSize,
                                     sidePad = sidePad,
+                                    showDragHandle = manualOrderUnlocked,
                                     onClick = { onSongHere(i, song) },
                                     onMore = { songMenuSong = song },
                                 )
@@ -769,8 +869,9 @@ fun PlaylistDetailScreen(
                 LyricsScreen(onClose = { showLyrics = false })
             }
             // Glass-morphism notification capsule (remove-from-playlist /
-            // favourite) with an Undo button. Sits above everything, anchored
-            // just above the mini player / nav.
+            // favourite) with an Undo button. Placed exactly like the search
+            // tab's hold-to-delete capsule: centred, clear of the nav (48dp)
+            // and lifted above the mini player (+56dp) so nothing overlaps.
             undoableMessage?.let { msg ->
                 DetailUndoCapsule(
                     message = msg,
@@ -779,12 +880,121 @@ fun PlaylistDetailScreen(
                         undoableMessage = null
                         undoAction = null
                     },
+                    backdrop = pageBackdrop,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 124.dp, start = 24.dp, end = 24.dp),
+                        .padding(bottom = navBottom + 120.dp),
                 )
             }
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual drag-to-reorder (RiMusic/RiPlay style)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Tracks a long-press drag-reorder of the song list. Only active when the
+ * custom-order lock is unlocked. The dragged row lifts as an elevated card
+ * (scale + shadow) and the others slide aside in real time; on drop the new
+ * order is reported so it can be persisted.
+ */
+class DragDropListState(
+    private val listState: LazyListState,
+    private val onReorder: (Int, Int) -> Unit,
+    private val onDragEnd: (List<Long>) -> Unit = {},
+    private val scope: CoroutineScope,
+    private val songIdsProvider: () -> List<Long>,
+) {
+    var dragging by mutableStateOf(false)
+        private set
+    var draggedItemId by mutableStateOf<Long?>(null)
+        private set
+    var dragOffset by mutableFloatStateOf(0f)
+        private set
+
+    private var draggedIndex = -1   // LazyColumn item index (header = 0)
+
+    fun onDragStart(offset: Offset): Boolean {
+        // Only song rows participate (their key is the song id, a Long; the
+        // header/empty items use string keys and are filtered out).
+        val info = listState.layoutInfo.visibleItemsInfo
+            .firstOrNull { offset.y >= it.offset && offset.y <= it.offset + it.size } ?: return false
+        val itemId = info.key as? Long ?: return false
+        draggedIndex = info.index
+        draggedItemId = itemId
+        dragging = true
+        return true
+    }
+
+    fun onDrag(offset: Offset) {
+        dragOffset += offset.y
+        val info = listState.layoutInfo.visibleItemsInfo
+            .firstOrNull { it.key == draggedItemId } ?: return
+        val startOfDraggedItem = info.offset + dragOffset
+        val middle = startOfDraggedItem + info.size / 2f
+        val hovered = info
+        for (other in listState.layoutInfo.visibleItemsInfo) {
+            if (other.key == draggedItemId) continue
+            val otherMiddle = other.offset + other.size / 2f
+            val isBelow = other.offset > hovered.offset
+            if ((isBelow && middle > otherMiddle) || (!isBelow && middle < otherMiddle)) {
+                // Convert LazyColumn indices (header at 0) to song indices.
+                onReorder(draggedIndex - 1, other.index - 1)
+                draggedIndex = other.index
+                // Keep the dragged item visually under the finger: compensate
+                // for the slot displacement caused by the swap.
+                dragOffset += (hovered.offset - other.offset)
+                break
+            }
+        }
+        // Auto-scroll near the edges of the viewport.
+        val bottom = listState.layoutInfo.viewportEndOffset
+        val top = listState.layoutInfo.viewportStartOffset
+        if (bottom - (info.offset + info.size + dragOffset) < 100f) {
+            scope.launch { listState.scrollBy(12f) }
+        } else if (info.offset + dragOffset - top < 100f) {
+            scope.launch { listState.scrollBy(-12f) }
+        }
+    }
+
+    fun onDragCancel() {
+        dragging = false
+        draggedItemId = null
+        draggedIndex = -1
+        dragOffset = 0f
+    }
+
+    fun onDrop() {
+        if (dragging) {
+            onDragEnd(songIdsProvider())
+        }
+        onDragCancel()
+    }
+}
+
+@Composable
+private fun rememberDragDropListState(
+    listState: LazyListState,
+    scope: CoroutineScope,
+    songIds: () -> List<Long>,
+    onReorder: (Int, Int) -> Unit,
+    onDragEnd: (List<Long>) -> Unit = {},
+): DragDropListState {
+    // rememberUpdatedState so the callbacks always see the latest `songs` /
+    // `manualOrder` even though the state object itself is remembered once.
+    val currentSongIds by rememberUpdatedState(songIds)
+    val currentOnReorder by rememberUpdatedState(onReorder)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    return remember {
+        DragDropListState(
+            listState = listState,
+            onReorder = { from, to -> currentOnReorder(from, to) },
+            onDragEnd = { ids -> currentOnDragEnd(ids) },
+            scope = scope,
+            songIdsProvider = { currentSongIds() },
+        )
     }
 }
 
@@ -996,22 +1206,40 @@ private fun DetailStatDivider() {
 // different, top-layer capsule slides in on scroll (PlaylistScrollSearchCapsule).
 
 /**
- * Glass-morphism capsule for transient notifications (removed from playlist,
- * added/removed from favourites) with an Undo button. Dark translucent glass,
- * white text, a hairline border, an Undo label on the right.
+ * Glass-morphism notification capsule for transient actions (removed from
+ * playlist, added/removed from favourites) with an Undo button. REAL kyant
+ * glass like the menu cards (backdrop blur + vibrancy) with a hairline
+ * border, centred above the mini player.
  */
 @Composable
 private fun DetailUndoCapsule(
     message: String,
     onUndo: () -> Unit,
     modifier: Modifier = Modifier,
+    backdrop: LayerBackdrop? = null,
 ) {
+    val shape = CircleShape
     Row(
         modifier = modifier
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.55f))
-            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .clip(shape)
+            .then(
+                if (backdrop != null) {
+                    Modifier.drawBackdrop(
+                        backdrop = backdrop,
+                        shape = { shape },
+                        effects = {
+                            vibrancy()
+                            colorControls(brightness = 0.05f, contrast = 1f, saturation = 1.2f)
+                            blur(20.dp.toPx())
+                        },
+                        onDrawSurface = { drawRect(Color.Black.copy(alpha = 0.42f)) },
+                    )
+                } else {
+                    Modifier.background(Color.Black.copy(alpha = 0.55f))
+                },
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.15f), shape)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -1787,6 +2015,7 @@ private fun PlaylistSongRow(
     art: Any?,
     thumbSize: Dp,
     sidePad: Dp,
+    showDragHandle: Boolean = false,
     onClick: () -> Unit,
     onMore: () -> Unit = {},
 ) {
@@ -1828,34 +2057,49 @@ private fun PlaylistSongRow(
             }
         }
         Spacer(Modifier.width(8.dp))
-        // Per-song menu (3-dot). Tapping the row still plays; tapping the dots
-        // opens the song's own menu (favourite / add to playlist / etc.).
+        // Right-side action: while the custom-order lock is unlocked this is the
+        // drag handle (≡) like RiPlay's manual-order mode; otherwise it's the
+        // per-song three-dot menu.
         Box(
             modifier = Modifier
                 .size(32.dp)
                 .detailPressable(
                     pressedScale = 0.90f,
                     onClick = onMore,
+                    enabled = !showDragHandle,
                 )
-                .semantics { contentDescription = "More options for ${song.title}" },
+                .semantics {
+                    contentDescription = if (showDragHandle) {
+                        "Drag to reorder ${song.title}"
+                    } else {
+                        "More options for ${song.title}"
+                    }
+                },
             contentAlignment = Alignment.Center,
         ) {
-            DetailDotsGlyph(
-                color = Color.White.copy(alpha = 0.6f),
-                modifier = Modifier.size(16.dp),
-            )
+            if (showDragHandle) {
+                DetailReorderGlyph(
+                    color = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.size(18.dp),
+                )
+            } else {
+                DetailDotsGlyph(
+                    color = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun DetailSongThumb(art: Any?, size: Dp, songId: Long? = null) {
-    // Per-song listening-time badge: actual played time accumulated across
-    // sessions, shown as 1m / 1h / 12h / 1d on top of the thumbnail. Hides
-    // entirely for songs never played (0m reads as nothing worth showing).
+    // Per-song listening-time badge (RiPlay style): actual played time
+    // accumulated across sessions, as bold white text at the BOTTOM-LEFT of
+    // the thumbnail — "0m", "3m", "1h", "12h", "1d". Always shown, exactly
+    // like RiPlay, even before the song has a full minute.
     val stats by com.rajatxo.lutea.data.store.PlaybackStatsStore.stats.collectAsState()
     val playedMs = songId?.let { stats[it] } ?: 0L
-    val showBadge = playedMs >= 60_000L  // >= 1 minute
     Box(
         modifier = Modifier
             .size(size)
@@ -1872,23 +2116,26 @@ private fun DetailSongThumb(art: Any?, size: Dp, songId: Long? = null) {
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        // Listening-time badge — bottom-right, dark glass capsule.
-        if (showBadge) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(4.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color.Black.copy(alpha = 0.6f))
-                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
-            ) {
-                DetailText(
-                    text = com.rajatxo.lutea.data.store.formatPlayedMs(playedMs),
-                    size = 10.sp,
-                    color = Color.White,
+        // Listening-time text — bottom-left, bold white, no capsule (the
+        // artwork provides the contrast, matching RiPlay's thumbnails).
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.45f),
+                    )
                 )
-            }
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+        ) {
+            DetailText(
+                text = com.rajatxo.lutea.data.store.formatPlayedMs(playedMs),
+                size = 10.sp,
+                color = Color.White,
+                weight = FontWeight.Bold,
+            )
         }
     }
 }
@@ -2185,76 +2432,35 @@ private fun DetailReorderGlyph(color: Color, modifier: Modifier = Modifier) {
     }
 }
 
-/** Closed padlock — manual reorder is disabled. Body + shackle. */
+/** Closed padlock — manual reorder is disabled. The user's exact SVG path (20x20). */
 @Composable
 private fun DetailLockGlyph(color: Color, modifier: Modifier = Modifier) {
+    val path = remember {
+        androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+            "M10 1a4 4 0 0 1 4 4v2.05a2.5 2.5 0 0 1 2 2.45v6a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 4 15.5v-6a2.5 2.5 0 0 1 2-2.45V5a4 4 0 0 1 4-4m0 10.5a1 1 0 1 0 0 2a1 1 0 0 0 0-2M10 2a3 3 0 0 0-3 3v2h6V5a3 3 0 0 0-3-3"
+        ).toPath()
+    }
     Canvas(modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = w * 0.13f
-        // Body (rounded rect).
-        val bodyLeft = w * 0.28f
-        val bodyTop = h * 0.45f
-        val bodyW = w * 0.44f
-        val bodyH = h * 0.42f
-        drawRoundRect(
-            color = color,
-            topLeft = Offset(bodyLeft, bodyTop),
-            size = androidx.compose.ui.geometry.Size(bodyW, bodyH),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f),
-        )
-        // Keyhole dot.
-        drawCircle(color, w * 0.05f, Offset(w * 0.5f, h * 0.62f))
-        // Shackle (arch) — stroked.
-        val shacklePath = Path().apply {
-            addArc(
-                oval = androidx.compose.ui.geometry.Rect(
-                    left = w * 0.36f,
-                    top = h * 0.18f,
-                    right = w * 0.64f,
-                    bottom = h * 0.52f,
-                ),
-                startAngleDegrees = 180f,
-                sweepAngleDegrees = 180f,
-            )
+        // The SVG is authored on a 20x20 grid; scale to whatever size the
+        // canvas was given.
+        withTransform({ scale(size.width / 20f, size.height / 20f, pivot = Offset.Zero) }) {
+            drawPath(path, color)
         }
-        drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
     }
 }
 
-/** Open padlock — manual reorder is enabled. Body + lifted shackle. */
+/** Open padlock — manual reorder is enabled. The user's exact SVG path (20x20). */
 @Composable
 private fun DetailUnlockGlyph(color: Color, modifier: Modifier = Modifier) {
+    val path = remember {
+        androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+            "M15 1a4 4 0 0 1 4 4v.5a.5.5 0 0 1-1 0V5a3 3 0 1 0-6 0v2h1.5A2.5 2.5 0 0 1 16 9.5v6a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 4 15.5v-6A2.5 2.5 0 0 1 6.5 7H11V5a4 4 0 0 1 4-4m-5 10.5a1 1 0 1 0 0 2a1 1 0 0 0 0-2"
+        ).toPath()
+    }
     Canvas(modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = w * 0.13f
-        // Body.
-        val bodyLeft = w * 0.28f
-        val bodyTop = h * 0.45f
-        val bodyW = w * 0.44f
-        val bodyH = h * 0.42f
-        drawRoundRect(
-            color = color,
-            topLeft = Offset(bodyLeft, bodyTop),
-            size = androidx.compose.ui.geometry.Size(bodyW, bodyH),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f),
-        )
-        drawCircle(color, w * 0.05f, Offset(w * 0.5f, h * 0.62f))
-        // Shackle — open: an arc on the right side lifted off the body.
-        val shacklePath = Path().apply {
-            addArc(
-                oval = androidx.compose.ui.geometry.Rect(
-                    left = w * 0.44f,
-                    top = h * 0.06f,
-                    right = w * 0.72f,
-                    bottom = h * 0.40f,
-                ),
-                startAngleDegrees = 200f,
-                sweepAngleDegrees = 160f,
-            )
+        withTransform({ scale(size.width / 20f, size.height / 20f, pivot = Offset.Zero) }) {
+            drawPath(path, color)
         }
-        drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
     }
 }
 

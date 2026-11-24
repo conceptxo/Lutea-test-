@@ -93,6 +93,18 @@ fun QuickPicksScreen(
     var showStylePicker by remember { mutableStateOf(false) }
     val playlistStyle by PlaylistStyleManager.state
 
+    // Keep the open playlist snapshot in sync with the store, so ANY store
+    // change (rename, cover, song added/removed, manual reorder) flows into
+    // the detail screen without each call site having to refresh manually.
+    val allPlaylists by com.rajatxo.lutea.data.store.PlaylistStore.playlists.collectAsState()
+    LaunchedEffect(allPlaylists) {
+        selectedPlaylist?.let { sel ->
+            allPlaylists.firstOrNull { it.id == sel.id }?.let { latest ->
+                if (latest != sel) selectedPlaylist = latest
+            }
+        }
+    }
+
     // ── Cover picker launcher ── declared at the top level so it survives
     //    recomposition. Declaring it inside selectedPlaylist?.let re-registered
     //    the launcher every time the playlist snapshot changed (rename, cover
@@ -154,12 +166,16 @@ fun QuickPicksScreen(
         var songs by remember(playlist) { mutableStateOf<List<Song>>(emptyList()) }
         // Re-scan when the playlist's song set changes. Also re-apply when an
         // edit override changes (cover / title / album) so the list reflects the
-        // user's edits without a full MediaStore re-scan.
+        // user's edits without a full MediaStore re-scan. The songs are kept in
+        // THE PLAYLIST'S STORED ORDER (songIds order), not MediaStore order —
+        // that's what a manual reorder persists to.
         val editOverrides by com.rajatxo.lutea.data.store.SongEditStore.overrides.collectAsState()
         LaunchedEffect(playlist.id, playlist.songIds) {
             val allSongs = withContext(Dispatchers.IO) { MusicScanner.scanMusic(context) }
-            songs = allSongs.filter { it.id in playlist.songIds }
-                .map { com.rajatxo.lutea.data.store.SongEditStore.applyTo(it) }
+            val byId = allSongs.associateBy { it.id }
+            songs = playlist.songIds.mapNotNull { id ->
+                byId[id]?.let { com.rajatxo.lutea.data.store.SongEditStore.applyTo(it) }
+            }
         }
         // Re-map overrides onto the cached list whenever an override changes
         // (e.g. the user just saved a new cover in the editor) without rescanning.
