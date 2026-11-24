@@ -2214,8 +2214,8 @@ private fun DetailLockGlyph(color: Color, modifier: Modifier = Modifier) {
                     right = w * 0.64f,
                     bottom = h * 0.52f,
                 ),
-                startAngle = 180f,
-                sweepAngle = 180f,
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = 180f,
             )
         }
         drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
@@ -2250,8 +2250,8 @@ private fun DetailUnlockGlyph(color: Color, modifier: Modifier = Modifier) {
                     right = w * 0.72f,
                     bottom = h * 0.40f,
                 ),
-                startAngle = 200f,
-                sweepAngle = 160f,
+                startAngleDegrees = 200f,
+                sweepAngleDegrees = 160f,
             )
         }
         drawPath(shacklePath, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
