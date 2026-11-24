@@ -1048,7 +1048,8 @@ private fun PlaylistSearchDockOverlay(
         // Rest X mirrors the header row centring exactly: shuffle + gap + play + gap.
         val total = shuffle.width + gapPx + play.width + gapPx + restSizePx
         val startX = ((constraints.maxWidth - total) / 2).coerceAtLeast(0)
-        val searchRestX = startX + shuffle.width + gapPx + play.width + gapPx
+        // Keep as Float so the docked/rest branches share one type.
+        val searchRestX = (startX + shuffle.width + gapPx + play.width + gapPx).toFloat()
 
         layout(constraints.maxWidth, constraints.maxHeight) {
             val restY = actionsTop()
