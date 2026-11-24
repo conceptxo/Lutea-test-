@@ -217,14 +217,17 @@ fun PlaylistDetailScreen(
     var sortMode by remember(playlist.id) { mutableStateOf(PlaylistSortMode.POSITION) }
     // Per-song three-dot menu + which song it targets.
     var songMenuSong by remember { mutableStateOf<Song?>(null) }
+    // Per-song editor (opened from the song menu's "Edit" option).
+    var editingSong by remember { mutableStateOf<Song?>(null) }
     val favourites by FavouriteStore.favourites.collectAsState()
-    // Back closes the topmost layer first: lyrics, player, song menu, custom
-    // order, playlist menu, search, then the page.
-    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen && !menuOpen && !customOrderOpen && songMenuSong == null) { onBack() }
+    // Back closes the topmost layer first: lyrics, player, editor, song menu,
+    // custom order, playlist menu, search, then the page.
+    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen && !menuOpen && !customOrderOpen && songMenuSong == null && editingSong == null) { onBack() }
     BackHandler(enabled = searchOpen) { searchOpen = false }
     BackHandler(enabled = menuOpen) { menuOpen = false }
     BackHandler(enabled = customOrderOpen) { customOrderOpen = false }
     BackHandler(enabled = songMenuSong != null) { songMenuSong = null }
+    BackHandler(enabled = editingSong != null) { editingSong = null }
     BackHandler(enabled = showLyrics) { showLyrics = false }
     BackHandler(enabled = playerVisible && !showLyrics) { playerVisible = false }
     LaunchedEffect(searchOpen) {
@@ -232,6 +235,7 @@ fun PlaylistDetailScreen(
             menuOpen = false
             customOrderOpen = false
             songMenuSong = null
+            editingSong = null
         } else {
             searchQuery = ""
         }
@@ -464,10 +468,13 @@ fun PlaylistDetailScreen(
             animationSpec = tween(durationMillis = 120, easing = FastOutSlowInEasing),
             label = "playlistTopBlur",
         )
-        // Only compose the blur while it is actually visible; the value itself is
-        // read in the draw phase, so the scroll animation never recomposes the list.
+        // The top frost is kept ALWAYS composed (its alpha is 0 at rest) so the
+        // backdrop capture texture + blur shader warm up on the first frame —
+        // otherwise the first scroll pays the compile/allocation cost and feels
+        // heavy. The blur draw itself is skipped when morph is ~0 (no visible
+        // blur), so there is no steady-state cost.
         val blurActive by remember {
-            derivedStateOf { blurVisible && blurMorph > 0.01f }
+            derivedStateOf { blurVisible }
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -560,7 +567,6 @@ fun PlaylistDetailScreen(
                     onShuffle = onShuffleHere,
                     onCustomOrder = onCustomOrderHere,
                     onOpenSearch = { searchOpen = true },
-                    backdrop = pageBackdrop,
                 )
             }
 
@@ -699,13 +705,20 @@ fun PlaylistDetailScreen(
                     onAddToPlaylist = onAddSongs,          // reuse the add-songs flow
                     onViewAlbum = {},                      // album page: later pass
                     onViewArtist = {},                     // artist page: later pass
-                    onEdit = {},                            // edit: later pass (add only)
+                    onEdit = { editingSong = song },       // opens the song editor
                     onAddToQueue = { PlaybackConnection.addToQueue(song) },
                     onPinToHome = {},                      // pin to home: later pass
                     onRemoveFromPlaylist = {
                         PlaylistStore.removeSongFromPlaylist(playlist.id, song.id)
                     },
                     onDetails = {},                        // details sheet: later pass
+                )
+            }
+            // Per-song editor (full-screen) — opened from the song menu's Edit.
+            editingSong?.let { song ->
+                PlaylistSongEditSheet(
+                    song = song,
+                    onDismiss = { editingSong = null },
                 )
             }
             // ★ Search page — a separate full-screen overlay with its own field
@@ -954,7 +967,6 @@ private fun PlaylistHeaderActionsOverlay(
     onShuffle: () -> Unit,
     onCustomOrder: () -> Unit,
     onOpenSearch: () -> Unit,
-    backdrop: LayerBackdrop? = null,
 ) {
     val density = LocalDensity.current
     val gapPx = with(density) { 12.dp.roundToPx() }
@@ -999,7 +1011,6 @@ private fun PlaylistHeaderActionsOverlay(
                 onClick = onCustomOrder,
                 height = CustomOrderHeight,
                 horizontalPadding = 18.dp,
-                backdrop = backdrop,
             ) {
                 DetailReorderGlyph(Color.White, Modifier.size(16.dp))
             }
