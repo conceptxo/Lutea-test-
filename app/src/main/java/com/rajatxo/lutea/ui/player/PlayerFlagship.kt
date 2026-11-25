@@ -1,8 +1,6 @@
 package com.rajatxo.lutea.ui.player
 
-import android.os.Build
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,10 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.asComposeRenderEffect
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -61,19 +57,17 @@ import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.BillieEilishFamily
 import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.screens.blendStops
+import com.rajatxo.lutea.ui.util.LuteaColorExtractor
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import kotlin.math.roundToLong
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PlayerCoverBlend — the Mochy Flagship "cover dissolves into a seamless
-// gradient" look, built on Lutea's own blendStops() so the player matches the
-// playlist screen exactly.
-//
-// The cover is full-bleed at the top (~square, full width). Below it the SAME
-// image, heavily blurred, is faded into the cover-derived theme colour using
-// blendStops()'s Hermite-smoothed gradient — so there is no hard seam. The
-// colour is the one Lutea already extracts from the cover's bottom edge, which
-// is what makes the join read as continuous.
+// PlayerCoverBlend — the player's background, built EXACTLY like Lutea's own
+// PlaylistCoverBackground: solid cover-derived colour fills the sheet, the
+// square song cover sits full-bleed at the top, and the SAME blendStops()
+// Hermite gradient that the playlist screen uses dissolves the cover's bottom
+// edge into that solid colour. No blurred copy, no extra plate — just the
+// playlist blend, applied to the current song's cover.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -84,9 +78,8 @@ fun PlayerCoverBlend(
     val context = LocalContext.current
     val coverUriStr = currentSong?.albumArtUri?.toString()
 
-    // Cover-derived seam colour (samples the cover's bottom edge, darkens,
-    // caches per URI). This is the colour the cover fades INTO, which is what
-    // removes the visible seam.
+    // The solid colour the cover fades INTO — Lutea's cover-derived theme
+    // colour, identical to what the playlist screen uses.
     val seamColor by rememberCoverThemeColor(
         coverUri = coverUriStr,
         fallbackSeed = currentSong?.id?.toString(),
@@ -97,38 +90,39 @@ fun PlayerCoverBlend(
         else ImageRequest.Builder(context).data(coverUriStr).crossfade(true).build()
     }
 
+    // Placeholder hue (mirrors PlaylistCoverBackground) for the no-cover case.
+    val hue = remember(currentSong?.id) {
+        LuteaColorExtractor.hueFor(currentSong?.id?.toString() ?: "")
+    }
+
+    // 1. Solid background = the cover-derived colour. The whole sheet is this
+    //    colour; the cover dissolves into it.
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(seamColor)
+            .background(seamColor),
     ) {
-        // 1) Blurred copy of the cover filling the WHOLE sheet — this is the
-        //    "gradient" the sharp cover fades into. On S+ it's a real RenderEffect
-        //    blur (heavy, ~48px) so the colours bleed; below S we fall back to the
-        //    solid seam colour (the blend still reads as cover -> colour).
-        if (request != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            AsyncImage(
-                model = request,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        renderEffect = android.graphics.RenderEffect.createBlurEffect(
-                            48f, 48f, android.graphics.Shader.TileMode.CLAMP,
-                        ).asComposeRenderEffect()
-                    },
-            )
-        }
-
-        // 2) Full-bleed sharp cover, top of screen, square (full width).
-        //    Square keeps it crisp; ~60% of a typical screen height.
+        // 2. The square cover, full-bleed at the top (same 1:1 ratio + Crop as
+        //    the playlist cover). A placeholder gradient sits under it for the
+        //    no-cover / loading case, exactly like PlaylistCoverBackground.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .align(Alignment.TopCenter)
+                .align(Alignment.TopCenter),
         ) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.hsl(hue, 0.55f, 0.42f),
+                                Color.hsl(hue, 0.50f, 0.20f),
+                            )
+                        )
+                    ),
+            )
             if (request != null) {
                 AsyncImage(
                     model = request,
@@ -137,20 +131,17 @@ fun PlayerCoverBlend(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            // 3) The seamless blend: cover -> seam colour, via the SAME Hermite
-            //    gradient Lutea uses on the playlist screen. Drawn over the sharp
-            //    cover so its bottom edge dissolves into the blurred colour below —
-            //    no hard line, exactly like Mochy.
+            // 3. The blend: cover -> seam colour, using Lutea's OWN blendStops()
+            //    Hermite-smoothed gradient — the very same one the playlist
+            //    screen paints over its cover. This is what dissolves the cover's
+            //    bottom edge into the solid background with no hard seam.
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawWithCache {
-                        val brush = androidx.compose.ui.graphics.Brush.verticalGradient(
-                            *blendStops(seamColor)
-                        )
+                        val brush = Brush.verticalGradient(*blendStops(seamColor))
                         onDrawBehind { drawRect(brush) }
-                    }
+                    },
             )
         }
     }
