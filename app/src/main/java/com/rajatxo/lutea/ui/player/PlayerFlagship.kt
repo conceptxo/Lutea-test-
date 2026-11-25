@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,21 +71,26 @@ import kotlin.math.roundToLong
 //
 // Spiral3 layout (Spiral3Player.kt lines 722–791):
 //   (1) 96dp BLURRED full-screen album art = the immersive background canvas.
-//   (2) Sharp SQUARE cover (TopCenter, offset y=80dp) with a bottom DstIn fade
-//       so the sharp cover melts into the blur at its lower edge.
+//   (2) Sharp SQUARE cover (TopCenter) with a bottom DstIn fade so the sharp
+//       cover melts into the blur at its lower edge.
 //
 // The edits:
 //   EDIT 1 — "remove the blur part from the top": the TOP FADE that hazed the
 //     cover's top edge is REMOVED (was 120dp Transparent→Black DstIn). The
-//     96dp blurred bg + the bottom 140dp fade stay. The cover's top is crisp;
-//     it still melts into the blur at the bottom.
-//   EDIT 2 — "make the cover little bit zoom, so that it fit properly" +
-//     "always follow universal fitting rule": the WHOLE cover must be visible,
-//     nothing cut off. So the cover box is SQUARE (aspectRatio 1f) — a square
-//     album-art source fills it edge-to-edge with no crop — and the cover
-//     AsyncImage uses ContentScale.Fit (no manual zoom). The earlier 1.15f
-//     box + scaleX/Y 1.15f zoom clipped the right-edge logo and the top of the
-//     figure; that's gone.
+//     96dp blurred bg + the bottom 140dp fade stay. The cover's top is crisp.
+//   EDIT 2 — universal fitting rule: the WHOLE cover is visible (square box,
+//     aspectRatio 1f, ContentScale.Fit — nothing cropped, no logo clip).
+//   EDIT 3 — "zoom a little + move the cover up + blend follows": the square
+//     cover at fillMaxWidth only fills ~45% of the screen height, leaving dead
+//     space below before the title. So:
+//       • offset 80dp -> 24dp (cover moves up, just clearing the status bar;
+//         the gap above the cover shrinks).
+//       • graphicsLayer scaleX/Y 1.06f with TOP-CENTER pivot — gentle ~6% zoom
+//         that grows the box DOWNWARD (no top crop) with only ~3% side bleed
+//         (vs the 1.15f that clipped the right-edge logo). Full image still
+//         visible, just bigger.
+//       • The bottom 140dp fade is drawn INSIDE the box, so it moves up + grows
+//         with the cover — the blend point and down-blur follow automatically.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -120,19 +126,27 @@ fun PlayerCoverBlend(
         }
 
         // (2) Sharp SQUARE cover (Spiral3 block, lines 735–791) — SQUARE box
-        //     (aspectRatio 1f), TopCenter, offset y=80dp. Universal fitting
-        //     rule: the whole cover is visible, nothing cropped — a square
-        //     source fills the square box edge-to-edge. ONLY the bottom 140dp
-        //     fade remains (EDIT 1: top fade removed) so the cover melts into
-        //     the blur at its lower edge.
+        //     (aspectRatio 1f), TopCenter. EDIT 3: offset 24dp (moved up from
+        //     80dp) + gentle 1.06 zoom with top-center pivot (grows downward,
+        //     no top crop, ~3% side bleed). Universal fitting: full image
+        //     visible. The bottom 140dp fade (EDIT 1: top fade removed) is
+        //     drawn inside the box, so it moves up + grows with the cover.
         if (request != null) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
                     .align(Alignment.TopCenter)
-                    .offset(y = 80.dp)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .offset(y = 24.dp)
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                        // EDIT 3: gentle ~6% zoom, top-center pivot so the box
+                        // grows DOWNWARD (top stays put, no top crop). ~3% side
+                        // bleed — full image still visible (1.15 clipped logo).
+                        scaleX = 1.06f
+                        scaleY = 1.06f
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                    }
                     .drawWithContent {
                         drawContent()
                         // EDIT 1: top fade REMOVED (was 120dp Transparent→Black).
@@ -155,8 +169,9 @@ fun PlayerCoverBlend(
                 AsyncImage(
                     model = request,
                     contentDescription = null,
-                    // EDIT 2: universal fitting rule — the WHOLE cover shows,
-                    // nothing cut off. Fit (not Crop) + no manual zoom.
+                    // Universal fitting rule — the WHOLE cover shows, nothing
+                    // cut off. Fit (not Crop). The box zoom (1.06, above) makes
+                    // it bigger; the image scales with the box.
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize(),
                 )
