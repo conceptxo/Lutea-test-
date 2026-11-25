@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -694,7 +695,7 @@ private fun SeekBarRow(
                 .clip(RoundedCornerShape(trackHeight / 2))
                 .background(Color.White.copy(alpha = 0.24f))
                 .pointerInput(Unit) {
-                    androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                    detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             seeking = true
                             seekValue = (offset.x / size.width).coerceIn(0f, 1f)

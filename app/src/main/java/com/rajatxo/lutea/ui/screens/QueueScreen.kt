@@ -2,6 +2,7 @@ package com.rajatxo.lutea.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -95,7 +96,7 @@ fun QueueScreen(
             .background(gradientBrush)
             // Swipe down closes the queue back to the player.
             .pointerInput(Unit) {
-                androidx.compose.foundation.gestures.detectVerticalDragGestures(
+                detectVerticalDragGestures(
                     onVerticalDrag = { _, dragAmount ->
                         if (dragAmount > with(density) { 80.dp.toPx() }) onClose()
                     }
