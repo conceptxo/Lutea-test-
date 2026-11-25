@@ -8,7 +8,6 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -44,7 +44,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,24 +63,24 @@ import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import kotlin.math.roundToLong
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PlayerCoverBlend — ported directly from Lastwave's StaticArtworkHero +
-// FullPlayer hero block (the dev is the user's friend; we copy the technique):
+// PlayerCoverBlend — copied same-to-same from Coral's Spiral3Player cover
+// block (Spiral3Player.kt lines 735–791), then the two edits the user asked for:
 //
-//  • The cover is full-bleed, TOP-anchored, full width, height capped at 85%
-//    of the screen — tall enough that a square cover sits edge-to-edge and its
-//    lower part fades under the title/controls. (Lastwave FullPlayer.kt hero.)
-//  • The blend is the same DstIn bottom-fade gradient Lastwave's
-//    StaticArtworkHero uses: the cover stays FULLY SOLID until 62% of its
-//    height, then melts to transparent over the last 38% (bottomFade = 0.38f).
-//    CompositingStrategy.Offscreen + drawWithContent + Brush.verticalGradient
-//    with BlendMode.DstIn erases the cover's lower band — exactly like the
-//    source. No hard seam; the cover dissolves into whatever sits behind it.
-//  • Behind the hero, Lastwave paints a 4-stop contrast scrim so the controls
-//    stay legible; we copy it verbatim.
+//   EDIT 1 — "remove the blur part from the top":
+//     Spiral3 paints a 96dp blurred full-screen AsyncImage as the background
+//     (lines 722–733). We DROP it. The cover now fades into Lutea's solid
+//     cover-derived colour (rememberCoverThemeColor) instead of a blurred copy.
 //
-// The one local substitution: instead of Lastwave's MaterialTheme.surface we
-// fill the sheet with Lutea's own cover-derived colour (rememberCoverThemeColor)
-// — so the melted cover joins Lutea's palette exactly as the playlist does.
+//   EDIT 2 — "make the cover little bit zoom, so that it fit properly":
+//     The cover AsyncImage gets graphicsLayer { scaleX = 1.08f; scaleY = 1.08f }
+//     so it crops a touch tighter and sits properly inside its 1.15 box.
+//
+// Everything else is verbatim Spiral3:
+//   • Box fillMaxWidth().aspectRatio(1.15f).align(TopCenter).offset(y = 80.dp)
+//   • CompositingStrategy.Offscreen + drawWithContent
+//   • Symmetric DstIn fades — TOP 120dp (Transparent → Black),
+//     BOTTOM 140dp (Black → Transparent) — so the sharp cover blends into the
+//     background on both edges, exactly like Spiral3.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -92,7 +91,9 @@ fun PlayerCoverBlend(
     val context = LocalContext.current
     val coverUriStr = currentSong?.albumArtUri?.toString()
 
-    // Solid background = Lutea's cover-derived colour; the cover melts into it.
+    // Solid background = Lutea's cover-derived colour. EDIT 1: this REPLACES
+    // Spiral3's 96dp blurred full-screen bg (the "blur part from the top" the
+    // user asked to remove). The cover's DstIn fades melt into this colour.
     val seamColor by rememberCoverThemeColor(
         coverUri = coverUriStr,
         fallbackSeed = currentSong?.id?.toString(),
@@ -103,71 +104,64 @@ fun PlayerCoverBlend(
         else ImageRequest.Builder(context).data(coverUriStr).crossfade(true).build()
     }
 
-    // Lastwave hero geometry: full width, capped at 85% of screen height so a
-    // square cover fits edge-to-edge and its lower part fades under the title.
-    val density = LocalDensity.current
-    BoxWithConstraints(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(seamColor),
     ) {
-        val screenW = with(density) { maxWidth.toPx() }
-        val screenH = with(density) { maxHeight.toPx() }
-        // min(width, height * 0.85) — same cap as StaticArtworkHero's host.
-        val heroHeightPx = minOf(screenW, screenH * 0.85f)
-        val heroHeight = with(density) { heroHeightPx.toDp() }
+        // ─── Square cover (Spiral3 block, verbatim) + symmetric DstIn fades ───
+        if (request != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1.15f)
+                    .align(Alignment.TopCenter)
+                    .offset(y = 80.dp)
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        val topFadeHeightPx = 120.dp.toPx()
+                        val bottomFadeHeightPx = 140.dp.toPx()
+                        val imageHeight = size.height
 
-        // 1. Full-bleed cover, top-anchored, with the Lastwave DstIn bottom fade.
-        //    The cover stays solid until 62% of its height, then fades to
-        //    transparent over the last 38% — melted into the seam colour below.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(heroHeight)
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .drawWithContent {
-                    drawContent()
-                    // bottomFade = 0.38f — verbatim from StaticArtworkHero.
-                    val fadeFrac = 0.38f
-                    val fadeStartY = size.height * (1f - fadeFrac)
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to Color.Black,
-                            (fadeStartY / size.height) to Color.Black,
-                            1f to Color.Transparent,
-                            startY = 0f,
-                            endY = size.height,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
-                },
-        ) {
-            if (request != null) {
+                        // Top fade: transparent → opaque (120dp) — verbatim Spiral3.
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, Color.Black),
+                                startY = 0f,
+                                endY = topFadeHeightPx,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+
+                        // Bottom fade: opaque → transparent (140dp) — verbatim Spiral3.
+                        val bottomFadeStartY =
+                            (imageHeight - bottomFadeHeightPx).coerceAtLeast(0f)
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color.Black, Color.Transparent),
+                                startY = bottomFadeStartY,
+                                endY = imageHeight,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    },
+            ) {
                 AsyncImage(
                     model = request,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter,
-                    modifier = Modifier.fillMaxSize(),
+                    // EDIT 2: slight zoom so the cover fits properly inside the
+                    // 1.15 box (crops a touch tighter, no letterboxing).
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = 1.08f
+                            scaleY = 1.08f
+                        },
                 )
             }
         }
-
-        // 2. Lastwave's contrast scrim — keeps the title/controls legible while
-        //    the vibrant cover colours bleed through. Verbatim from FullPlayer.kt.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0.00f to Color.Black.copy(alpha = 0.35f),
-                        0.28f to Color.Black.copy(alpha = 0.15f),
-                        0.65f to Color.Black.copy(alpha = 0.40f),
-                        1.00f to Color.Black.copy(alpha = 0.72f),
-                    )
-                )
-        )
     }
 }
 
