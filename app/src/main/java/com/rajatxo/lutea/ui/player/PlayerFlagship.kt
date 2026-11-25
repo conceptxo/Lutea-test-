@@ -66,23 +66,25 @@ import kotlin.math.roundToLong
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PlayerCoverBlend — Coral Spiral3 cover block, ported faithfully, with the
-// two edits the user actually asked for (corrected after seeing the screenshots).
+// edits the user asked for (corrected after seeing the screenshots).
 //
 // Spiral3 layout (Spiral3Player.kt lines 722–791):
 //   (1) 96dp BLURRED full-screen album art = the immersive background canvas.
-//   (2) Sharp SQUARE cover (aspectRatio 1.15f, TopCenter, offset y=80dp) with
-//       SYMMETRIC DstIn fades — top 120dp + bottom 140dp — so the sharp cover
-//       melts into the blur on both edges.
+//   (2) Sharp SQUARE cover (TopCenter, offset y=80dp) with a bottom DstIn fade
+//       so the sharp cover melts into the blur at its lower edge.
 //
-// The two edits:
-//   EDIT 1 — "remove the blur part from the top": the user means the TOP FADE
-//     that hazes/blurs the top edge of the cover (the 120dp Transparent→Black
-//     DstIn), NOT the full-screen blurred background. So we REMOVE the top
-//     fade and KEEP the 96dp blurred bg + the bottom fade. The cover's top is
-//     now crisp; it still melts into the blur at the bottom.
-//   EDIT 2 — "make the cover little bit zoom": cover AsyncImage gets
-//     graphicsLayer { scaleX/Y = 1.15f } so it crops tighter and fills the
-//     1.15 box properly.
+// The edits:
+//   EDIT 1 — "remove the blur part from the top": the TOP FADE that hazed the
+//     cover's top edge is REMOVED (was 120dp Transparent→Black DstIn). The
+//     96dp blurred bg + the bottom 140dp fade stay. The cover's top is crisp;
+//     it still melts into the blur at the bottom.
+//   EDIT 2 — "make the cover little bit zoom, so that it fit properly" +
+//     "always follow universal fitting rule": the WHOLE cover must be visible,
+//     nothing cut off. So the cover box is SQUARE (aspectRatio 1f) — a square
+//     album-art source fills it edge-to-edge with no crop — and the cover
+//     AsyncImage uses ContentScale.Fit (no manual zoom). The earlier 1.15f
+//     box + scaleX/Y 1.15f zoom clipped the right-edge logo and the top of the
+//     figure; that's gone.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -117,16 +119,17 @@ fun PlayerCoverBlend(
             )
         }
 
-        // (2) Sharp SQUARE cover (Spiral3 block, lines 735–791) — aspectRatio
-        //     1.15f, TopCenter, offset y=80dp. ONLY the BOTTOM 140dp fade
-        //     remains (EDIT 1: the top 120dp fade that hazed the cover's top is
-        //     REMOVED, so the cover's top is now crisp). The cover is zoomed
-        //     (EDIT 2) so it fills the box properly.
+        // (2) Sharp SQUARE cover (Spiral3 block, lines 735–791) — SQUARE box
+        //     (aspectRatio 1f), TopCenter, offset y=80dp. Universal fitting
+        //     rule: the whole cover is visible, nothing cropped — a square
+        //     source fills the square box edge-to-edge. ONLY the bottom 140dp
+        //     fade remains (EDIT 1: top fade removed) so the cover melts into
+        //     the blur at its lower edge.
         if (request != null) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1.15f)
+                    .aspectRatio(1f)
                     .align(Alignment.TopCenter)
                     .offset(y = 80.dp)
                     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
@@ -152,15 +155,10 @@ fun PlayerCoverBlend(
                 AsyncImage(
                     model = request,
                     contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    // EDIT 2: zoom so the cover fits properly (crops tighter,
-                    // no letterboxing). 1.15f = ~15% zoom.
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            scaleX = 1.15f
-                            scaleY = 1.15f
-                        },
+                    // EDIT 2: universal fitting rule — the WHOLE cover shows,
+                    // nothing cut off. Fit (not Crop) + no manual zoom.
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
