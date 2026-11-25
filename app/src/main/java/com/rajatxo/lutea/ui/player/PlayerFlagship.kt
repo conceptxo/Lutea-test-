@@ -8,10 +8,10 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,12 +35,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,18 +60,28 @@ import com.rajatxo.lutea.playback.LoopMode
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.BillieEilishFamily
 import com.rajatxo.lutea.ui.components.CalSansFamily
-import com.rajatxo.lutea.ui.screens.blendStops
-import com.rajatxo.lutea.ui.util.LuteaColorExtractor
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import kotlin.math.roundToLong
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PlayerCoverBlend — the player's background, built EXACTLY like Lutea's own
-// PlaylistCoverBackground: solid cover-derived colour fills the sheet, the
-// square song cover sits full-bleed at the top, and the SAME blendStops()
-// Hermite gradient that the playlist screen uses dissolves the cover's bottom
-// edge into that solid colour. No blurred copy, no extra plate — just the
-// playlist blend, applied to the current song's cover.
+// PlayerCoverBlend — ported directly from Lastwave's StaticArtworkHero +
+// FullPlayer hero block (the dev is the user's friend; we copy the technique):
+//
+//  • The cover is full-bleed, TOP-anchored, full width, height capped at 85%
+//    of the screen — tall enough that a square cover sits edge-to-edge and its
+//    lower part fades under the title/controls. (Lastwave FullPlayer.kt hero.)
+//  • The blend is the same DstIn bottom-fade gradient Lastwave's
+//    StaticArtworkHero uses: the cover stays FULLY SOLID until 62% of its
+//    height, then melts to transparent over the last 38% (bottomFade = 0.38f).
+//    CompositingStrategy.Offscreen + drawWithContent + Brush.verticalGradient
+//    with BlendMode.DstIn erases the cover's lower band — exactly like the
+//    source. No hard seam; the cover dissolves into whatever sits behind it.
+//  • Behind the hero, Lastwave paints a 4-stop contrast scrim so the controls
+//    stay legible; we copy it verbatim.
+//
+// The one local substitution: instead of Lastwave's MaterialTheme.surface we
+// fill the sheet with Lutea's own cover-derived colour (rememberCoverThemeColor)
+// — so the melted cover joins Lutea's palette exactly as the playlist does.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -78,8 +92,7 @@ fun PlayerCoverBlend(
     val context = LocalContext.current
     val coverUriStr = currentSong?.albumArtUri?.toString()
 
-    // The solid colour the cover fades INTO — Lutea's cover-derived theme
-    // colour, identical to what the playlist screen uses.
+    // Solid background = Lutea's cover-derived colour; the cover melts into it.
     val seamColor by rememberCoverThemeColor(
         coverUri = coverUriStr,
         fallbackSeed = currentSong?.id?.toString(),
@@ -90,60 +103,71 @@ fun PlayerCoverBlend(
         else ImageRequest.Builder(context).data(coverUriStr).crossfade(true).build()
     }
 
-    // Placeholder hue (mirrors PlaylistCoverBackground) for the no-cover case.
-    val hue = remember(currentSong?.id) {
-        LuteaColorExtractor.hueFor(currentSong?.id?.toString() ?: "")
-    }
-
-    // 1. Solid background = the cover-derived colour. The whole sheet is this
-    //    colour; the cover dissolves into it.
-    Box(
+    // Lastwave hero geometry: full width, capped at 85% of screen height so a
+    // square cover fits edge-to-edge and its lower part fades under the title.
+    val density = LocalDensity.current
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(seamColor),
     ) {
-        // 2. The square cover, full-bleed at the top (same 1:1 ratio + Crop as
-        //    the playlist cover). A placeholder gradient sits under it for the
-        //    no-cover / loading case, exactly like PlaylistCoverBackground.
+        val screenW = with(density) { maxWidth.toPx() }
+        val screenH = with(density) { maxHeight.toPx() }
+        // min(width, height * 0.85) — same cap as StaticArtworkHero's host.
+        val heroHeightPx = minOf(screenW, screenH * 0.85f)
+        val heroHeight = with(density) { heroHeightPx.toDp() }
+
+        // 1. Full-bleed cover, top-anchored, with the Lastwave DstIn bottom fade.
+        //    The cover stays solid until 62% of its height, then fades to
+        //    transparent over the last 38% — melted into the seam colour below.
         Box(
             modifier = Modifier
+                .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .aspectRatio(1f)
-                .align(Alignment.TopCenter),
+                .height(heroHeight)
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    // bottomFade = 0.38f — verbatim from StaticArtworkHero.
+                    val fadeFrac = 0.38f
+                    val fadeStartY = size.height * (1f - fadeFrac)
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Black,
+                            (fadeStartY / size.height) to Color.Black,
+                            1f to Color.Transparent,
+                            startY = 0f,
+                            endY = size.height,
+                        ),
+                        blendMode = BlendMode.DstIn,
+                    )
+                },
         ) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.hsl(hue, 0.55f, 0.42f),
-                                Color.hsl(hue, 0.50f, 0.20f),
-                            )
-                        )
-                    ),
-            )
             if (request != null) {
                 AsyncImage(
                     model = request,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    alignment = Alignment.TopCenter,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            // 3. The blend: cover -> seam colour, using Lutea's OWN blendStops()
-            //    Hermite-smoothed gradient — the very same one the playlist
-            //    screen paints over its cover. This is what dissolves the cover's
-            //    bottom edge into the solid background with no hard seam.
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .drawWithCache {
-                        val brush = Brush.verticalGradient(*blendStops(seamColor))
-                        onDrawBehind { drawRect(brush) }
-                    },
-            )
         }
+
+        // 2. Lastwave's contrast scrim — keeps the title/controls legible while
+        //    the vibrant cover colours bleed through. Verbatim from FullPlayer.kt.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.00f to Color.Black.copy(alpha = 0.35f),
+                        0.28f to Color.Black.copy(alpha = 0.15f),
+                        0.65f to Color.Black.copy(alpha = 0.40f),
+                        1.00f to Color.Black.copy(alpha = 0.72f),
+                    )
+                )
+        )
     }
 }
 
