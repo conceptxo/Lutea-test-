@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
@@ -60,28 +61,28 @@ import com.rajatxo.lutea.playback.LoopMode
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.BillieEilishFamily
 import com.rajatxo.lutea.ui.components.CalSansFamily
-import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
+
 import kotlin.math.roundToLong
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PlayerCoverBlend — copied same-to-same from Coral's Spiral3Player cover
-// block (Spiral3Player.kt lines 735–791), then the two edits the user asked for:
+// PlayerCoverBlend — Coral Spiral3 cover block, ported faithfully, with the
+// two edits the user actually asked for (corrected after seeing the screenshots).
 //
-//   EDIT 1 — "remove the blur part from the top":
-//     Spiral3 paints a 96dp blurred full-screen AsyncImage as the background
-//     (lines 722–733). We DROP it. The cover now fades into Lutea's solid
-//     cover-derived colour (rememberCoverThemeColor) instead of a blurred copy.
+// Spiral3 layout (Spiral3Player.kt lines 722–791):
+//   (1) 96dp BLURRED full-screen album art = the immersive background canvas.
+//   (2) Sharp SQUARE cover (aspectRatio 1.15f, TopCenter, offset y=80dp) with
+//       SYMMETRIC DstIn fades — top 120dp + bottom 140dp — so the sharp cover
+//       melts into the blur on both edges.
 //
-//   EDIT 2 — "make the cover little bit zoom, so that it fit properly":
-//     The cover AsyncImage gets graphicsLayer { scaleX = 1.08f; scaleY = 1.08f }
-//     so it crops a touch tighter and sits properly inside its 1.15 box.
-//
-// Everything else is verbatim Spiral3:
-//   • Box fillMaxWidth().aspectRatio(1.15f).align(TopCenter).offset(y = 80.dp)
-//   • CompositingStrategy.Offscreen + drawWithContent
-//   • Symmetric DstIn fades — TOP 120dp (Transparent → Black),
-//     BOTTOM 140dp (Black → Transparent) — so the sharp cover blends into the
-//     background on both edges, exactly like Spiral3.
+// The two edits:
+//   EDIT 1 — "remove the blur part from the top": the user means the TOP FADE
+//     that hazes/blurs the top edge of the cover (the 120dp Transparent→Black
+//     DstIn), NOT the full-screen blurred background. So we REMOVE the top
+//     fade and KEEP the 96dp blurred bg + the bottom fade. The cover's top is
+//     now crisp; it still melts into the blur at the bottom.
+//   EDIT 2 — "make the cover little bit zoom": cover AsyncImage gets
+//     graphicsLayer { scaleX/Y = 1.15f } so it crops tighter and fills the
+//     1.15 box properly.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -92,14 +93,6 @@ fun PlayerCoverBlend(
     val context = LocalContext.current
     val coverUriStr = currentSong?.albumArtUri?.toString()
 
-    // Solid background = Lutea's cover-derived colour. EDIT 1: this REPLACES
-    // Spiral3's 96dp blurred full-screen bg (the "blur part from the top" the
-    // user asked to remove). The cover's DstIn fades melt into this colour.
-    val seamColor by rememberCoverThemeColor(
-        coverUri = coverUriStr,
-        fallbackSeed = currentSong?.id?.toString(),
-    )
-
     val request = remember(coverUriStr) {
         if (coverUriStr.isNullOrBlank()) null
         else ImageRequest.Builder(context).data(coverUriStr).crossfade(true).build()
@@ -108,9 +101,27 @@ fun PlayerCoverBlend(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(seamColor),
+            .background(Color.Black),
     ) {
-        // ─── Square cover (Spiral3 block, verbatim) + symmetric DstIn fades ───
+        // (1) 96dp BLURRED full-screen album art — the immersive background
+        //     canvas. Verbatim Spiral3 (lines 722–733). This is what makes the
+        //     cover "melt" into the screen instead of sitting on a flat colour.
+        if (request != null) {
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(96.dp),
+            )
+        }
+
+        // (2) Sharp SQUARE cover (Spiral3 block, lines 735–791) — aspectRatio
+        //     1.15f, TopCenter, offset y=80dp. ONLY the BOTTOM 140dp fade
+        //     remains (EDIT 1: the top 120dp fade that hazed the cover's top is
+        //     REMOVED, so the cover's top is now crisp). The cover is zoomed
+        //     (EDIT 2) so it fills the box properly.
         if (request != null) {
             Box(
                 modifier = Modifier
@@ -121,21 +132,11 @@ fun PlayerCoverBlend(
                     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawWithContent {
                         drawContent()
-                        val topFadeHeightPx = 120.dp.toPx()
+                        // EDIT 1: top fade REMOVED (was 120dp Transparent→Black).
+                        // Bottom fade kept (140dp Black→Transparent) — verbatim
+                        // Spiral3, so the cover still melts into the blur below.
                         val bottomFadeHeightPx = 140.dp.toPx()
                         val imageHeight = size.height
-
-                        // Top fade: transparent → opaque (120dp) — verbatim Spiral3.
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black),
-                                startY = 0f,
-                                endY = topFadeHeightPx,
-                            ),
-                            blendMode = BlendMode.DstIn,
-                        )
-
-                        // Bottom fade: opaque → transparent (140dp) — verbatim Spiral3.
                         val bottomFadeStartY =
                             (imageHeight - bottomFadeHeightPx).coerceAtLeast(0f)
                         drawRect(
@@ -152,13 +153,13 @@ fun PlayerCoverBlend(
                     model = request,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    // EDIT 2: slight zoom so the cover fits properly inside the
-                    // 1.15 box (crops a touch tighter, no letterboxing).
+                    // EDIT 2: zoom so the cover fits properly (crops tighter,
+                    // no letterboxing). 1.15f = ~15% zoom.
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            scaleX = 1.08f
-                            scaleY = 1.08f
+                            scaleX = 1.15f
+                            scaleY = 1.15f
                         },
                 )
             }
