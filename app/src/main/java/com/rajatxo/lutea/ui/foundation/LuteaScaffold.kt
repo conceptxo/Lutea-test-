@@ -810,6 +810,33 @@ fun LuteaScaffold(
                     onClose = { showQueue = false },
                 )
             }
+
+            // ★ Persistent control bar — the Mochy Flagship behaviour: the seek
+            //    bar + transport STAY visible over the player AND the lyrics page
+            //    AND the queue page, as one bottom overlay. It is shown whenever
+            //    the player is expanded (any of the three), and fades out with the
+            //    player when it collapses to the mini capsule.
+            if (playerVisible) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = playerVisible,
+                    enter = androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(300)
+                    ),
+                    exit = androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(200)
+                    ),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        com.rajatxo.lutea.ui.player.PlayerControlBar(
+                            onClose = { playerVisible = false; showLyrics = false; showQueue = false },
+                            onQueueClick = { showQueue = true },
+                            onLyricsClick = { showLyrics = true },
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                        )
+                    }
+                }
+            }
         }
     }
 }

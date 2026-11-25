@@ -906,6 +906,31 @@ fun PlaylistDetailScreen(
             if (showQueue) {
                 QueueScreen(onClose = { showQueue = false })
             }
+            // Persistent control bar — seek + transport stay over the player,
+            // lyrics and queue pages (Mochy Flagship).
+            if (playerVisible) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = playerVisible,
+                    enter = androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(300)
+                    ),
+                    exit = androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(200)
+                    ),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        com.rajatxo.lutea.ui.player.PlayerControlBar(
+                            onClose = { playerVisible = false; showLyrics = false; showQueue = false },
+                            onQueueClick = { showQueue = true },
+                            onLyricsClick = { showLyrics = true },
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter),
+                        )
+                    }
+                }
+            }
             // Glass-morphism notification capsule (remove-from-playlist /
             // favourite) with an Undo button. Placed exactly like the search
             // tab's hold-to-delete capsule: centred, clear of the nav (48dp)
