@@ -232,6 +232,8 @@ fun PlaylistDetailScreen(
     var searchQuery by remember { mutableStateOf("") }
     var playerVisible by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showQueue by remember { mutableStateOf(false) }
+    val playerPageProgress = if (showLyrics || showQueue) 1f else 0f
     var menuOpen by remember { mutableStateOf(false) }
     // Custom-order (sort) menu + its current mode.
     var customOrderOpen by remember { mutableStateOf(false) }
@@ -286,14 +288,15 @@ fun PlaylistDetailScreen(
     }
     // Back closes the topmost layer first: lyrics, player, editor, song menu,
     // custom order, playlist menu, search, then the page.
-    BackHandler(enabled = !playerVisible && !showLyrics && !searchOpen && !menuOpen && !customOrderOpen && songMenuSong == null && editingSong == null) { onBack() }
+    BackHandler(enabled = !playerVisible && !showLyrics && !showQueue && !searchOpen && !menuOpen && !customOrderOpen && songMenuSong == null && editingSong == null) { onBack() }
     BackHandler(enabled = searchOpen) { searchOpen = false }
     BackHandler(enabled = menuOpen) { menuOpen = false }
     BackHandler(enabled = customOrderOpen) { customOrderOpen = false }
     BackHandler(enabled = songMenuSong != null) { songMenuSong = null }
     BackHandler(enabled = editingSong != null) { editingSong = null }
-    BackHandler(enabled = showLyrics) { showLyrics = false }
-    BackHandler(enabled = playerVisible && !showLyrics) { playerVisible = false }
+    BackHandler(enabled = showQueue) { showQueue = false }
+    BackHandler(enabled = showLyrics && !showQueue) { showLyrics = false }
+    BackHandler(enabled = playerVisible && !showLyrics && !showQueue) { playerVisible = false }
     LaunchedEffect(searchOpen) {
         if (searchOpen) {
             menuOpen = false
@@ -891,12 +894,17 @@ fun PlaylistDetailScreen(
                 expanded = playerVisible,
                 onExpandedChange = { playerVisible = it },
                 onLyricsClick = { showLyrics = true },
+                onQueueOpen = { showQueue = true },
+                pageProgress = playerPageProgress,
                 backdrop = pageBackdrop,
                 navMatchedWidth = navMetrics.navBarWidthFor(LuteaTab.entries.size),
                 miniBottomPadding = navBottom + 56.dp,
             )
             if (showLyrics) {
                 LyricsScreen(onClose = { showLyrics = false })
+            }
+            if (showQueue) {
+                QueueScreen(onClose = { showQueue = false })
             }
             // Glass-morphism notification capsule (remove-from-playlist /
             // favourite) with an Undo button. Placed exactly like the search

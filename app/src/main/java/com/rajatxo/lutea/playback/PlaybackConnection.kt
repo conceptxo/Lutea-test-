@@ -75,6 +75,14 @@ object PlaybackConnection {
 
     private var queue: List<Song> = emptyList()
 
+    /** Read-only snapshot of the current play queue (for the queue page). */
+    val currentQueue: List<Song> get() = queue
+
+    /** Index of the currently-playing song in [currentQueue], or -1. */
+    val currentIndex: Int get() = _currentSong.value?.let { song ->
+        queue.indexOfFirst { it.id == song.id }
+    } ?: -1
+
     // ── Loop / repeat ──
     // Default matches the service's initial REPEAT_MODE_ALL, so the button and the
     // player never disagree on first launch. Persisted in lutea_player/loop_mode.
@@ -374,6 +382,24 @@ object PlaybackConnection {
             c.addMediaItem(buildMediaItem(song.uri, song))
         } catch (e: Exception) {
             Log.e(TAG, "addToQueue failed", e)
+        }
+    }
+
+    /**
+     * Jump to a specific song in the CURRENT queue by index (used by the queue
+     * page: tapping a row plays that song without rebuilding the queue).
+     */
+    fun playQueueItem(index: Int) {
+        val c = controller ?: run { return }
+        val q = queue
+        if (index !in q.indices) return
+        try {
+            c.seekToDefaultPosition(index)
+            c.prepare()
+            c.play()
+            _currentSong.value = q[index]
+        } catch (e: Exception) {
+            Log.e(TAG, "playQueueItem failed", e)
         }
     }
 

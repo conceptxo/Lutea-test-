@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,8 +39,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,12 +57,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -117,6 +117,10 @@ fun PlayerSheet(
     onExpandedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     onLyricsClick: () -> Unit = {},
+    onQueueOpen: () -> Unit = {},
+    /** 0 = player only, 1 = a lyrics/queue page is fully open. Drives the
+     *  control-hide animation (Mochy controlsHiddenState). */
+    pageProgress: Float = 0f,
     hidden: Boolean = false,
     backdrop: LayerBackdrop? = null,
     navMatchedWidth: Dp? = null,
@@ -380,6 +384,8 @@ fun PlayerSheet(
                         alpha = fullAlpha,
                         onClose = { onExpandedChange(false) },
                         onLyricsClick = onLyricsClick,
+                        onQueueOpen = onQueueOpen,
+                        pageProgress = pageProgress,
                     )
                 }
             }
@@ -420,12 +426,15 @@ private fun ExpandedPlayerBody(
     alpha: Float,
     onClose: () -> Unit,
     onLyricsClick: () -> Unit,
+    onQueueOpen: () -> Unit,
+    pageProgress: Float,
 ) {
     val currentSong by PlaybackConnection.currentSong.collectAsState()
     val isPlaying by PlaybackConnection.isPlaying.collectAsState()
     val positionMs by PlaybackConnection.positionMs.collectAsState()
     val durationMs by PlaybackConnection.durationMs.collectAsState()
     val loopMode by PlaybackConnection.loopMode.collectAsState()
+    val favourites by com.rajatxo.lutea.data.store.FavouriteStore.favourites.collectAsState()
     val nav = LocalPlayerNavigation.current
 
     // Poll position only while the player body exists.
@@ -436,223 +445,343 @@ private fun ExpandedPlayerBody(
         }
     }
 
-    Column(
+    // Cover-derived seam colour for the gradient plate (samples the cover's
+    // bottom edge, darkens, caches per URI). The cover fades INTO this colour
+    // — the Mochy Flagship "cover blends into gradient" look.
+    val coverUriStr = currentSong?.albumArtUri?.toString()
+    val seamColor by com.rajatxo.lutea.ui.util.rememberCoverThemeColor(
+        coverUri = coverUriStr,
+        fallbackSeed = currentSong?.id?.toString(),
+    )
+    val gradientBrush = Brush.verticalGradient(
+        colorStops = arrayOf(
+            0.0f to seamColor,
+            0.45f to seamColor.darken(0.3f),
+            1.0f to Color.Black,
+        )
+    )
+
+    // Controls hide as a page (lyrics/queue) opens: fade + drop down ~55% of
+    // their height — Mochy's controlsHiddenState, driven by pageProgress.
+    val controlsHidden = pageProgress.coerceIn(0f, 1f)
+    val controlsAlpha = (1f - controlsHidden).coerceIn(0f, 1f)
+    val animateControls by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = controlsAlpha,
+        animationSpec = tween(420, easing = androidx.compose.animation.core.CubicBezierEasing(0.4f, 0f, 0.2f, 1f)),
+        label = "controlsAlpha",
+    )
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .graphicsLayer { this.alpha = alpha }
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .background(gradientBrush)
     ) {
-        // ── Top: handle + lyrics + close ──
+        // ── Edge-to-edge cover, top of screen, square, full width ──
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
-                .padding(top = 8.dp),
+                .aspectRatio(1f)
+                .align(Alignment.TopCenter),
         ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 8.dp)
-                    .width(40.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.3f))
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onLyricsClick,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_lyrics),
-                    contentDescription = "Lyrics",
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp),
+            currentSong?.albumArtUri?.let { artUri ->
+                AsyncImage(
+                    model = artUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
+            // Cover dissolves into the plate at its bottom edge — no hard seam.
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onClose,
-                    ),
-                contentAlignment = Alignment.Center,
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.Transparent,
+                                0.72f to Color.Transparent,
+                                0.92f to seamColor.copy(alpha = 0.55f),
+                                1.0f to seamColor,
+                            )
+                        )
+                    )
+            )
+        }
+
+        // ── Top bar: lyrics button (left) + close (right) ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .align(Alignment.TopCenter),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            TopCircleButton(
+                iconRes = R.drawable.ic_lyrics,
+                contentDescription = "Lyrics",
+                onClick = onLyricsClick,
+            )
+            TopCircleButton(
+                iconRes = R.drawable.ic_close_circle,
+                contentDescription = "Close player",
+                iconSize = 20.dp,
+                onClick = onClose,
+            )
+        }
+
+        // ── Bottom control cluster, floating over the gradient plate ──
+        // Fades + drops down as a page opens.
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp)
+                .graphicsLayer {
+                    this.alpha = animateControls
+                    this.translationY = controlsHidden * (this.size.height * 0.55f)
+                }
+                .padding(bottom = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            // Title row: title/artist left, heart + chevron-up right.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_close_circle),
-                    contentDescription = "Close player",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = currentSong?.title ?: "Nothing playing",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontFamily = BillieEilishFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                enabled = currentSong != null,
+                                onClick = { nav.onAlbumClick() },
+                            )
+                            .padding(vertical = 2.dp),
+                    )
+                    Text(
+                        text = currentSong?.artist ?: "",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 14.sp,
+                        fontFamily = CalSansFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                enabled = currentSong != null,
+                                onClick = { nav.onArtistClick() },
+                            )
+                            .padding(vertical = 2.dp),
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                val isFav = currentSong?.id in favourites
+                TopCircleButton(
+                    iconRes = if (isFav) R.drawable.ic_heart_filled else R.drawable.ic_heart_outline,
+                    contentDescription = if (isFav) "Unfavourite" else "Favourite",
+                    iconSize = 20.dp,
+                    tint = if (isFav) Color(0xFFFF6B6B) else Color.White,
+                    onClick = { currentSong?.let { com.rajatxo.lutea.data.store.FavouriteStore.toggle(it.id) } },
+                )
+                Spacer(Modifier.width(6.dp))
+                TopCircleButton(
+                    iconRes = R.drawable.ic_chevron_up,
+                    contentDescription = "Queue",
+                    iconSize = 20.dp,
+                    onClick = onQueueOpen,
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // Seek bar — thin at rest, swells under the finger (Mochy style).
+            SeekBarRow(
+                positionMs = positionMs,
+                durationMs = durationMs,
+                onSeek = { PlaybackConnection.seekTo(it) },
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            // Transport: prev / play-pause / next, centred; loop at the edge.
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PlayerButton(
+                        iconRes = R.drawable.ic_prev,
+                        contentDescription = "Previous",
+                        size = 52.dp,
+                        onClick = { PlaybackConnection.prev() },
+                    )
+                    Spacer(Modifier.width(30.dp))
+                    PlayerButton(
+                        iconRes = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        size = 68.dp,
+                        filled = true,
+                        onClick = { PlaybackConnection.playPause() },
+                    )
+                    Spacer(Modifier.width(30.dp))
+                    PlayerButton(
+                        iconRes = R.drawable.ic_next,
+                        contentDescription = "Next",
+                        size = 52.dp,
+                        onClick = { PlaybackConnection.next() },
+                    )
+                }
+                val loopActive = loopMode != LoopMode.OFF
+                TopCircleButton(
+                    iconRes = if (loopMode == LoopMode.ONE) R.drawable.ic_repeat_one else R.drawable.ic_repeat,
+                    contentDescription = when (loopMode) {
+                        LoopMode.OFF -> "Loop off"
+                        LoopMode.ALL -> "Loop queue"
+                        LoopMode.ONE -> "Loop this song"
+                    },
+                    iconSize = 20.dp,
+                    tint = Color.White.copy(alpha = if (loopActive) 1f else 0.45f),
+                    bgAlpha = if (loopActive) 0.16f else 0f,
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    onClick = { PlaybackConnection.cycleLoopMode() },
                 )
             }
         }
+    }
+}
 
-        // The hero album art is drawn by the sheet; this keeps its space.
-        Spacer(Modifier.weight(1f))
+// ─────────────────────────────────────────────────────────────────────────────
+// Seek bar — thin at rest, swells under touch (Mochy Flagship seek bar)
+// ─────────────────────────────────────────────────────────────────────────────
 
-        // ── Bottom: title + artist + seek bar + controls ──
-        Text(
-            text = currentSong?.title ?: "Nothing playing",
-            color = Color.White,
-            fontSize = 28.sp,
-            fontFamily = BillieEilishFamily,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
+@Composable
+private fun SeekBarRow(
+    positionMs: Long,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
+) {
+    val safeDuration = durationMs.coerceAtLeast(1L)
+    val fraction = (positionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
+    var seeking by remember { mutableStateOf(false) }
+    var seekValue by remember { mutableStateOf(0f) }
+    // Swell under the finger: 3dp → 6dp track height.
+    val trackHeight by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (seeking) 6.dp else 3.dp,
+        animationSpec = tween(180, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "seekTrack",
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    enabled = currentSong != null,
-                    onClick = { nav.onAlbumClick() },
-                )
-                .padding(horizontal = 8.dp, vertical = 2.dp),
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = currentSong?.artist ?: "",
-            color = Color.White.copy(alpha = 0.55f),
-            fontSize = 16.sp,
-            fontFamily = CalSansFamily,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    enabled = currentSong != null,
-                    onClick = { nav.onArtistClick() },
-                )
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-        )
-
-        Spacer(Modifier.height(20.dp))
-
-        val safeDuration = durationMs.coerceAtLeast(1L)
-        val seekFraction = (positionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
-        var seeking by remember { mutableStateOf(false) }
-        var seekValue by remember { mutableStateOf(0f) }
-
-        Slider(
-            value = if (seeking) seekValue else seekFraction,
-            onValueChange = { value ->
-                seeking = true
-                seekValue = value
-            },
-            onValueChangeFinished = {
-                if (seeking) {
-                    PlaybackConnection.seekTo((seekValue * safeDuration).roundToLong())
-                    seeking = false
+                .fillMaxWidth()
+                .height(trackHeight)
+                .clip(RoundedCornerShape(trackHeight / 2))
+                .background(Color.White.copy(alpha = 0.24f))
+                .pointerInput(Unit) {
+                    androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            seeking = true
+                            seekValue = (offset.x / size.width).coerceIn(0f, 1f)
+                        },
+                        onDragEnd = {
+                            if (seeking) {
+                                onSeek((seekValue * safeDuration).roundToLong())
+                                seeking = false
+                            }
+                        },
+                        onDragCancel = { seeking = false },
+                        onHorizontalDrag = { change, _ ->
+                            seekValue = (change.position.x / size.width).coerceIn(0f, 1f)
+                        },
+                    )
                 }
-            },
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color.White,
-                inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(if (seeking) seekValue else fraction)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(trackHeight / 2))
+                    .background(Color.White)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
                 text = formatTime(if (seeking) (seekValue * safeDuration).roundToLong() else positionMs),
-                color = Color.White.copy(alpha = 0.5f),
-                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 11.sp,
                 fontFamily = CalSansFamily,
             )
             Text(
                 text = formatTime(durationMs),
-                color = Color.White.copy(alpha = 0.5f),
-                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 11.sp,
                 fontFamily = CalSansFamily,
             )
         }
-
-        Spacer(Modifier.height(24.dp))
-
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PlayerButton(
-                    iconRes = R.drawable.ic_prev,
-                    contentDescription = "Previous",
-                    size = 56.dp,
-                    onClick = { PlaybackConnection.prev() },
-                )
-                Spacer(Modifier.width(28.dp))
-                PlayerButton(
-                    iconRes = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    size = 72.dp,
-                    filled = true,
-                    onClick = { PlaybackConnection.playPause() },
-                )
-                Spacer(Modifier.width(28.dp))
-                PlayerButton(
-                    iconRes = R.drawable.ic_next,
-                    contentDescription = "Next",
-                    size = 56.dp,
-                    onClick = { PlaybackConnection.next() },
-                )
-            }
-
-            val loopActive = loopMode != LoopMode.OFF
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = if (loopActive) 0.16f else 0.08f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { PlaybackConnection.cycleLoopMode() },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(
-                        if (loopMode == LoopMode.ONE) R.drawable.ic_repeat_one else R.drawable.ic_repeat
-                    ),
-                    contentDescription = when (loopMode) {
-                        LoopMode.OFF -> "Loop off"
-                        LoopMode.ALL -> "Loop queue"
-                        LoopMode.ONE -> "Loop this song"
-                    },
-                    tint = Color.White.copy(alpha = if (loopActive) 1f else 0.45f),
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
     }
 }
+
+/** A small round icon button used in the top bar and the title row. */
+@Composable
+private fun TopCircleButton(
+    iconRes: Int,
+    contentDescription: String,
+    iconSize: Dp = 22.dp,
+    tint: Color = Color.White,
+    bgAlpha: Float = 0.08f,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val btnSize = iconSize + 18.dp
+    Box(
+        modifier = modifier
+            .size(btnSize)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = bgAlpha))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
+
+/** Darken a color by [fraction] (0..1) toward black. */
+private fun Color.darken(fraction: Float): Color =
+    Color(
+        red = red * (1f - fraction),
+        green = green * (1f - fraction),
+        blue = blue * (1f - fraction),
+        alpha = alpha,
+    )
 
 @Composable
 private fun PlayerButton(
