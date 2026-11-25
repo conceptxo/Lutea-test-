@@ -121,8 +121,7 @@ import com.rajatxo.lutea.ui.components.CalSansFamily
 import com.rajatxo.lutea.ui.foundation.LuteaTabCapsule
 import com.rajatxo.lutea.ui.foundation.fluidNavMetrics
 import com.rajatxo.lutea.ui.foundation.navBarWidthFor
-import com.rajatxo.lutea.ui.player.FullPlayer
-import com.rajatxo.lutea.ui.player.MiniPlayer
+import com.rajatxo.lutea.ui.player.PlayerSheet
 import com.rajatxo.lutea.ui.util.LuteaTab
 import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import java.time.Instant
@@ -765,14 +764,6 @@ fun PlaylistDetailScreen(
                         )
                     ),
             )
-            MiniPlayer(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = navBottom + 56.dp),
-                onExpand = { playerVisible = true },
-                backdrop = pageBackdrop,
-                navMatchedWidth = navMetrics.navBarWidthFor(LuteaTab.entries.size),
-            )
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -870,11 +861,14 @@ fun PlaylistDetailScreen(
                     navBottom = navBottom,
                 )
             }
-            FullPlayer(
-                visible = playerVisible,
-                onClose = { playerVisible = false; showLyrics = false },
-                onLyricsClick = { showLyrics = true },
+            PlayerSheet(
                 modifier = Modifier.fillMaxSize(),
+                expanded = playerVisible,
+                onExpandedChange = { playerVisible = it },
+                onLyricsClick = { showLyrics = true },
+                backdrop = pageBackdrop,
+                navMatchedWidth = navMetrics.navBarWidthFor(LuteaTab.entries.size),
+                miniBottomPadding = navBottom + 56.dp,
             )
             if (showLyrics) {
                 LyricsScreen(onClose = { showLyrics = false })

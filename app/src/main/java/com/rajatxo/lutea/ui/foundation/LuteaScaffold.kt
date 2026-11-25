@@ -647,7 +647,7 @@ fun LuteaScaffold(
             //    grounds the bottom of the screen. Drawn BEFORE the mini player
             //    so its glass paints on top of it.
             val miniPlayerGap = 56.dp       // inset → mini player bottom edge
-            val miniPlayerHeight = 56.dp    // keep in sync with MiniPlayer.kt
+            val miniPlayerHeight = 56.dp    // keep in sync with PlayerSheet.kt
             val miniPlayerBottom = effBottomDp + miniPlayerGap
             val bottomFadeHeightDp = miniPlayerBottom + miniPlayerHeight * 0.5f
             if (!imeOpen) {
@@ -674,28 +674,24 @@ fun LuteaScaffold(
                 )
             }
 
-            com.rajatxo.lutea.ui.player.MiniPlayer(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = miniPlayerBottom),
-                onExpand = { playerVisible = true },
-                hidden = imeOpen,
-                backdrop = glassBackdrop,
-                navMatchedWidth = navMatchedWidth,
-            )
-
             // Bottom: nav capsule (fluid 3-circle expanding nav). Centered at
             // the bottom. The old sparkle-search circle beside the Library tab
             // has been removed — search is now triggered from the title text.
             //
-            // Drawn BEFORE the FullPlayer so the player paints on top of it
+            // Drawn BEFORE the player sheet so the sheet paints on top of it
             // when expanded. Also fades out when the player or lyrics is visible
             // so it doesn't show through.
+            // The nav dissolves as the player sheet grows over it.
+            val navAlpha by animateFloatAsState(
+                targetValue = if (playerVisible || showLyrics) 0f else 1f,
+                animationSpec = tween(280),
+                label = "navAlpha",
+            )
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = effBottomDp)
-                    .graphicsLayer { alpha = if (playerVisible || showLyrics) 0f else 1f },
+                    .graphicsLayer { alpha = navAlpha },
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -745,14 +741,19 @@ fun LuteaScaffold(
             // ★ Full player — overlays the entire screen when expanded.
             //    Slide-up from bottom. Swipe down or tap close to collapse.
             //    Drawn AFTER the nav bar so it paints on top of it.
-            com.rajatxo.lutea.ui.player.FullPlayer(
-                visible = playerVisible,
-                onClose = {
-                    playerVisible = false
-                    showLyrics = false
-                },
-                onLyricsClick = { showLyrics = true },
+            // ★ Player sheet — the mini player and the full player are one
+            //    surface. Drag it up (or tap it) to morph into the full player;
+            //    drag down or tap close to go back. Drawn AFTER the nav so it
+            //    paints on top of it, but it only blocks touches where it is.
+            com.rajatxo.lutea.ui.player.PlayerSheet(
                 modifier = Modifier.fillMaxSize(),
+                expanded = playerVisible,
+                onExpandedChange = { playerVisible = it },
+                onLyricsClick = { showLyrics = true },
+                hidden = imeOpen,
+                backdrop = glassBackdrop,
+                navMatchedWidth = navMatchedWidth,
+                miniBottomPadding = miniPlayerBottom,
             )
 
             // ★ Lyrics screen — on top of everything. Opens from the player's
