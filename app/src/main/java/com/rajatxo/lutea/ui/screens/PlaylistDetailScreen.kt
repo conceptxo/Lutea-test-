@@ -84,6 +84,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
@@ -163,6 +164,9 @@ import kotlin.math.roundToInt
 // ------------------------------------------------------------------ tunables
 
 private const val COVER_HEIGHT_FRACTION = 0.60f   // square cover side, capped at 60% of height
+// Remembered song order (shared across playlists and app restarts).
+private const val KEY_SORT_MODE = "playlist_sort_mode"
+private const val KEY_SORT_DESC = "playlist_sort_desc"
 // The header used to start 14% of screen-height INSIDE the cover's fade zone, so the
 // playlist name overlapped the cover art. Now the header starts flush at the cover's
 // bottom edge (0 overlap) plus a small breathing gap below the cover.
@@ -231,11 +235,28 @@ fun PlaylistDetailScreen(
     var menuOpen by remember { mutableStateOf(false) }
     // Custom-order (sort) menu + its current mode.
     var customOrderOpen by remember { mutableStateOf(false) }
-    var sortMode by remember(playlist.id) { mutableStateOf(PlaylistSortMode.TITLE) }
+    // The chosen sort order is remembered app-wide (not per playlist), so it
+    // survives leaving the screen and restarting the app. Default: most played
+    // first (listening time, descending).
+    val context = LocalContext.current
+    val sortPrefs = remember {
+        context.getSharedPreferences("lutea_prefs", Context.MODE_PRIVATE)
+    }
+    var sortMode by remember {
+        mutableStateOf(
+            sortPrefs.getString(KEY_SORT_MODE, null)
+                ?.let { name -> PlaylistSortMode.entries.firstOrNull { it.name == name } }
+                ?: PlaylistSortMode.LISTENING_TIME
+        )
+    }
     // Ascending/descending toggle for the current sort. Most-played-first means
     // descending for listening-time; A→Z means ascending for title. The toggle
     // just flips whichever order the active mode produced.
-    var sortDescending by remember { mutableStateOf(false) }
+    var sortDescending by remember { mutableStateOf(sortPrefs.getBoolean(KEY_SORT_DESC, false)) }
+    LaunchedEffect(sortMode) { sortPrefs.edit().putString(KEY_SORT_MODE, sortMode.name).apply() }
+    LaunchedEffect(sortDescending) {
+        sortPrefs.edit().putBoolean(KEY_SORT_DESC, sortDescending).apply()
+    }
     // Lock on the custom-order capsule: locked (default) = sort menu only;
     // unlocked = manual drag-reorder is enabled. The lock circle on the right
     // of the capsule toggles it.
@@ -743,6 +764,29 @@ fun PlaylistDetailScreen(
                 modifier = Modifier.align(Alignment.TopStart),
             )
 
+            // ★ Search page — a separate full-screen overlay with its own field
+            //    and a filtered song list, themed to the cover color. Slides up
+            //    over the playlist page when the search button is tapped.
+            //    Drawn BEFORE the bottom chrome and the sheet, so the nav tabs,
+            //    the mini player and the song menu all stay above it.
+            if (searchOpen) {
+                PlaylistSearchPage(
+                    playlistName = playlist.name,
+                    songs = songs,
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    onClose = { searchOpen = false },
+                    onSongClick = onSongHere,
+                    onMore = { songMenuSong = it },
+                    songArt = songArt,
+                    backgroundColor = coverColor,
+                    topInset = topInset,
+                    sidePad = sidePad,
+                    thumbSize = thumbSize,
+                    navBottom = navBottom,
+                )
+            }
+
             // Bottom chrome, same as the main app: nav capsule + mini player.
             // The caller adds matching bottom insets so songs can scroll clear.
             val navMetrics = fluidNavMetrics(
@@ -840,25 +884,6 @@ fun PlaylistDetailScreen(
                 PlaylistSongEditSheet(
                     song = song,
                     onDismiss = { editingSong = null },
-                )
-            }
-            // ★ Search page — a separate full-screen overlay with its own field
-            //    and a filtered song list, themed to the cover color. Slides up
-            //    over the playlist page when the search button is tapped.
-            if (searchOpen) {
-                PlaylistSearchPage(
-                    playlistName = playlist.name,
-                    songs = songs,
-                    query = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    onClose = { searchOpen = false },
-                    onSongClick = onSongHere,
-                    songArt = songArt,
-                    backgroundColor = coverColor,
-                    topInset = topInset,
-                    sidePad = sidePad,
-                    thumbSize = thumbSize,
-                    navBottom = navBottom,
                 )
             }
             PlayerSheet(
@@ -1470,6 +1495,7 @@ private fun PlaylistSearchPage(
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
     onSongClick: (Int, Song) -> Unit,
+    onMore: (Song) -> Unit,
     songArt: (Song) -> Any?,
     backgroundColor: () -> Color,
     topInset: Dp,
@@ -1541,7 +1567,7 @@ private fun PlaylistSearchPage(
                                 onSongClick(indexed.index, song)
                                 onClose()
                             },
-                            onMore = {},
+                            onMore = { onMore(song) },
                         )
                         if (i < filtered.lastIndex) {
                             DetailRowDivider(sidePad = sidePad, thumbSize = thumbSize)
@@ -2136,19 +2162,13 @@ private fun DetailSongThumb(art: Any?, size: Dp, songId: Long? = null) {
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        // Listening-time text — bottom-left, bold white, no capsule (the
-        // artwork provides the contrast, matching RiPlay's thumbnails).
+        // Listening-time text — centred over the artwork, bold white on a light
+        // scrim so it stays readable on any cover.
         Box(
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.45f),
-                    )
-                )
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.30f)),
+            contentAlignment = Alignment.Center,
         ) {
             DetailText(
                 text = com.rajatxo.lutea.data.store.formatPlayedMs(playedMs),

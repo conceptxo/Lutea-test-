@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.size.Size
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
@@ -122,6 +125,7 @@ fun PlayerSheet(
     val currentSong by PlaybackConnection.currentSong.collectAsState()
     val isPlaying by PlaybackConnection.isPlaying.collectAsState()
     val density = LocalDensity.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val expansion = remember { Animatable(if (expanded) 1f else 0f) }
 
@@ -302,8 +306,18 @@ fun PlayerSheet(
                     contentAlignment = Alignment.Center,
                 ) {
                     currentSong?.albumArtUri?.let { artUri ->
+                        // Fixed decode size: the art grows during the expand
+                        // drag, so a layout-sized request would restart on
+                        // every frame and settle on a small decode. 1080 keeps
+                        // the real metadata art crisp without a huge bitmap.
+                        val request = remember(artUri) {
+                            ImageRequest.Builder(context)
+                                .data(artUri)
+                                .size(Size(1080, 1080))
+                                .build()
+                        }
                         AsyncImage(
-                            model = artUri,
+                            model = request,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),

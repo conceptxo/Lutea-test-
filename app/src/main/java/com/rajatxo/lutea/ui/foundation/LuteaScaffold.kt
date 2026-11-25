@@ -220,6 +220,10 @@ fun LuteaScaffold(
                 else if (menuOpen) menuOpen = false
             }
 
+            // ★ Back with the player open collapses it to the mini player —
+            //    it must never close the app from underneath the player.
+            BackHandler(enabled = playerVisible && !showLyrics) { playerVisible = false }
+
             // Content — fills the WHOLE screen
             Box(
                 modifier = Modifier
