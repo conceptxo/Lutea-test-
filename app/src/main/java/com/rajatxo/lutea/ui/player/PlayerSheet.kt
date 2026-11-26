@@ -1,5 +1,7 @@
 package com.rajatxo.lutea.ui.player
 
+import android.content.Context
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -12,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -23,13 +24,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,10 +42,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,13 +53,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -76,14 +72,10 @@ import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.rajatxo.lutea.R
-import com.rajatxo.lutea.playback.LoopMode
 import com.rajatxo.lutea.playback.PlaybackConnection
-import com.rajatxo.lutea.ui.components.BillieEilishFamily
 import com.rajatxo.lutea.ui.components.CalSansFamily
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 /** Same dark ink the nav capsule uses on its white glass. */
 private val MiniInk = Color(0xFF1C1C1E)
@@ -100,13 +92,15 @@ data class PlayerNavigation(
 val LocalPlayerNavigation = staticCompositionLocalOf { PlayerNavigation() }
 
 /**
- * PlayerSheet — the mini player and the full player are ONE surface.
- *
- * The sheet's height, width and corner radius are driven by [expansion]
- * (0 = capsule above the nav, 1 = full screen). Dragging it vertically morphs
- * between the two, so the album art grows from a thumbnail into the hero
- * artwork while the capsule becomes the player. Tapping the capsule expands
- * it; swiping down (or the close button) collapses it.
+ * PlayerSheet — ONE surface that IS the mini player collapsed and the full
+ * player expanded. There is exactly one cover-art element: a single
+ * [AsyncImage] that is the 40dp thumbnail in the capsule and grows — corner
+ * radius and all — into the full-width square hero cover at the top of the
+ * player. No second [PlayerCoverBlend], no full-screen blur, no offscreen
+ * compositing on the transition's critical path. That is what makes the
+ * expand/shrink read as "the mini player itself is growing", and what removes
+ * the lag: the GPU only touches one image, and it is layout-driven (offset +
+ * size), not a per-frame filter.
  *
  * @param miniBottomPadding distance from the screen bottom to the capsule's
  *   bottom edge (the host's nav-bar space). Animates to zero as it expands.
@@ -134,10 +128,6 @@ fun PlayerSheet(
     val expansion = remember { Animatable(if (expanded) 1f else 0f) }
 
     LaunchedEffect(expanded) {
-        // Ease-in-out tween (FastOutSlowInEasing) instead of an underdamped
-        // spring: no overshoot/bounce, just a smooth accelerate-then-settle
-        // open and close. 420ms lands comfortably under the ~500ms motion
-        // threshold without feeling sluggish.
         expansion.animateTo(
             targetValue = if (expanded) 1f else 0f,
             animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
@@ -174,15 +164,26 @@ fun PlayerSheet(
             val miniAlpha = (1f - e * 3.5f).coerceIn(0f, 1f)
             val fullAlpha = ((e - 0.55f) / 0.35f).coerceIn(0f, 1f)
 
-            // Album art travel: capsule thumbnail (left of the row) → hero art
-            // centred between the top bar and the controls block.
-            val artTop = statusTop + 64.dp
-            val artBottom = maxH - navBottom - 268.dp
-            val artSpace = (artBottom - artTop).value.coerceAtLeast(120f).dp
-            val bigArt = minOf(maxW.value * 0.82f, artSpace.value).dp
-            val artSize = lerp(40.dp, bigArt, eased)
-            val artCx = lerp(32.dp, maxW / 2f, eased)
-            val artCy = lerp(28.dp, (artTop + artBottom) / 2f, eased)
+            // ── The ONE shared cover ──
+            // Mini state: 40dp thumbnail, 12dp in from the capsule's left,
+            // vertically centred in the 56dp capsule, 8dp corner radius.
+            // Full state: full-width square, top edge flush with the sheet's
+            // top (which is the screen top once expanded), 0dp corner radius.
+            // Size, position and corner radius all lerp together, so the
+            // thumbnail literally grows into the hero cover — one element.
+            val miniArtSize = 40.dp
+            val miniArtInset = 12.dp
+            val miniArtCy = MiniHeight / 2f
+            val miniArtRadius = 8.dp
+
+            val heroArtSize = maxW
+            val heroArtCy = maxW / 2f
+            val heroArtRadius = 0.dp
+
+            val artSize = lerp(miniArtSize, heroArtSize, eased)
+            val artCx = lerp(miniArtInset + miniArtSize / 2f, maxW / 2f, eased)
+            val artCy = lerp(miniArtCy, heroArtCy, eased)
+            val artRadius = lerp(miniArtRadius, heroArtRadius, eased)
 
             val travelPx = with(density) {
                 (maxH - MiniHeight - miniBottomPadding).toPx()
@@ -196,9 +197,6 @@ fun PlayerSheet(
                     else -> 0f
                 }
                 scope.launch {
-                    // Same ease-in-out as the tap-to-open, so releasing the
-                    // drag settles with the same smooth hand-off — no spring
-                    // bounce fighting the fling.
                     expansion.animateTo(
                         target,
                         tween(durationMillis = 380, easing = FastOutSlowInEasing),
@@ -292,51 +290,21 @@ fun PlayerSheet(
                         ) {} else Modifier
                     )
             ) {
-                // Album art — the one element shared by both states.
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            val half = with(density) { artSize.toPx() } / 2f
-                            IntOffset(
-                                (with(density) { artCx.toPx() } - half).roundToInt(),
-                                (with(density) { artCy.toPx() } - half).roundToInt(),
-                            )
-                        }
-                        .size(artSize)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF2A2A2A))
-                        .border(
-                            width = 0.8.dp,
-                            color = lerpColor(
-                                MiniInk.copy(alpha = 0.10f),
-                                Color.White.copy(alpha = 0.10f),
-                                eased,
-                            ),
-                            shape = RoundedCornerShape(20.dp),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    currentSong?.albumArtUri?.let { artUri ->
-                        // Fixed decode size: the art grows during the expand
-                        // drag, so a layout-sized request would restart on
-                        // every frame and settle on a small decode. 1080 keeps
-                        // the real metadata art crisp without a huge bitmap.
-                        val request = remember(artUri) {
-                            ImageRequest.Builder(context)
-                                .data(artUri)
-                                .size(Size(1080, 1080))
-                                .build()
-                        }
-                        AsyncImage(
-                            model = request,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                }
-
-                // ── Mini row: title/artist + play/pause + next ──
+                // ── The single shared cover art ──
+                // One AsyncImage. It is the mini thumbnail (40dp, 8dp radius,
+                // capsule-left) and the full hero cover (full-width square,
+                // flush to the sheet's top, square corners) — size, position
+                // and corner radius lerp together so it grows, not crossfades.
+                SharedCoverArt(
+                    artUri = currentSong?.albumArtUri,
+                    artSize = artSize,
+                    artCx = artCx,
+                    artCy = artCy,
+                    artRadius = artRadius,
+                    density = density,
+                    context = context,
+                    eased = eased,
+                )                // ── Mini row: title/artist + play/pause + next ──
                 if (miniAlpha > 0f) {
                     Row(
                         modifier = Modifier
@@ -349,7 +317,9 @@ fun PlayerSheet(
                             .padding(start = 64.dp, end = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Text(
                                 text = currentSong?.title ?: "",
                                 color = MiniInk,
@@ -400,6 +370,67 @@ fun PlayerSheet(
     }
 }
 
+/**
+ * The single shared cover. One [AsyncImage], fixed 1080 decode size (so the
+ * growing drag never triggers a re-decode per frame), positioned by absolute
+ * offset within the sheet and clipped to a lerped corner radius. The border
+ * tints from the mini ink to white as it grows.
+ */
+@Composable
+private fun SharedCoverArt(
+    artUri: Uri?,
+    artSize: Dp,
+    artCx: Dp,
+    artCy: Dp,
+    artRadius: Dp,
+    density: Density,
+    context: Context,
+    eased: Float,
+) {
+    Box(
+        modifier = Modifier
+            .offset {
+                val half = with(density) { artSize.toPx() } / 2f
+                IntOffset(
+                    (with(density) { artCx.toPx() } - half).roundToInt(),
+                    (with(density) { artCy.toPx() } - half).roundToInt(),
+                )
+            }
+            .size(artSize)
+            .clip(RoundedCornerShape(artRadius))
+            .background(Color(0xFF2A2A2A))
+            .border(
+                width = 0.8.dp,
+                color = lerpColor(
+                    MiniInk.copy(alpha = 0.10f),
+                    Color.White.copy(alpha = 0.10f),
+                    eased,
+                ),
+                shape = RoundedCornerShape(artRadius),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        artUri?.let { uri ->
+            // Fixed decode size: the art grows during the expand drag, so a
+            // layout-sized request would restart on every frame and settle on
+            // a small decode. 1080 keeps the real metadata art crisp without
+            // a huge bitmap.
+            val request = remember(uri) {
+                ImageRequest.Builder(context)
+                    .data(uri)
+                    .size(Size(1080, 1080))
+                    .build()
+            }
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
 @Composable
 private fun MiniButton(
     iconRes: Int,
@@ -436,17 +467,31 @@ private fun ExpandedPlayerBody(
     onQueueOpen: () -> Unit,
     pageProgress: Float,
 ) {
-    // The cover + seamless blend (Mochy Flagship): full-bleed cover that
-    // dissolves into the cover-derived colour via Lutea's blendStops. The
-    // control cluster is NOT here — it lives in [PlayerControlBar], drawn by
-    // the host as a persistent overlay so it stays on the lyrics and queue
-    // pages too (Mochy keeps the seek bar + transport on all three pages).
+    // The expanded player is now a LIGHTWEIGHT surface: the dark PlayerBg
+    // (already painted by the morphing sheet's background), the title/artist
+    // + control cluster are drawn by the host's persistent [PlayerControlBar]
+    // overlay (so they stay on the lyrics/queue pages too). Here we only need
+    // the top bar (lyrics + close). No second PlayerCoverBlend — the cover is
+    // the single shared element above.
     Box(
         modifier = Modifier
             .fillMaxSize()
             .graphicsLayer { this.alpha = alpha }
     ) {
-        PlayerCoverBlend()
+        // A subtle scrim behind the top bar so the round buttons stay legible
+        // over any cover.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.35f),
+                        1f to Color.Transparent,
+                    )
+                )
+        )
 
         // ── Top bar: lyrics button (left) + close (right) ──
         Row(
@@ -504,4 +549,3 @@ private fun TopBarCircleButton(
         )
     }
 }
-
