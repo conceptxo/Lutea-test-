@@ -4,7 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -141,9 +142,17 @@ fun PlayerSheet(
     )
 
     LaunchedEffect(expanded) {
+        // Critically-damped spring (dampingRatio = 1 → no overshoot/bounce),
+        // high stiffness → opens FAST and settles without sluggishness. A
+        // tween here ignored the finger's momentum on a tap-drag and always
+        // ran the full fixed duration, which read as slow/lagging. The spring
+        // starts from whatever velocity the drag left behind.
         expansion.animateTo(
             targetValue = if (expanded) 1f else 0f,
-            animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessHigh,
+            ),
         )
     }
 
@@ -157,9 +166,13 @@ fun PlayerSheet(
             val maxW = maxWidth
             val maxH = maxHeight
             val e = expansion.value
-            // Smoothstep: the capsule lets go of its shape quickly, then the
-            // full-screen sheet settles.
-            val eased = e * e * (3f - 2f * e)
+            // NO smoothstep here. A smoothstep (e*e*(3-2e)) double-eases on top
+            // of the animation spec, so during a drag the cover would barely
+            // move at low expansion while your finger moved a lot — that
+            // sticky, "lagging", heavy feel. Linear (eased = e) makes the
+            // geometry track the finger 1:1; the spring spec does all the
+            // easing on release. This is the single biggest smoothness win.
+            val eased = e
 
             val statusTop = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
             val navBottom = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
@@ -213,10 +226,21 @@ fun PlayerSheet(
                     expansion.value > 0.4f -> 1f
                     else -> 0f
                 }
+                // Convert the flick's pixel velocity (screen-down positive) into
+                // expansion-axis velocity (swipe up = negative px = positive
+                // expansion). Feeding this as the spring's initial velocity is
+                // what makes a fast upward flick WHOOSH open instead of getting
+                // dampened to a slow ease — the gesture's momentum carries
+                // straight through into the settle.
+                val initialVel = -velocity / travelPx
                 scope.launch {
                     expansion.animateTo(
                         target,
-                        tween(durationMillis = 380, easing = FastOutSlowInEasing),
+                        spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessHigh,
+                        ),
+                        initialVelocity = initialVel,
                     )
                 }
                 if ((target == 1f) != expanded) onExpandedChange(target == 1f)
