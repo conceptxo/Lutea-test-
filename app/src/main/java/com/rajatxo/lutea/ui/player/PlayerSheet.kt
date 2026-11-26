@@ -1,8 +1,8 @@
 package com.rajatxo.lutea.ui.player
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -12,10 +12,10 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.anchoredDraggable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +49,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,7 +82,7 @@ import com.rajatxo.lutea.playback.LoopMode
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.BillieEilishFamily
 import com.rajatxo.lutea.ui.components.CalSansFamily
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -132,13 +133,93 @@ fun PlayerSheet(
     val density = LocalDensity.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val expansion = remember { Animatable(if (expanded) 1f else 0f) }
 
-    LaunchedEffect(expanded) {
-        expansion.animateTo(
-            targetValue = if (expanded) 1f else 0f,
-            animationSpec = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow),
+    // ── spmp-style unified anchored drag ────────────────────────────────
+    // ONE AnchoredDraggableState drives the whole mini↔player morph. The
+    // surface moves 1:1 with the finger and flings/snaps to a page anchor
+    // (0 = mini capsule, 1 = full player) — the same continuous gesture
+    // spmp's NowPlayingContainer uses, so the open/close feels weighty and
+    // physical instead of the old hand-rolled velocity-threshold settle.
+    //
+    // Anchors are pixel positions: anchor 0 sits at the mini offset (capsule
+    // fully visible at the bottom), anchor 1 sits at the full-screen offset
+    // (0 travel remaining). requireOffset() returns the live px offset; we
+    // invert it into a 0..1 expansion the existing geometry already consumes.
+    val swipeState = remember {
+        AnchoredDraggableState(
+            initialValue = if (expanded) 1 else 0,
+            anchors = DraggableAnchors {},
+            positionalThreshold = { totalDistance -> totalDistance * 0.5f },
+            velocityThreshold = { with(density) { 125.dp.toPx() } },
+            snapAnimationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+            ),
+            decayAnimationSpec = exponentialDecay(),
         )
+    }
+
+    // travelPx isn't known until BoxWithConstraints; this fallback mirrors the
+    // initial anchor (collapsed = 0 travel done = full travel remaining).
+    var travelPxFallback by remember { mutableStateOf(0f) }
+
+    // ── expansion: the 0..1 progress the geometry lerps on ──
+    // Computed from the live swipe offset relative to the two anchors, so it
+    // tracks the finger 1:1 during a drag and animates during a fling/snap.
+    // Before anchors are laid out the offset is NaN — fall back to the
+    // initial expanded/collapsed state so the first frame is correct.
+    val expansion = remember(expanded) {
+        derivedStateOf {
+            val raw = swipeState.offset
+            if (raw.isNaN()) {
+                if (expanded) travelPxFallback else 0f
+            } else {
+                raw
+            }
+        }
+    }
+
+    // Keep the host's `expanded` boolean in sync with where the sheet
+    // actually settled (so back-button/`playerVisible` logic stays correct).
+    LaunchedEffect(swipeState) {
+        snapshotFlow { swipeState.settledValue }
+            .distinctUntilChanged()
+            .collect { page ->
+                val isExpanded = page == 1
+                if (isExpanded != expanded) onExpandedChange(isExpanded)
+            }
+    }
+
+    // Programmatic open/close (tap the capsule, the close button, the host
+    // flipping `expanded`). Uses the PUBLIC suspend anchoredDrag{dragTo}
+    // block (NOT spmp's internal animateTo, which is @Suppress'd
+    // INVISIBLE_MEMBER and fragile across Compose versions). Animate over a
+    // short spring so the non-gesture open feels as smooth as a fling.
+    LaunchedEffect(expanded) {
+        val targetPage = if (expanded) 1 else 0
+        if (swipeState.settledValue == targetPage && !swipeState.isAnimationRunning) {
+            return@LaunchedEffect
+        }
+        scope.launch {
+            swipeState.anchoredDrag(targetPage) { anchors, target ->
+                val targetOffset = anchors.positionOf(target)
+                if (targetOffset.isNaN()) return@anchoredDrag
+                // Per-frame dragTo so the surface animates visually (not a
+                // single jump). androidx.compose.animation.core.animate drives
+                // the value toward the target and calls back each frame.
+                val start = swipeState.requireOffset()
+                androidx.compose.animation.core.animate(
+                    initialValue = start,
+                    targetValue = targetOffset,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                ) { value, _ ->
+                    dragTo(value)
+                }
+            }
+        }
     }
 
     AnimatedVisibility(
@@ -150,7 +231,26 @@ fun PlayerSheet(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxW = maxWidth
             val maxH = maxHeight
-            val e = expansion.value
+
+            // ── update anchors when the layout settles ──
+            // Anchor 0 = the mini capsule's rest position (travelPx below full
+            // screen), anchor 1 = full screen (0 offset). Computed in px so the
+            // anchored drag is device-density accurate.
+            val travelPx = with(density) {
+                (maxH - MiniHeight - miniBottomPadding).toPx()
+            }.coerceAtLeast(1f)
+            travelPxFallback = travelPx
+            LaunchedEffect(travelPx) {
+                val anchors = DraggableAnchors {
+                    0 at travelPx
+                    1 at 0f
+                }
+                swipeState.updateAnchors(anchors)
+            }
+
+            // e = 1 at full screen, 0 at capsule. Invert the live offset
+            // (which is travelPx at capsule, 0 at full screen).
+            val e = (1f - (expansion.value / travelPx)).coerceIn(0f, 1f)
             // Smoothstep: the capsule lets go of its shape quickly, then the
             // full-screen sheet settles.
             val eased = e * e * (3f - 2f * e)
@@ -180,32 +280,6 @@ fun PlayerSheet(
             val artSize = lerp(40.dp, bigArt, eased)
             val artCx = lerp(32.dp, maxW / 2f, eased)
             val artCy = lerp(28.dp, (artTop + artBottom) / 2f, eased)
-
-            val travelPx = with(density) {
-                (maxH - MiniHeight - miniBottomPadding).toPx()
-            }.coerceAtLeast(1f)
-
-            val settle: (Float) -> Unit = { velocity ->
-                val target = when {
-                    velocity < -1200f -> 1f
-                    velocity > 1200f -> 0f
-                    expansion.value > 0.4f -> 1f
-                    else -> 0f
-                }
-                scope.launch {
-                    expansion.animateTo(
-                        target,
-                        spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow),
-                    )
-                }
-                if ((target == 1f) != expanded) onExpandedChange(target == 1f)
-            }
-
-            val dragState = rememberDraggableState { dy ->
-                scope.launch {
-                    expansion.snapTo((expansion.value - dy / travelPx).coerceIn(0f, 1f))
-                }
-            }
 
             // ── Collapsed capsule glass, pinned where the mini player lives ──
             if (glassAlpha > 0f) {
@@ -272,10 +346,12 @@ fun PlayerSheet(
                     .height(sheetH)
                     .clip(sheetShape)
                     .background(PlayerBg.copy(alpha = darkAlpha))
-                    .draggable(
-                        state = dragState,
+                    .anchoredDraggable(
+                        state = swipeState,
                         orientation = Orientation.Vertical,
-                        onDragStopped = { velocity -> settle(velocity) },
+                        // Swipe up = expand. reverseDirection flips the drag
+                        // axis so finger-up grows expansion, matching spmp.
+                        reverseDirection = true,
                     )
                     // While open, swallow taps on the empty player surface so
                     // they cannot reach the screen underneath.
