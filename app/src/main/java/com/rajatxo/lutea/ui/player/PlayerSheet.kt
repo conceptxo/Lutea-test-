@@ -47,10 +47,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.layout.ContentScale
@@ -74,12 +78,12 @@ import com.kyant.backdrop.effects.blur
 import com.rajatxo.lutea.R
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.CalSansFamily
+import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** Same dark ink the nav capsule uses on its white glass. */
 private val MiniInk = Color(0xFF1C1C1E)
-private val PlayerBg = Color(0xFF0A0A0A)
 
 /** Height of the collapsed capsule. */
 private val MiniHeight = 56.dp
@@ -127,6 +131,15 @@ fun PlayerSheet(
     val scope = rememberCoroutineScope()
     val expansion = remember { Animatable(if (expanded) 1f else 0f) }
 
+    // Themed seam colour = the cover's own dominant colour (Palette, cached).
+    // Used as the dark surface's tint so a cold-start cover load shows a themed
+    // colour behind the blur instead of pure black (no black flash).
+    val coverUriStr = currentSong?.albumArtUri?.toString()
+    val seamColor by rememberCoverThemeColor(
+        coverUri = coverUriStr,
+        fallbackSeed = currentSong?.id?.toString(),
+    )
+
     LaunchedEffect(expanded) {
         expansion.animateTo(
             targetValue = if (expanded) 1f else 0f,
@@ -163,6 +176,10 @@ fun PlayerSheet(
             val darkAlpha = (e * 2.2f).coerceIn(0f, 1f)
             val miniAlpha = (1f - e * 3.5f).coerceIn(0f, 1f)
             val fullAlpha = ((e - 0.55f) / 0.35f).coerceIn(0f, 1f)
+            // The immersive blurred background ("down blur") fades in as the
+            // sheet opens. It sits BEHIND the dark surface; the morphing cover's
+            // bottom DstIn fade melts the sharp cover into it.
+            val blurAlpha = ((e - 0.25f) / 0.5f).coerceIn(0f, 1f)
 
             // ── The ONE shared cover ──
             // Mini state: 40dp thumbnail, 12dp in from the capsule's left,
@@ -275,7 +292,12 @@ fun PlayerSheet(
                     .width(sheetW)
                     .height(sheetH)
                     .clip(sheetShape)
-                    .background(PlayerBg.copy(alpha = darkAlpha))
+                    // Themed seam colour is the sheet's base surface (fades in
+                    // with [darkAlpha]). The immersive blur sits on top of it,
+                    // and the morphing cover sits on top of the blur — so the
+                    // cover's DstIn-erased bottom reveals the blur, which in
+                    // turn sits over the seam colour. No pure black anywhere.
+                    .background(seamColor.copy(alpha = darkAlpha))
                     .draggable(
                         state = dragState,
                         orientation = Orientation.Vertical,
@@ -290,11 +312,44 @@ fun PlayerSheet(
                         ) {} else Modifier
                     )
             ) {
+                // ── Immersive blurred background ("down blur") ──
+                // A heavily-blurred copy of the cover filling the sheet. It is
+                // the surface the morphing cover melts into: the cover's bottom
+                // DstIn fade erases its own pixels, revealing THIS blur beneath.
+                // Fades in with [blurAlpha] so it only appears as the player
+                // opens (the capsule has no blur).
+                if (blurAlpha > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = blurAlpha }
+                            .background(seamColor)
+                    ) {
+                        currentSong?.albumArtUri?.let { artUri ->
+                            val blurRequest = remember(artUri) {
+                                ImageRequest.Builder(context)
+                                    .data(artUri)
+                                    .size(Size(540, 540))
+                                    .build()
+                            }
+                            AsyncImage(
+                                model = blurRequest,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .blur(96.dp),
+                            )
+                        }
+                    }
+                }
+
                 // ── The single shared cover art ──
                 // One AsyncImage. It is the mini thumbnail (40dp, 8dp radius,
                 // capsule-left) and the full hero cover (full-width square,
                 // flush to the sheet's top, square corners) — size, position
                 // and corner radius lerp together so it grows, not crossfades.
+                // Its bottom edge dissolves into the blur above via DstIn.
                 SharedCoverArt(
                     artUri = currentSong?.albumArtUri,
                     artSize = artSize,
@@ -397,15 +452,44 @@ private fun SharedCoverArt(
                 )
             }
             .size(artSize)
+            // Offscreen compositing is REQUIRED for DstIn to erase the cover's
+            // own pixels (otherwise it blends against whatever is behind the
+            // layer, which has no effect on the cover).
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .clip(RoundedCornerShape(artRadius))
             .background(Color(0xFF2A2A2A))
+            // Bottom DstIn fade — the Spiral3 blend. As the cover grows into
+            // the hero, its bottom edge dissolves into the immersive blur
+            // beneath it. The fade height grows with the cover (capped at
+            // 140dp like the original), and it only appears as the cover opens
+            // (scaled by [eased]) so the mini thumbnail stays fully solid.
+            .drawWithContent {
+                drawContent()
+                val fadeStrength = eased
+                if (fadeStrength > 0.01f) {
+                    val maxFadePx = 140.dp.toPx()
+                    val fadeHeight = (size.height * 0.45f)
+                        .coerceAtMost(maxFadePx)
+                        .coerceAtLeast(0f)
+                    val fadeStartY = (size.height - fadeHeight).coerceAtLeast(0f)
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(Color.Black, Color.Transparent),
+                            startY = fadeStartY,
+                            endY = size.height,
+                        ),
+                        blendMode = BlendMode.DstIn,
+                        alpha = fadeStrength,
+                    )
+                }
+            }
             .border(
                 width = 0.8.dp,
                 color = lerpColor(
                     MiniInk.copy(alpha = 0.10f),
                     Color.White.copy(alpha = 0.10f),
                     eased,
-                ),
+                ).copy(alpha = (1f - eased).coerceIn(0f, 1f)),
                 shape = RoundedCornerShape(artRadius),
             ),
         contentAlignment = Alignment.Center,
@@ -467,12 +551,13 @@ private fun ExpandedPlayerBody(
     onQueueOpen: () -> Unit,
     pageProgress: Float,
 ) {
-    // The expanded player is now a LIGHTWEIGHT surface: the dark PlayerBg
-    // (already painted by the morphing sheet's background), the title/artist
-    // + control cluster are drawn by the host's persistent [PlayerControlBar]
-    // overlay (so they stay on the lyrics/queue pages too). Here we only need
-    // the top bar (lyrics + close). No second PlayerCoverBlend — the cover is
-    // the single shared element above.
+    // The expanded player is a LIGHTWEIGHT surface: the themed seam colour
+    // (already painted by the morphing sheet's background) + the immersive
+    // blurred cover behind it. The title/artist + control cluster are drawn by
+    // the host's persistent [PlayerControlBar] overlay (so they stay on the
+    // lyrics/queue pages too). Here we only need the top bar (lyrics + close).
+    // The sharp cover is the single shared element above — no second
+    // PlayerCoverBlend.
     Box(
         modifier = Modifier
             .fillMaxSize()
