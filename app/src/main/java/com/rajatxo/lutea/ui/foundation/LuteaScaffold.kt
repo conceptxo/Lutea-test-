@@ -158,13 +158,11 @@ fun LuteaScaffold(
     var menuOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     val searchOpenState = remember { mutableStateOf(false) }
-    var playerVisible by remember { mutableStateOf(false) }
+    // The new MorphPlayerSheet owns the mini↔full↔queue motion internally; the
+    // scaffold only needs to know when the player owns the screen (nav fade) and
+    // whether the lyrics overlay is up.
+    var playerActive by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
-    var showQueue by remember { mutableStateOf(false) }
-    // Page-open progress drives the player's control-hide animation for BOTH
-    // the lyrics and queue pages (Mochy's controlsHiddenState). 1 = a page is
-    // fully open, 0 = player-only.
-    val pageProgress = if (showLyrics || showQueue) 1f else 0f
     val searchHistoryOverlay = remember { SearchHistoryOverlayState() }
     val context = LocalContext.current
     val searchSoundOverlay = remember(context) {
@@ -225,12 +223,9 @@ fun LuteaScaffold(
                 else if (menuOpen) menuOpen = false
             }
 
-            // ★ Back with the player stack open: queue closes → lyrics closes
-            //    → player collapses. Most specific first; never closes the app
-            //    from underneath the player.
-            BackHandler(enabled = showQueue) { showQueue = false }
-            BackHandler(enabled = showLyrics && !showQueue) { showLyrics = false }
-            BackHandler(enabled = playerVisible && !showLyrics && !showQueue) { playerVisible = false }
+            // ★ Lyrics overlay closes first on back; the player's own expand /
+            //    queue back handling lives inside MorphPlayerSheet.
+            BackHandler(enabled = showLyrics) { showLyrics = false }
 
             // Content — fills the WHOLE screen
             Box(
@@ -695,7 +690,7 @@ fun LuteaScaffold(
             // so it doesn't show through.
             // The nav dissolves as the player sheet grows over it.
             val navAlpha by animateFloatAsState(
-                targetValue = if (playerVisible || showLyrics || showQueue) 0f else 1f,
+                targetValue = if (playerActive || showLyrics) 0f else 1f,
                 animationSpec = tween(280),
                 label = "navAlpha",
             )
@@ -713,7 +708,7 @@ fun LuteaScaffold(
                     onTabSelected = onTabSelected,
                     backdrop = glassBackdrop,
                     onSearchLongPress = {
-                        if (!playerVisible && !showLyrics && !showQueue) {
+                        if (!playerActive && !showLyrics) {
                             if (activeTab != LuteaTab.Search) onTabSelected(LuteaTab.Search)
                             menuOpen = false
                             searchSoundOverlay.expanded = true
@@ -728,9 +723,8 @@ fun LuteaScaffold(
             if (activeTab == LuteaTab.Search) {
                 SearchClearAllOverlay(
                     visible = historyClearVisible &&
-                        !playerVisible &&
-                        !showLyrics &&
-                        !showQueue,
+                        !playerActive &&
+                        !showLyrics,
                     backdrop = glassBackdrop,
                     onClearAll = { searchHistoryOverlay.clearAll() },
                     modifier = Modifier
@@ -746,26 +740,20 @@ fun LuteaScaffold(
                 state = searchSoundOverlay,
                 backdrop = glassBackdrop,
                 visible = activeTab == LuteaTab.Search &&
-                    !playerVisible &&
-                    !showLyrics &&
-                    !showQueue,
+                    !playerActive &&
+                    !showLyrics,
                 bottomPadding = searchSoundCardBottom,
             )
 
-            // ★ Full player — overlays the entire screen when expanded.
-            //    Slide-up from bottom. Swipe down or tap close to collapse.
-            //    Drawn AFTER the nav bar so it paints on top of it.
-            // ★ Player sheet — the mini player and the full player are one
-            //    surface. Drag it up (or tap it) to morph into the full player;
-            //    drag down or tap close to go back. Drawn AFTER the nav so it
-            //    paints on top of it, but it only blocks touches where it is.
-            com.rajatxo.lutea.ui.player.PlayerSheet(
+            // ★ MorphPlayerSheet — the mini player, the full player and the
+            //    queue are ONE surface. Drag up (or tap) to morph the capsule
+            //    into the full player; keep dragging up to slide the queue over
+            //    it; drag down to reverse. A flick carries its momentum into the
+            //    spring settle. Drawn AFTER the nav so it paints on top of it.
+            com.rajatxo.lutea.ui.player.morph.MorphPlayerSheet(
                 modifier = Modifier.fillMaxSize(),
-                expanded = playerVisible,
-                onExpandedChange = { playerVisible = it },
                 onLyricsClick = { showLyrics = true },
-                onQueueOpen = { showQueue = true },
-                pageProgress = pageProgress,
+                onActiveChange = { playerActive = it },
                 hidden = imeOpen,
                 backdrop = glassBackdrop,
                 navMatchedWidth = navMatchedWidth,
@@ -789,54 +777,6 @@ fun LuteaScaffold(
                 )
             }
 
-            // ★ Queue screen — opens by swiping UP on the player (the user's
-            //    chosen gesture). Shares the cover-derived gradient with the
-            //    player so it reads as a continuation of the now-playing page.
-            androidx.compose.animation.AnimatedVisibility(
-                visible = showQueue,
-                enter = androidx.compose.animation.slideInVertically(
-                    animationSpec = androidx.compose.animation.core.tween(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)
-                ) { it / 2 } + androidx.compose.animation.fadeIn(
-                    animationSpec = androidx.compose.animation.core.tween(300)
-                ),
-                exit = androidx.compose.animation.slideOutVertically(
-                    animationSpec = androidx.compose.animation.core.tween(320, easing = androidx.compose.animation.core.FastOutSlowInEasing)
-                ) { it / 2 } + androidx.compose.animation.fadeOut(
-                    animationSpec = androidx.compose.animation.core.tween(250)
-                ),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                com.rajatxo.lutea.ui.screens.QueueScreen(
-                    onClose = { showQueue = false },
-                )
-            }
-
-            // ★ Persistent control bar — the Mochy Flagship behaviour: the seek
-            //    bar + transport STAY visible over the player AND the lyrics page
-            //    AND the queue page, as one bottom overlay. It is shown whenever
-            //    the player is expanded (any of the three), and fades out with the
-            //    player when it collapses to the mini capsule.
-            if (playerVisible) {
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = playerVisible,
-                    enter = androidx.compose.animation.fadeIn(
-                        animationSpec = androidx.compose.animation.core.tween(300)
-                    ),
-                    exit = androidx.compose.animation.fadeOut(
-                        animationSpec = androidx.compose.animation.core.tween(200)
-                    ),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        com.rajatxo.lutea.ui.player.PlayerControlBar(
-                            onClose = { playerVisible = false; showLyrics = false; showQueue = false },
-                            onQueueClick = { showQueue = true },
-                            onLyricsClick = { showLyrics = true },
-                            modifier = Modifier.align(Alignment.BottomCenter),
-                        )
-                    }
-                }
-            }
         }
     }
 }
