@@ -126,18 +126,19 @@ fun PlayerCoverBlend(
         }
 
         // (2) Sharp SQUARE cover (Spiral3 block, lines 735–791) — SQUARE box
-        //     (aspectRatio 1f), TopCenter. EDIT 3: offset 24dp (moved up from
-        //     80dp) + gentle 1.06 zoom with top-center pivot (grows downward,
-        //     no top crop, ~3% side bleed). Universal fitting: full image
-        //     visible. The bottom 140dp fade (EDIT 1: top fade removed) is
-        //     drawn inside the box, so it moves up + grows with the cover.
+        //     (aspectRatio 1f), TopCenter. offset 0dp so the cover's top edge
+        //     touches the screen top edge. gentle 1.06 zoom with top-center
+        //     pivot (grows downward, no top crop, ~3% side bleed). Universal
+        //     fitting: full image visible. The bottom 140dp fade (EDIT 1: top
+        //     fade removed) is drawn inside the box, so it moves up + grows with
+        //     the cover.
         if (request != null) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
                     .align(Alignment.TopCenter)
-                    .offset(y = 24.dp)
+                    .offset(y = 0.dp)
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
                         // EDIT 3: gentle ~6% zoom, top-center pivot so the box
