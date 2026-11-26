@@ -2,6 +2,7 @@ package com.rajatxo.lutea.ui.player
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -53,7 +55,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import coil3.SingletonImageLoader
+import coil3.compose.rememberAsyncImagePainter
+import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.rajatxo.lutea.R
@@ -62,6 +66,7 @@ import com.rajatxo.lutea.playback.LoopMode
 import com.rajatxo.lutea.playback.PlaybackConnection
 import com.rajatxo.lutea.ui.components.BillieEilishFamily
 import com.rajatxo.lutea.ui.components.CalSansFamily
+import com.rajatxo.lutea.ui.util.rememberCoverThemeColor
 
 import kotlin.math.roundToLong
 
@@ -80,17 +85,33 @@ import kotlin.math.roundToLong
 //     96dp blurred bg + the bottom 140dp fade stay. The cover's top is crisp.
 //   EDIT 2 — universal fitting rule: the WHOLE cover is visible (square box,
 //     aspectRatio 1f, ContentScale.Fit — nothing cropped, no logo clip).
-//   EDIT 3 — "zoom a little + move the cover up + blend follows": the square
-//     cover at fillMaxWidth only fills ~45% of the screen height, leaving dead
-//     space below before the title. So:
-//       • offset 80dp -> 24dp (cover moves up, just clearing the status bar;
-//         the gap above the cover shrinks).
-//       • graphicsLayer scaleX/Y 1.06f with TOP-CENTER pivot — gentle ~6% zoom
-//         that grows the box DOWNWARD (no top crop) with only ~3% side bleed
-//         (vs the 1.15f that clipped the right-edge logo). Full image still
-//         visible, just bigger.
-//       • The bottom 140dp fade is drawn INSIDE the box, so it moves up + grows
-//         with the cover — the blend point and down-blur follow automatically.
+//   EDIT 3 — offset 0dp (top edge touches screen top edge) + gentle 1.06 zoom
+//     with top-center pivot (grows downward, no top crop). Bottom 140dp fade
+//     is drawn inside the box, so it moves up + grows with the cover.
+//
+//   EDIT 4 — SMOOTH SONG TRANSITION (no black flash between songs):
+//     Problem: when the song changed, the new cover wasn't in Coil's memory
+//     cache yet, so both AsyncImages rendered EMPTY while the parent
+//     Box(background(Color.Black)) showed through = a ~0.5s BLACK FLASH. Going
+//     back (previous) was instant because that cover was just shown (cached).
+//     Two fixes, both applied:
+//       WAY 1 — keep the OLD cover painted during the new cover's load. Each
+//         cover layer remembers its LAST successful painter (State.Success).
+//         While the new song's painter is Loading/Empty/Error, the previous
+//         Success painter stays painted underneath — the screen never goes
+//         black. Only when the new painter reaches Success does the old layer
+//         drop out. Also the parent background switched Color.Black -> the
+//         cover's themed seam colour, so even a true cold-start shows a themed
+//         colour instead of pure black.
+//       WAY 2 — PREFETCH the next 5 songs' covers into Coil's memory cache.
+//         A LaunchedEffect keyed on currentSong reads PlaybackConnection's
+//         queue + currentIndex, takes the next 5 songs (respecting LoopMode
+//         wrap), and enqueues a prefetch request for each cover at the
+//         player's display size. Coil shares its memory+disk cache across all
+//         callers, so by the time you hit next, the cover is already decoded
+//         and the swap is instant.
+//     Implementation detail: each layer uses rememberAsyncImagePainter +
+//     painter.state (a StateFlow<State> with Empty/Loading/Success/Error).
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -98,26 +119,69 @@ fun PlayerCoverBlend(
     modifier: Modifier = Modifier,
 ) {
     val currentSong by PlaybackConnection.currentSong.collectAsState()
+    val loopMode by PlaybackConnection.loopMode.collectAsState()
     val context = LocalContext.current
     val coverUriStr = currentSong?.albumArtUri?.toString()
+
+    // Themed seam colour = the cover's own dominant colour (extracted via
+    // Palette, cached). Used as the parent background instead of pure black,
+    // so a cold-start load shows a themed colour, never a black flash.
+    val seamColor by rememberCoverThemeColor(
+        coverUri = coverUriStr,
+        fallbackSeed = currentSong?.id?.toString(),
+    )
 
     val request = remember(coverUriStr) {
         if (coverUriStr.isNullOrBlank()) null
         else ImageRequest.Builder(context).data(coverUriStr).crossfade(true).build()
     }
 
+    // WAY 2 — prefetch the next 5 songs' covers into Coil's memory cache so the
+    // next-song swap is instant (no decode on the critical path). Runs whenever
+    // the current song (or loop mode) changes.
+    LaunchedEffect(currentSong?.id, loopMode) {
+        val queue = PlaybackConnection.currentQueue
+        val idx = PlaybackConnection.currentIndex
+        if (queue.isEmpty() || idx < 0) return@LaunchedEffect
+
+        // Next 5, respecting loop wrap-around (ALL wraps, ONE/OFF stop at end).
+        val upcoming = buildList {
+            for (step in 1..5) {
+                val nextIdx = when (loopMode) {
+                    LoopMode.ONE -> idx // same song re-queueing — skip prefetch churn
+                    LoopMode.OFF -> idx + step
+                    LoopMode.ALL -> (idx + step) % queue.size
+                }
+                if (nextIdx !in queue.indices) break
+                add(queue[nextIdx])
+            }
+        }
+
+        val imageLoader = SingletonImageLoader.get(context.applicationContext)
+        upcoming.forEach { song ->
+            val art = song.albumArtUri?.toString() ?: return@forEach
+            // Match the player's display size so the prefetched bitmap is the
+            // SAME cache entry the on-screen AsyncImage will request.
+            val prefetch = ImageRequest.Builder(context.applicationContext)
+                .data(art)
+                .size(1080, 1080)
+                .crossfade(true)
+                .build()
+            imageLoader.enqueue(prefetch)
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(seamColor),
     ) {
         // (1) 96dp BLURRED full-screen album art — the immersive background
-        //     canvas. Verbatim Spiral3 (lines 722–733). This is what makes the
-        //     cover "melt" into the screen instead of sitting on a flat colour.
+        //     canvas. Verbatim Spiral3 (lines 722–733). WAY 1: keeps the
+        //     previous cover painted during the new cover's load.
         if (request != null) {
-            AsyncImage(
-                model = request,
-                contentDescription = null,
+            CrossfadeCoverLayer(
+                request = request,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
@@ -126,12 +190,11 @@ fun PlayerCoverBlend(
         }
 
         // (2) Sharp SQUARE cover (Spiral3 block, lines 735–791) — SQUARE box
-        //     (aspectRatio 1f), TopCenter. offset 0dp so the cover's top edge
-        //     touches the screen top edge. gentle 1.06 zoom with top-center
-        //     pivot (grows downward, no top crop, ~3% side bleed). Universal
-        //     fitting: full image visible. The bottom 140dp fade (EDIT 1: top
-        //     fade removed) is drawn inside the box, so it moves up + grows with
-        //     the cover.
+        //     (aspectRatio 1f), TopCenter, offset 0dp (top edge touches screen
+        //     top edge), gentle 1.06 top-center-pivot zoom. Universal fitting:
+        //     full image visible. Bottom 140dp fade inside the box moves up +
+        //     grows with the cover. WAY 1: keeps the previous cover painted
+        //     during the new cover's load.
         if (request != null) {
             Box(
                 modifier = Modifier
@@ -141,18 +204,12 @@ fun PlayerCoverBlend(
                     .offset(y = 0.dp)
                     .graphicsLayer {
                         compositingStrategy = CompositingStrategy.Offscreen
-                        // EDIT 3: gentle ~6% zoom, top-center pivot so the box
-                        // grows DOWNWARD (top stays put, no top crop). ~3% side
-                        // bleed — full image still visible (1.15 clipped logo).
                         scaleX = 1.06f
                         scaleY = 1.06f
                         transformOrigin = TransformOrigin(0.5f, 0f)
                     }
                     .drawWithContent {
                         drawContent()
-                        // EDIT 1: top fade REMOVED (was 120dp Transparent→Black).
-                        // Bottom fade kept (140dp Black→Transparent) — verbatim
-                        // Spiral3, so the cover still melts into the blur below.
                         val bottomFadeHeightPx = 140.dp.toPx()
                         val imageHeight = size.height
                         val bottomFadeStartY =
@@ -167,18 +224,79 @@ fun PlayerCoverBlend(
                         )
                     },
             ) {
-                AsyncImage(
-                    model = request,
-                    contentDescription = null,
-                    // Universal fitting rule — the WHOLE cover shows, nothing
-                    // cut off. Fit (not Crop). The box zoom (1.06, above) makes
-                    // it bigger; the image scales with the box.
+                CrossfadeCoverLayer(
+                    request = request,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CrossfadeCoverLayer — the WAY-1 building block. Renders the cover for the
+// given request, and while that cover is still loading (or failed), keeps the
+// PREVIOUS successfully-loaded cover painted underneath. So the layer never
+// shows empty/black during a song change — the old cover stays until the new
+// one is ready, then crossfades in.
+//
+// Mechanism: rememberAsyncImagePainter loads the new request; painter.state is
+// a StateFlow<State> (Empty/Loading/Success/Error). We stash the painter from
+// the last Success into a `remember`-held var, and while the current state is
+// NOT Success we render that stashed painter first (underneath), then the live
+// painter on top. When the live painter reaches Success, it paints over the
+// stashed one and we update the stash. Result: the screen is never empty.
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun CrossfadeCoverLayer(
+    request: ImageRequest,
+    contentScale: ContentScale,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val imageLoader = remember { SingletonImageLoader.get(context.applicationContext) }
+
+    val painter = rememberAsyncImagePainter(
+        model = request,
+        imageLoader = imageLoader,
+        contentScale = contentScale,
+    )
+    val state by painter.state.collectAsState()
+
+    // The last SUCCESSFULLY-LOADED painter, KEPT ACROSS cover changes. This is
+    // the heart of WAY 1: it is NOT keyed on request.data, so when the song
+    // changes and the new cover is still loading, this still holds the OLD
+    // cover's painter and renders it underneath. Only when the new painter
+    // reaches Success do we overwrite it — so the screen is never empty/black.
+    var lastSuccessPainter by remember { mutableStateOf<Painter?>(null) }
+    LaunchedEffect(state) {
+        if (state is AsyncImagePainter.State.Success) {
+            lastSuccessPainter = (state as AsyncImagePainter.State.Success).painter
+        }
+    }
+
+    // Underneath: the previous successful cover. Painted first so it shows
+    // through while the new cover loads (no black flash).
+    lastSuccessPainter?.let { prev ->
+        Image(
+            painter = prev,
+            contentDescription = null,
+            contentScale = contentScale,
+            modifier = modifier,
+        )
+    }
+
+    // On top: the live painter. While Loading it's empty (transparent) so the
+    // underneath layer shows; on Success it paints over the underneath layer
+    // and updates the stash.
+    Image(
+        painter = painter,
+        contentDescription = null,
+        contentScale = contentScale,
+        modifier = modifier,
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
